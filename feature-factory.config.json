@@ -1,0 +1,9 @@
+{
+  "$schema": "https://feature-factory/schema/config.json",
+  "validation": {
+    "commands": [
+      "npm run typecheck",
+      "npm test"
+    ]
+  }
+}

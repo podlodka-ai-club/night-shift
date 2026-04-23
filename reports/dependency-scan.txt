@@ -1,0 +1,91 @@
+=== Dependency Scan Report ===
+Date: 2026-04-22 22:19:18 UTC
+
+=== Manifests / Lockfiles Found ===
+./package-lock.json
+./package.json
+
+=== package.json (root) ===
+{
+  "name": "feature-factory",
+  "version": "0.1.0",
+  "description": "Minimal agentic coding orchestrator for the feature factory sprint",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.117",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@octokit/graphql": "^8.1.1",
+    "@octokit/rest": "^21.0.2",
+    "@openai/codex-sdk": "^0.122.0",
+    "dotenv": "^17.4.2",
+    "openai": "^6.34.0",
+    "simple-git": "^3.27.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
+
+=== package-lock.json lockfileVersion ===
+lockfileVersion: 3
+packages: 273
+
+=== Packages with multiple versions (duplicates) ===
+None found.
+
+=== Packages requiring zod (peer dependency conflict analysis) ===
+  (root): zod ^3.24.1
+  node_modules/@anthropic-ai/claude-agent-sdk: zod ^4.0.0
+  node_modules/@anthropic-ai/claude-agent-sdk/node_modules/@anthropic-ai/sdk: zod ^3.25.0 || ^4.0.0
+  node_modules/@modelcontextprotocol/sdk: zod ^3.25 || ^4.0
+  node_modules/openai: zod ^3.25 || ^4.0
+  node_modules/zod-to-json-schema: zod ^3.25.28 || ^4
+
+=== npm install attempt (no flags) ===
+npm error code ERESOLVE
+npm error ERESOLVE could not resolve
+npm error
+npm error While resolving: @anthropic-ai/claude-agent-sdk@0.2.117
+npm error Found: zod@3.25.76
+npm error node_modules/zod
+npm error   zod@"^3.24.1" from the root project
+npm error   peerOptional zod@"^3.25.0 || ^4.0.0" from @anthropic-ai/sdk@0.81.0
+npm error   node_modules/@anthropic-ai/claude-agent-sdk/node_modules/@anthropic-ai/sdk
+npm error     @anthropic-ai/sdk@"^0.81.0" from @anthropic-ai/claude-agent-sdk@0.2.117
+npm error     node_modules/@anthropic-ai/claude-agent-sdk
+npm error       @anthropic-ai/claude-agent-sdk@"^0.2.117" from the root project
+npm error   3 more (@modelcontextprotocol/sdk, openai, zod-to-json-schema)
+npm error
+npm error Could not resolve dependency:
+npm error peer zod@"^4.0.0" from @anthropic-ai/claude-agent-sdk@0.2.117
+npm error node_modules/@anthropic-ai/claude-agent-sdk
+npm error   @anthropic-ai/claude-agent-sdk@"^0.2.117" from the root project
+npm error
+npm error Conflicting peer dependency: zod@4.3.6
+npm error node_modules/zod
+npm error   peer zod@"^4.0.0" from @anthropic-ai/claude-agent-sdk@0.2.117
+npm error   node_modules/@anthropic-ai/claude-agent-sdk
+npm error     @anthropic-ai/claude-agent-sdk@"^0.2.117" from the root project
+npm error
+npm error Fix the upstream dependency conflict, or retry
+npm error this command with --force or --legacy-peer-deps
+npm error to accept an incorrect (and potentially broken) dependency resolution.
+npm error
+npm error
+npm error For a full report see:
+npm error <local-npm-log-path>/eresolve-report.txt
+npm error A complete log of this run can be found in: <local-npm-log-path>/debug-0.log
+
+=== npm audit ===
+found 0 vulnerabilities

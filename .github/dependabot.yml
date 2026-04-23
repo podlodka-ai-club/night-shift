@@ -1,0 +1,43 @@
+# Dependabot configuration — feature-factory
+#
+# Onboarding notes:
+#   - Dependabot opens separate PRs for each dependency group.
+#   - PRs that modify `overrides` entries require manual review (no auto-merge).
+#   - For PRs touching `overrides` or changing a major version, verify the change
+#     locally with `npm ci` and run `npm test` before approving.
+#   - To add a new override for a transitive dependency:
+#     1. Add the entry to `package.json#overrides`.
+#     2. Run `npm install` to regenerate `package-lock.json`.
+#     3. Commit both files together and document the reason in the PR description.
+
+version: 2
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    # Open separate PRs for major, minor, and patch updates
+    groups:
+      patch-updates:
+        update-types: ["patch"]
+      minor-updates:
+        update-types: ["minor"]
+    # Major updates are left ungrouped (one PR per dependency) for careful review
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    # Require manual review for any PR that bumps a package in `overrides`
+    # (Dependabot cannot modify overrides, but any upstream change that would
+    # conflict with an existing override must be reviewed before accepting.)
+    ignore:
+      # Intentionally suppress Dependabot PRs for ALL semver-major updates across
+      # every dependency. Major upgrades require manual review for breaking changes,
+      # peer-dependency conflicts, and API compatibility. Monitor upstream changelogs
+      # and open upgrade PRs manually when a major bump is ready to adopt.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

@@ -1,0 +1,79 @@
+name: deps:validate
+
+on:
+  push:
+    branches: [main, "deps/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Job 1: lockfile-backed install + drift detection ──────────────────────
+  deps-validate:
+    name: Validate lockfile & detect drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      # Use lockfile-backed install — fails if lock is out of sync
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      # Drift detection: manifest + lockfile must be consistent
+      - name: Detect lockfile drift
+        run: |
+          git status --porcelain
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Lockfile drift detected — run 'npm install' locally and commit the updated package-lock.json"
+            git diff
+            exit 1
+          fi
+
+  # ── Job 2: security audit ─────────────────────────────────────────────────
+  security-audit:
+    name: Security audit (npm audit)
+    runs-on: ubuntu-latest
+    needs: deps-validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      # Fail on high/critical vulnerabilities
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+
+  # ── Job 3: unit tests ─────────────────────────────────────────────────────
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    needs: deps-validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
