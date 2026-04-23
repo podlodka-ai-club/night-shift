@@ -11,7 +11,7 @@
     "check": "npm run typecheck && npm test"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.117",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.118",
     "@anthropic-ai/sdk": "^0.39.0",
     "@octokit/graphql": "^8.1.1",
     "@octokit/rest": "^21.0.2",
