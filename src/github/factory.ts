@@ -20,7 +20,20 @@ import {
   setStatus as setProjectStatus,
   type GraphQLClient,
 } from "./projects.js";
-import { createBranch, openPullRequest, pushBranch, setPullRequestReady, upsertPullRequest } from "./prs.js";
+import {
+  createBranch,
+  createReview,
+  getPullRequestDiff,
+  listChangedFiles,
+  listReviewComments,
+  listReviews,
+  openPullRequest,
+  pushBranch,
+  setPullRequestReady,
+  updateReview,
+  upsertPullRequest,
+  upsertReviewComment,
+} from "./prs.js";
 import {
   STATUS_NAMES,
   type GitHubConfig,
@@ -161,6 +174,34 @@ export async function createGitHubClient(
     async setPullRequestReady(pullNumber, ready) {
       await run(() =>
         setPullRequestReady(rest, gql, { owner, repo, pullNumber, ready }),
+      );
+    },
+
+    async getPullRequestDiff(pullNumber) {
+      return getPullRequestDiff(rest, owner, repo, pullNumber);
+    },
+    async listChangedFiles(pullNumber) {
+      return listChangedFiles(rest, owner, repo, pullNumber);
+    },
+    async listReviewComments(pullNumber) {
+      return listReviewComments(rest, owner, repo, pullNumber);
+    },
+    async upsertReviewComment(pullNumber, markerId, opts) {
+      return run(() =>
+        upsertReviewComment(rest, owner, repo, pullNumber, markerId, opts),
+      );
+    },
+    async createReview(pullNumber, opts) {
+      return run(() =>
+        createReview(rest, owner, repo, pullNumber, opts),
+      );
+    },
+    async listReviews(pullNumber) {
+      return listReviews(rest, owner, repo, pullNumber);
+    },
+    async updateReview(pullNumber, reviewId, opts) {
+      await run(() =>
+        updateReview(rest, owner, repo, pullNumber, reviewId, opts),
       );
     },
   };

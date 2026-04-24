@@ -55,6 +55,32 @@ export type ProjectItem = z.infer<typeof ProjectItemSchema>;
 export { PRRefSchema };
 export type PRRef = z.infer<typeof PRRefSchema>;
 
+export const ChangedFileStatusSchema = z.enum(["added", "modified", "removed", "renamed"]);
+
+export const ChangedFileSchema = z.object({
+  path: z.string().min(1),
+  additions: z.number().int().nonnegative(),
+  deletions: z.number().int().nonnegative(),
+  status: ChangedFileStatusSchema,
+});
+export type ChangedFile = z.infer<typeof ChangedFileSchema>;
+
+export const ReviewCommentSchema = z.object({
+  id: z.number().int(),
+  body: z.string(),
+  path: z.string(),
+  line: z.number().int().positive().nullable(),
+});
+export type ReviewComment = z.infer<typeof ReviewCommentSchema>;
+
+export const ReviewSchema = z.object({
+  id: z.number().int(),
+  body: z.string(),
+  state: z.string(),
+  authorAssociation: z.string(),
+});
+export type Review = z.infer<typeof ReviewSchema>;
+
 /**
  * GitHub App configuration. Exactly one of `privateKey` | `privateKeyPath`
  * must be supplied; the loader resolves `privateKeyPath` relative to the

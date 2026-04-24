@@ -28,4 +28,7 @@ export type {
   ProjectItem,
   StatusName,
   ParsedWebhookEvent,
+  ChangedFile,
+  ReviewComment,
+  Review,
 } from "./types.js";

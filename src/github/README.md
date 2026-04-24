@@ -16,6 +16,9 @@ import {
   StatusNameSchema,
   type GitHubClient,
   type ParsedWebhookEvent,
+  type ChangedFile,
+  type ReviewComment,
+  type Review,
 } from "./src/github";
 ```
 
@@ -26,12 +29,18 @@ import {
 - `GitHubClient` — interface with every mutation serialised through an
   internal single-flight mutex so bursty writes don't trip secondary rate
   limits.
+  - **PR review surfaces**: `getPullRequestDiff(pullNumber)`,
+    `listChangedFiles(pullNumber)`, `listReviewComments(pullNumber)`,
+    `upsertReviewComment(pullNumber, markerId, { path, line, body })`,
+    `createReview(pullNumber, { event, body })`,
+    `listReviews(pullNumber)`, `updateReview(pullNumber, reviewId, { body })`.
 - `handleWebhook({ headers, rawBody, secret })` — pure function that verifies
   the `X-Hub-Signature-256` HMAC with `timingSafeEqual` and parses the body
   into a `ParsedWebhookEvent` discriminated union. It does **not** ship an
   HTTP server; mount it in your own transport.
 - `createInMemoryFakeGitHubClient()` — in-memory double for tests. Exposes
-  a public `events` log and seed helpers.
+  a public `events` log and seed helpers (`seedDiff`, `seedChangedFiles`,
+  `seedReviewComment`, `seedReview`, `seedPr`).
 
 ## GitHub App setup
 

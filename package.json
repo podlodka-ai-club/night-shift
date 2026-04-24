@@ -14,7 +14,8 @@
     "lint:contracts": "node scripts/check-contracts-imports.mjs",
     "lint:boundaries": "node scripts/check-boundaries.mjs",
     "specify": "tsx src/cli/specify.ts",
-    "implement": "tsx src/cli/implement.ts"
+    "implement": "tsx src/cli/implement.ts",
+    "review": "tsx src/cli/review.ts"
   },
   "dependencies": {
     "@octokit/auth-app": "^8.2.0",

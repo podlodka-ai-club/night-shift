@@ -80,8 +80,29 @@ const MODULES = [
     },
   },
   {
+    name: "phases/review",
+    dir: join(SRC, "phases", "review"),
+    allowed: {
+      externals: new Set([
+        "zod",
+        "zod-to-json-schema",
+        "node:fs",
+        "node:fs/promises",
+        "node:path",
+      ]),
+      internal: [
+        "src/contracts",
+        "src/adapters",
+        "src/github",
+        "src/config",
+        "src/phases/review",
+      ],
+    },
+  },
+  {
     name: "phases",
     dir: join(SRC, "phases"),
+    excludeDirs: [join(SRC, "phases", "review")],
     allowed: {
       externals: new Set([
         "zod",
@@ -162,8 +183,8 @@ const MODULES = [
   },
 ];
 
-/** @param {string} dir */
-function walk(dir) {
+/** @param {string} dir @param {string[]} [excludeDirs] */
+function walk(dir, excludeDirs = []) {
   /** @type {string[]} */
   const out = [];
   let entries;
@@ -175,7 +196,8 @@ function walk(dir) {
   for (const entry of entries) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
-      out.push(...walk(full));
+      if (excludeDirs.some((e) => full === e)) continue;
+      out.push(...walk(full, excludeDirs));
     } else if (entry.endsWith(".ts") && !entry.endsWith(".test.ts")) {
       out.push(full);
     }
@@ -190,7 +212,7 @@ const TYPE_ONLY_IMPORT_RE = /^import\s+type\s+[^'"]*from\s+['"]([^'"]+)['"];?\s*
 
 let violations = [];
 for (const mod of MODULES) {
-  const files = walk(mod.dir);
+  const files = walk(mod.dir, mod.excludeDirs);
   for (const file of files) {
     const src = readFileSync(file, "utf8");
     const typeOnlySpecs = new Set();

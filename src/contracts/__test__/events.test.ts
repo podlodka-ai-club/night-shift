@@ -81,6 +81,11 @@ describe("PhaseEventSchema", () => {
     const bad = { ...completed, cost: 0.01 };
     expect(() => PhaseEventSchema.parse(bad)).toThrow();
   });
+
+  it("accepts phase: review", () => {
+    const ev = { ...started, phase: "review" as const };
+    expect(PhaseEventSchema.parse(ev)).toEqual(ev);
+  });
 });
 
 describe("EventSink", () => {

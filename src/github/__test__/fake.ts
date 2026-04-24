@@ -3,10 +3,13 @@ import type { GitHubClient } from "../client.js";
 import { markerLine } from "../issues.js";
 import {
   STATUS_NAMES,
+  type ChangedFile,
   type Issue,
   type ParsedWebhookEvent,
   type PRRef,
   type ProjectItem,
+  type Review,
+  type ReviewComment,
   type StatusName,
 } from "../types.js";
 
@@ -54,6 +57,11 @@ export interface FakeGitHubClient extends GitHubClient {
     htmlUrl?: string;
   }): void;
   seedItem(item: { itemId: string; issueNumber?: number; status?: StatusName }): void;
+  seedDiff(pullNumber: number, diff: string): void;
+  seedChangedFiles(pullNumber: number, files: ChangedFile[]): void;
+  seedReviewComment(pullNumber: number, comment: ReviewComment): void;
+  seedReview(pullNumber: number, review: Review): void;
+  seedPr(pr: { number: number; branch: string; baseBranch?: string; headSha?: string; url?: string; draft?: boolean; title?: string }): void;
 }
 
 export function createInMemoryFakeGitHubClient(config?: {
@@ -74,8 +82,14 @@ export function createInMemoryFakeGitHubClient(config?: {
   const prs = new Map<number, StoredPR>();
   const branches = new Map<string, string>(); // ref → sha
   const events: FakeEvent[] = [];
+  const diffs = new Map<number, string>();
+  const changedFiles = new Map<number, ChangedFile[]>();
+  const reviewComments = new Map<number, ReviewComment[]>();
+  const reviews = new Map<number, Review[]>();
   let nextCommentId = 1;
   let nextPrNumber = 1;
+  let nextReviewCommentId = 1000;
+  let nextReviewId = 100;
 
   const log = (kind: string, args: Record<string, unknown>) =>
     events.push({ kind, args });
@@ -118,6 +132,34 @@ export function createInMemoryFakeGitHubClient(config?: {
         ...(item.issueNumber !== undefined ? { issueNumber: item.issueNumber } : {}),
         ...(item.status !== undefined ? { status: item.status } : {}),
       });
+    },
+    seedDiff(pullNumber, diff) {
+      diffs.set(pullNumber, diff);
+    },
+    seedChangedFiles(pullNumber, files) {
+      changedFiles.set(pullNumber, files);
+    },
+    seedReviewComment(pullNumber, comment) {
+      const arr = reviewComments.get(pullNumber) ?? [];
+      arr.push(comment);
+      reviewComments.set(pullNumber, arr);
+    },
+    seedReview(pullNumber, review) {
+      const arr = reviews.get(pullNumber) ?? [];
+      arr.push(review);
+      reviews.set(pullNumber, arr);
+    },
+    seedPr(pr) {
+      const stored: StoredPR = {
+        number: pr.number,
+        branch: pr.branch,
+        baseBranch: pr.baseBranch ?? "main",
+        headSha: pr.headSha ?? "0000000000000000000000000000000000000000",
+        url: pr.url ?? `https://github.com/${owner}/${repo}/pull/${pr.number}`,
+        draft: pr.draft ?? false,
+        title: pr.title ?? `PR #${pr.number}`,
+      };
+      prs.set(pr.number, stored);
     },
 
     async getItem(itemId: string): Promise<ProjectItem> {
@@ -277,6 +319,72 @@ export function createInMemoryFakeGitHubClient(config?: {
       const pr = prs.get(pullNumber);
       if (!pr) throw new GitHubNotFoundError(`pr #${pullNumber} not found`);
       pr.draft = !ready;
+    },
+
+    async getPullRequestDiff(pullNumber) {
+      log("getPullRequestDiff", { pullNumber });
+      const diff = diffs.get(pullNumber);
+      return diff ?? "";
+    },
+    async listChangedFiles(pullNumber) {
+      log("listChangedFiles", { pullNumber });
+      return changedFiles.get(pullNumber) ?? [];
+    },
+    async listReviewComments(pullNumber) {
+      log("listReviewComments", { pullNumber });
+      return reviewComments.get(pullNumber) ?? [];
+    },
+    async upsertReviewComment(pullNumber, markerId, opts) {
+      log("upsertReviewComment", { pullNumber, markerId, path: opts.path, line: opts.line });
+      const marker = markerLine(markerId);
+      const bodyWithMarker = opts.body.startsWith(marker)
+        ? opts.body
+        : `${marker}\n${opts.body}`;
+      const arr = reviewComments.get(pullNumber) ?? [];
+      const existing = arr.find(
+        (c) =>
+          c.body.startsWith(marker) &&
+          c.path === opts.path &&
+          c.line === opts.line,
+      );
+      if (existing) {
+        existing.body = bodyWithMarker;
+        return { commentId: existing.id };
+      }
+      const id = nextReviewCommentId++;
+      arr.push({ id, body: bodyWithMarker, path: opts.path, line: opts.line });
+      reviewComments.set(pullNumber, arr);
+      return { commentId: id };
+    },
+    async createReview(pullNumber, opts) {
+      const validEvents = new Set(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
+      if (!validEvents.has(opts.event)) {
+        throw new Error(`unsupported review event: ${opts.event}`);
+      }
+      log("createReview", { pullNumber, event: opts.event });
+      const id = nextReviewId++;
+      const review: Review = {
+        id,
+        body: opts.body,
+        state: opts.event === "APPROVE" ? "APPROVED" :
+          opts.event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED",
+        authorAssociation: "NONE",
+      };
+      const arr = reviews.get(pullNumber) ?? [];
+      arr.push(review);
+      reviews.set(pullNumber, arr);
+      return { id };
+    },
+    async listReviews(pullNumber) {
+      log("listReviews", { pullNumber });
+      return reviews.get(pullNumber) ?? [];
+    },
+    async updateReview(pullNumber, reviewId, opts) {
+      log("updateReview", { pullNumber, reviewId });
+      const arr = reviews.get(pullNumber) ?? [];
+      const review = arr.find((r) => r.id === reviewId);
+      if (!review) throw new GitHubNotFoundError(`review #${reviewId} not found`);
+      review.body = opts.body;
     },
 
     emitFakeWebhook(event) {

@@ -33,11 +33,18 @@ export const AdaptersConfigSchema = z.object({
   codex: CodexAdapterConfigSchema.optional(),
 });
 
+export const ReviewPhaseConfigSchema = z.object({
+  maxDiffBytes: z.number().int().positive().default(65536),
+  escalationLabel: z.string().min(1).default("night-shift:escalation"),
+});
+export type ReviewPhaseConfig = z.infer<typeof ReviewPhaseConfigSchema>;
+
 export const NightShiftConfigSchema = z.object({
   roles: z.record(AgentRoleSchema, AgentRoleConfigSchema),
   qualityGates: QualityGatesConfigSchema.optional(),
   adapters: AdaptersConfigSchema.optional(),
   github: GitHubConfigSchema.optional(),
+  reviewPhase: ReviewPhaseConfigSchema.optional(),
 });
 export type NightShiftConfig = z.input<typeof NightShiftConfigSchema>;
 export type ResolvedNightShiftConfig = z.infer<typeof NightShiftConfigSchema>;

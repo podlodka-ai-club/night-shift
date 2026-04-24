@@ -1,5 +1,5 @@
 import type { OpenPROpts, UpsertPROpts } from "./prs.js";
-import type { Comment, Issue, PRRef, ProjectItem, StatusName } from "./types.js";
+import type { ChangedFile, Comment, Issue, PRRef, ProjectItem, ReviewComment, Review, StatusName } from "./types.js";
 
 export interface GitHubClient {
   readonly owner: string;
@@ -32,4 +32,24 @@ export interface GitHubClient {
     opts: Omit<UpsertPROpts, "owner" | "repo">,
   ): Promise<PRRef>;
   setPullRequestReady(pullNumber: number, ready: boolean): Promise<void>;
+
+  // PR reviews
+  getPullRequestDiff(pullNumber: number): Promise<string>;
+  listChangedFiles(pullNumber: number): Promise<ChangedFile[]>;
+  listReviewComments(pullNumber: number): Promise<ReviewComment[]>;
+  upsertReviewComment(
+    pullNumber: number,
+    markerId: string,
+    opts: { path: string; line: number; body: string },
+  ): Promise<{ commentId: number }>;
+  createReview(
+    pullNumber: number,
+    opts: { event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string },
+  ): Promise<{ id: number }>;
+  listReviews(pullNumber: number): Promise<Review[]>;
+  updateReview(
+    pullNumber: number,
+    reviewId: number,
+    opts: { body: string },
+  ): Promise<void>;
 }

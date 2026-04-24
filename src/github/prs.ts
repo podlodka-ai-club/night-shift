@@ -1,7 +1,17 @@
 import { GitHubApiError, GitHubPushRejectedError } from "./errors.js";
 import type { RestClient } from "./issues.js";
+import { markerLine } from "./issues.js";
 import { retryable } from "./retry.js";
-import { type PRRef, PRRefSchema } from "./types.js";
+import {
+  ChangedFileSchema,
+  ReviewCommentSchema,
+  ReviewSchema,
+  type ChangedFile,
+  type PRRef,
+  type Review,
+  type ReviewComment,
+} from "./types.js";
+import { PRRefSchema } from "./types.js";
 import type { GraphQLClient } from "./projects.js";
 
 async function getDefaultBranch(
@@ -245,4 +255,275 @@ export async function setPullRequestReady(
   );
   const mutation = args.ready ? MARK_READY_MUTATION : CONVERT_DRAFT_MUTATION;
   await retryable(() => gql(mutation, { prId: data.node_id }));
+}
+
+export async function getPullRequestDiff(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<string> {
+  const { data } = await retryable(() =>
+    rest.request<string>("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      mediaType: { format: "diff" },
+      headers: { accept: "application/vnd.github.v3.diff" },
+    }),
+  );
+  return data;
+}
+
+export async function listChangedFiles(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<ChangedFile[]> {
+  const out: ChangedFile[] = [];
+  let page = 1;
+  const perPage = 100;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data } = await retryable(() =>
+      rest.request<
+        Array<{
+          filename: string;
+          additions: number;
+          deletions: number;
+          status: string;
+        }>
+      >("GET /repos/{owner}/{repo}/pulls/{pull_number}/files", {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        per_page: perPage,
+        page,
+      }),
+    );
+    for (const f of data) {
+      out.push(
+        ChangedFileSchema.parse({
+          path: f.filename,
+          additions: f.additions,
+          deletions: f.deletions,
+          status: f.status === "renamed" ? "renamed" :
+            f.status === "added" ? "added" :
+            f.status === "removed" ? "removed" : "modified",
+        }),
+      );
+    }
+    if (data.length < perPage) break;
+    page += 1;
+  }
+  return out;
+}
+
+export async function listReviewComments(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<ReviewComment[]> {
+  const out: ReviewComment[] = [];
+  let page = 1;
+  const perPage = 100;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data } = await retryable(() =>
+      rest.request<
+        Array<{
+          id: number;
+          body: string;
+          path: string;
+          line: number | null;
+        }>
+      >("GET /repos/{owner}/{repo}/pulls/{pull_number}/comments", {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        per_page: perPage,
+        page,
+      }),
+    );
+    for (const c of data) {
+      out.push(
+        ReviewCommentSchema.parse({
+          id: c.id,
+          body: c.body,
+          path: c.path,
+          line: c.line ?? null,
+        }),
+      );
+    }
+    if (data.length < perPage) break;
+    page += 1;
+  }
+  return out;
+}
+
+const VALID_REVIEW_EVENTS = new Set(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
+
+export async function upsertReviewComment(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  markerId: string,
+  opts: { path: string; line: number; body: string },
+): Promise<{ commentId: number }> {
+  const marker = markerLine(markerId);
+  const bodyWithMarker = opts.body.startsWith(marker)
+    ? opts.body
+    : `${marker}\n${opts.body}`;
+
+  // Search existing review comments for a match
+  const existing = await listReviewComments(rest, owner, repo, pullNumber);
+  const match = existing.find(
+    (c) =>
+      c.body.startsWith(marker) &&
+      c.path === opts.path &&
+      c.line === opts.line,
+  );
+
+  if (match) {
+    await retryable(() =>
+      rest.request(
+        "PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}",
+        {
+          owner,
+          repo,
+          comment_id: match.id,
+          body: bodyWithMarker,
+        },
+      ),
+    );
+    return { commentId: match.id };
+  }
+
+  const commitId = await getHeadSha(rest, owner, repo, pullNumber);
+  const { data } = await retryable(() =>
+    rest.request<{ id: number }>(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+      {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        body: bodyWithMarker,
+        path: opts.path,
+        line: opts.line,
+        commit_id: commitId,
+      },
+    ),
+  );
+  return { commentId: data.id };
+}
+
+async function getHeadSha(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<string> {
+  const { data } = await retryable(() =>
+    rest.request<{ head: { sha: string } }>(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      { owner, repo, pull_number: pullNumber },
+    ),
+  );
+  return data.head.sha;
+}
+
+export async function createReview(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  opts: { event: string; body: string },
+): Promise<{ id: number }> {
+  if (!VALID_REVIEW_EVENTS.has(opts.event)) {
+    throw new GitHubApiError(
+      422,
+      `unsupported review event: ${opts.event}`,
+    );
+  }
+  const { data } = await retryable(() =>
+    rest.request<{ id: number }>(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        event: opts.event,
+        body: opts.body,
+      },
+    ),
+  );
+  return { id: data.id };
+}
+
+export async function listReviews(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<Review[]> {
+  const out: Review[] = [];
+  let page = 1;
+  const perPage = 100;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data } = await retryable(() =>
+      rest.request<
+        Array<{
+          id: number;
+          body: string;
+          state: string;
+          author_association: string;
+        }>
+      >("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        per_page: perPage,
+        page,
+      }),
+    );
+    for (const r of data) {
+      out.push(
+        ReviewSchema.parse({
+          id: r.id,
+          body: r.body,
+          state: r.state,
+          authorAssociation: r.author_association,
+        }),
+      );
+    }
+    if (data.length < perPage) break;
+    page += 1;
+  }
+  return out;
+}
+
+export async function updateReview(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  reviewId: number,
+  opts: { body: string },
+): Promise<void> {
+  await retryable(() =>
+    rest.request(
+      "PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
+      {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        review_id: reviewId,
+        body: opts.body,
+      },
+    ),
+  );
 }
