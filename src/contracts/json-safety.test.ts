@@ -48,7 +48,6 @@ const implResult: ImplementationResult = {
     headSha: "abc1234",
   },
   qualityGates: [],
-  specReview: { subagentSummary: "", blockingIssues: [] },
   summary: "",
 };
 

@@ -7,10 +7,11 @@ describe("InMemoryFakeGitOps", () => {
     await g.checkoutBranch("night-shift/TICKET-1");
     const a = await g.writeTree([{ path: "a.txt", content: "hi" }], "first");
     const b = await g.writeTree([{ path: "b.txt", content: "bye" }], "second");
-    expect(a.sha).toMatch(/^sha1/);
-    expect(b.sha).toMatch(/^sha2/);
+    expect(a.sha).toMatch(/^a1/);
+    expect(b.sha).toMatch(/^a2/);
     expect(a.sha).toHaveLength(40);
     expect(b.sha).toHaveLength(40);
+    expect(/^[0-9a-f]{40}$/.test(a.sha)).toBe(true);
     expect(await g.currentHeadSha()).toBe(b.sha);
     expect(g.branch).toBe("night-shift/TICKET-1");
   });
@@ -27,5 +28,19 @@ describe("InMemoryFakeGitOps", () => {
   it("currentHeadSha before any commit is a zero sha", async () => {
     const g = createInMemoryFakeGitOps();
     expect(await g.currentHeadSha()).toBe("0".repeat(40));
+  });
+
+  it("diffAgainstBase returns a synthetic diff of branch commits", async () => {
+    const g = createInMemoryFakeGitOps();
+    await g.checkoutBranch("feat/x");
+    await g.writeTree([{ path: "a.txt", content: "hello" }], "c1");
+    const diff = await g.diffAgainstBase("main");
+    expect(diff).toContain("diff --git a/a.txt b/a.txt");
+    expect(diff).toContain("+hello");
+  });
+
+  it("diffAgainstBase is empty before any non-base commits", async () => {
+    const g = createInMemoryFakeGitOps();
+    expect(await g.diffAgainstBase("main")).toBe("");
   });
 });

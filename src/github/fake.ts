@@ -191,7 +191,7 @@ export function createInMemoryFakeGitHubClient(config?: {
     async createBranch(branch, fromRef) {
       log("createBranch", { branch, ...(fromRef !== undefined ? { fromRef } : {}) });
       const ref = `refs/heads/${branch}`;
-      const sha = fromRef ? branches.get(`refs/${fromRef}`) ?? "sha-default" : "sha-default";
+      const sha = fromRef ? branches.get(`refs/${fromRef}`) ?? "0000000000000000000000000000000000000000" : "0000000000000000000000000000000000000000";
       const existing = branches.get(ref);
       if (existing) {
         if (existing !== sha) {
@@ -211,7 +211,53 @@ export function createInMemoryFakeGitHubClient(config?: {
         number,
         branch: opts.head,
         baseBranch: opts.base,
-        headSha: branches.get(`refs/heads/${opts.head}`) ?? "sha-default",
+        headSha: branches.get(`refs/heads/${opts.head}`) ?? "0000000000000000000000000000000000000000",
+        url: `https://github.com/${owner}/${repo}/pull/${number}`,
+        draft: opts.draft ?? false,
+        title: opts.title,
+        ...(opts.body !== undefined ? { body: opts.body } : {}),
+      };
+      prs.set(number, stored);
+      return {
+        number,
+        url: stored.url,
+        branch: stored.branch,
+        baseBranch: stored.baseBranch,
+        headSha: stored.headSha,
+      };
+    },
+    async pushBranch(branch, sha) {
+      log("pushBranch", { branch, sha });
+      const ref = `refs/heads/${branch}`;
+      branches.set(ref, sha);
+      // Mirror onto any open PR with this head branch so `headSha` stays fresh.
+      for (const pr of prs.values()) {
+        if (pr.branch === branch) pr.headSha = sha;
+      }
+      return { ref, sha };
+    },
+    async upsertPullRequest(opts): Promise<PRRef> {
+      log("upsertPullRequest", { ...opts });
+      for (const pr of prs.values()) {
+        if (pr.branch === opts.head) {
+          pr.title = opts.title;
+          if (opts.body !== undefined) pr.body = opts.body;
+          pr.baseBranch = opts.base;
+          return {
+            number: pr.number,
+            url: pr.url,
+            branch: pr.branch,
+            baseBranch: pr.baseBranch,
+            headSha: pr.headSha,
+          };
+        }
+      }
+      const number = nextPrNumber++;
+      const stored: StoredPR = {
+        number,
+        branch: opts.head,
+        baseBranch: opts.base,
+        headSha: branches.get(`refs/heads/${opts.head}`) ?? "0000000000000000000000000000000000000000",
         url: `https://github.com/${owner}/${repo}/pull/${number}`,
         draft: opts.draft ?? false,
         title: opts.title,

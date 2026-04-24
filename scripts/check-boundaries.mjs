@@ -101,7 +101,37 @@ const MODULES = [
         "src/git",
         "src/config",
         "src/phases",
+        "src/worktree",
+        "src/quality-gates",
       ],
+    },
+  },
+  {
+    name: "worktree",
+    dir: join(SRC, "worktree"),
+    allowed: {
+      externals: new Set([
+        "zod",
+        "simple-git",
+        "node:fs",
+        "node:fs/promises",
+        "node:os",
+        "node:path",
+      ]),
+      internal: ["src/contracts", "src/worktree"],
+    },
+  },
+  {
+    name: "quality-gates",
+    dir: join(SRC, "quality-gates"),
+    allowed: {
+      externals: new Set([
+        "zod",
+        "node:child_process",
+        "node:path",
+        "node:timers/promises",
+      ]),
+      internal: ["src/contracts", "src/quality-gates"],
     },
   },
   {
@@ -124,6 +154,8 @@ const MODULES = [
         "src/git",
         "src/config",
         "src/phases",
+        "src/worktree",
+        "src/quality-gates",
         "src/cli",
       ],
     },

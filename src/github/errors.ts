@@ -12,7 +12,8 @@ export type GitHubErrorCode =
   | "transient"
   | "api"
   | "webhook_signature"
-  | "config";
+  | "config"
+  | "push_rejected";
 
 export class GitHubError extends Error {
   readonly code: GitHubErrorCode;
@@ -77,6 +78,18 @@ export class WebhookSignatureError extends GitHubError {
 export class ConfigError extends GitHubError {
   constructor(message: string, cause?: unknown) {
     super("config", message, cause);
+  }
+}
+
+export class GitHubPushRejectedError extends GitHubError {
+  readonly branch: string;
+  constructor(branch: string, message?: string, cause?: unknown) {
+    super(
+      "push_rejected",
+      message ?? `push to ${branch} rejected (non-fast-forward or conflict)`,
+      cause,
+    );
+    this.branch = branch;
   }
 }
 

@@ -17,7 +17,6 @@ const validResult: ImplementationResult = {
     { name: "typecheck", status: "passed", durationMs: 1200 },
     { name: "test", status: "passed", durationMs: 3400, logsTail: "ok" },
   ],
-  specReview: { subagentSummary: "looks good", blockingIssues: [] },
   summary: "Implemented login.",
 };
 

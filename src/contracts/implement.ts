@@ -37,10 +37,6 @@ export type ImplementInput = z.infer<typeof ImplementInputSchema>;
 export const ImplementationResultSchema = z.object({
   pr: PRRefSchema,
   qualityGates: z.array(QualityGateResultSchema),
-  specReview: z.object({
-    subagentSummary: z.string(),
-    blockingIssues: z.array(z.string()),
-  }),
   summary: z.string(),
 });
 export type ImplementationResult = z.infer<typeof ImplementationResultSchema>;

@@ -20,6 +20,12 @@ export interface GitOps {
   ): Promise<{ sha: string }>;
   /** Return the current HEAD sha. */
   currentHeadSha(): Promise<string>;
+  /**
+   * Return the unified diff of the current HEAD against the merge-base with
+   * `baseBranch` (e.g. `main`). Always returns a plain string — empty when
+   * there are no changes.
+   */
+  diffAgainstBase(baseBranch: string): Promise<string>;
 }
 
 export interface SimpleGitOpsDeps {
@@ -72,6 +78,16 @@ export function createSimpleGitOps(deps: SimpleGitOpsDeps): GitOps {
     async currentHeadSha() {
       const sha = await git.revparse(["HEAD"]);
       return sha.trim();
+    },
+    async diffAgainstBase(baseBranch) {
+      // `...` yields the diff from the merge-base, which is what reviewers
+      // expect on PRs. Fall back to a direct diff when the merge-base lookup
+      // fails (e.g. unrelated histories).
+      try {
+        return await git.diff([`${baseBranch}...HEAD`]);
+      } catch {
+        return await git.diff([baseBranch, "HEAD"]);
+      }
     },
   };
 }

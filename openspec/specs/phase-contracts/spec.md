@@ -73,7 +73,7 @@ The system SHALL define `SpecifyInput = { ticket: Ticket }` as the Specify phase
 
 ### Requirement: ImplementInput and ImplementationResult contracts
 
-The system SHALL define `ImplementInput = { ticket: Ticket, specBundle: SpecBundle }` and `ImplementationResult` with: `pr: { number: number, url: string, branch: string, baseBranch: string, headSha: string }`, `qualityGates: QualityGateResult[]`, `specReview: { subagentSummary: string, blockingIssues: string[] }`, `summary: string`. Each `QualityGateResult` SHALL carry `name: string`, `status: "passed" | "failed" | "skipped"`, `durationMs: number`, and optional `logsTail: string` (max 4096 chars) and `logsPath: string`.
+The system SHALL define `ImplementInput = { ticket: Ticket, specBundle: SpecBundle }` and `ImplementationResult` with: `pr: { number: number, url: string, branch: string, baseBranch: string, headSha: string }`, `qualityGates: QualityGateResult[]`, `summary: string`. Each `QualityGateResult` SHALL carry `name: string`, `status: "passed" | "failed" | "skipped"`, `durationMs: number`, and optional `logsTail: string` (max 4096 chars) and `logsPath: string`.
 
 #### Scenario: Valid ImplementationResult parses
 - **WHEN** a fully-populated `ImplementationResult` JSON object is parsed

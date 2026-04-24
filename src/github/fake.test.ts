@@ -59,6 +59,35 @@ describe("InMemoryFakeGitHubClient", () => {
     await c.setPullRequestReady(pr.number, true);
   });
 
+  it("pushBranch updates the branch sha and any open PR's headSha", async () => {
+    const c = createInMemoryFakeGitHubClient();
+    await c.createBranch("night-shift/t-1");
+    const pr = await c.openPullRequest({
+      head: "night-shift/t-1",
+      base: "main",
+      title: "x",
+    });
+    await c.pushBranch("night-shift/t-1", "abc123");
+    const again = await c.upsertPullRequest({
+      head: "night-shift/t-1",
+      base: "main",
+      title: "y",
+    });
+    expect(again.number).toBe(pr.number);
+    expect(again.headSha).toBe("abc123");
+  });
+
+  it("upsertPullRequest creates a new PR when none exists", async () => {
+    const c = createInMemoryFakeGitHubClient();
+    const pr = await c.upsertPullRequest({
+      head: "night-shift/t-2",
+      base: "main",
+      title: "t",
+    });
+    expect(pr.number).toBe(1);
+    expect(pr.branch).toBe("night-shift/t-2");
+  });
+
   it("throws GitHubNotFoundError for missing items", async () => {
     const c = createInMemoryFakeGitHubClient();
     await expect(c.getItem("nope")).rejects.toBeInstanceOf(GitHubNotFoundError);

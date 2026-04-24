@@ -1,4 +1,4 @@
-import { GitHubApiError } from "./errors.js";
+import { GitHubApiError, GitHubPushRejectedError } from "./errors.js";
 import type { RestClient } from "./issues.js";
 import { retryable } from "./retry.js";
 import { type PRRef, PRRefSchema } from "./types.js";
@@ -115,6 +115,104 @@ export async function openPullRequest(
     baseBranch: data.base.ref,
     headSha: data.head.sha,
   });
+}
+
+/**
+ * Force-update (or create) the `refs/heads/<branch>` ref to point at `sha`.
+ *
+ * We prefer PATCH (non-force) first; if the server reports 422 with a
+ * non-fast-forward message, we surface a typed `GitHubPushRejectedError`
+ * so the caller (the implement phase) can route the item to Blocked.
+ */
+export async function pushBranch(
+  rest: RestClient,
+  args: { owner: string; repo: string; branch: string; sha: string },
+): Promise<{ ref: string; sha: string }> {
+  const ref = `heads/${args.branch}`;
+  try {
+    await retryable(() =>
+      rest.request("PATCH /repos/{owner}/{repo}/git/refs/{ref}", {
+        owner: args.owner,
+        repo: args.repo,
+        ref,
+        sha: args.sha,
+      }),
+    );
+  } catch (err) {
+    if (err instanceof GitHubApiError && err.status === 422) {
+      throw new GitHubPushRejectedError(args.branch, undefined, err);
+    }
+    if (err instanceof GitHubApiError && err.status === 404) {
+      await retryable(() =>
+        rest.request("POST /repos/{owner}/{repo}/git/refs", {
+          owner: args.owner,
+          repo: args.repo,
+          ref: `refs/heads/${args.branch}`,
+          sha: args.sha,
+        }),
+      );
+      return { ref: `refs/heads/${args.branch}`, sha: args.sha };
+    }
+    throw err;
+  }
+  return { ref: `refs/heads/${args.branch}`, sha: args.sha };
+}
+
+export interface UpsertPROpts {
+  owner: string;
+  repo: string;
+  head: string;
+  base: string;
+  title: string;
+  body?: string;
+  draft?: boolean;
+}
+
+/**
+ * Open a PR for `head → base`, or update its title/body if one already
+ * exists. Idempotent on branch name: never creates duplicate PRs.
+ */
+export async function upsertPullRequest(
+  rest: RestClient,
+  opts: UpsertPROpts,
+): Promise<PRRef> {
+  const { data: existing } = await retryable(() =>
+    rest.request<
+      Array<{
+        number: number;
+        html_url: string;
+        head: { ref: string; sha: string };
+        base: { ref: string };
+        state: "open" | "closed";
+      }>
+    >("GET /repos/{owner}/{repo}/pulls", {
+      owner: opts.owner,
+      repo: opts.repo,
+      head: `${opts.owner}:${opts.head}`,
+      state: "open",
+      per_page: 1,
+    }),
+  );
+  if (existing.length > 0) {
+    const pr = existing[0]!;
+    await retryable(() =>
+      rest.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
+        owner: opts.owner,
+        repo: opts.repo,
+        pull_number: pr.number,
+        title: opts.title,
+        ...(opts.body !== undefined ? { body: opts.body } : {}),
+      }),
+    );
+    return PRRefSchema.parse({
+      number: pr.number,
+      url: pr.html_url,
+      branch: pr.head.ref,
+      baseBranch: pr.base.ref,
+      headSha: pr.head.sha,
+    });
+  }
+  return await openPullRequest(rest, opts);
 }
 
 const MARK_READY_MUTATION = /* GraphQL */ `

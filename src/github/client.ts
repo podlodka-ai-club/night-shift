@@ -1,4 +1,4 @@
-import type { OpenPROpts } from "./prs.js";
+import type { OpenPROpts, UpsertPROpts } from "./prs.js";
 import type { Comment, Issue, PRRef, ProjectItem, StatusName } from "./types.js";
 
 export interface GitHubClient {
@@ -24,8 +24,12 @@ export interface GitHubClient {
 
   // PRs & branches
   createBranch(branch: string, fromRef?: string): Promise<{ ref: string; sha: string }>;
+  pushBranch(branch: string, sha: string): Promise<{ ref: string; sha: string }>;
   openPullRequest(
     opts: Omit<OpenPROpts, "owner" | "repo">,
+  ): Promise<PRRef>;
+  upsertPullRequest(
+    opts: Omit<UpsertPROpts, "owner" | "repo">,
   ): Promise<PRRef>;
   setPullRequestReady(pullNumber: number, ready: boolean): Promise<void>;
 }

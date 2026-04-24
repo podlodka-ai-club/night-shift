@@ -20,7 +20,7 @@ import {
   setStatus as setProjectStatus,
   type GraphQLClient,
 } from "./projects.js";
-import { createBranch, openPullRequest, setPullRequestReady } from "./prs.js";
+import { createBranch, openPullRequest, pushBranch, setPullRequestReady, upsertPullRequest } from "./prs.js";
 import {
   STATUS_NAMES,
   type GitHubConfig,
@@ -149,8 +149,14 @@ export async function createGitHubClient(
         }),
       );
     },
+    async pushBranch(branch, sha) {
+      return run(() => pushBranch(rest, { owner, repo, branch, sha }));
+    },
     async openPullRequest(opts) {
       return run(() => openPullRequest(rest, { ...opts, owner, repo }));
+    },
+    async upsertPullRequest(opts) {
+      return run(() => upsertPullRequest(rest, { ...opts, owner, repo }));
     },
     async setPullRequestReady(pullNumber, ready) {
       await run(() =>
