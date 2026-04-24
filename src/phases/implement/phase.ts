@@ -7,7 +7,6 @@ import type {
   QualityGateResult as ContractQualityGateResult,
 } from "../../contracts/implement.js";
 import { ImplementationResultSchema } from "../../contracts/implement.js";
-import type { SpecBundle } from "../../contracts/specify.js";
 import type { Ticket } from "../../contracts/ticket.js";
 import type { GitOps } from "../../git/index.js";
 import type { GitHubClient } from "../../github/client.js";
@@ -183,6 +182,407 @@ function formatSummary(
   return parts.join("\n");
 }
 
+type ImplementIssue = Awaited<ReturnType<GitHubClient["getIssue"]>>;
+type ImplementPullRequest = Awaited<
+  ReturnType<GitHubClient["upsertPullRequest"]>
+>;
+
+interface LoadedImplementContext {
+  itemStatus: string | undefined;
+  issue: ImplementIssue;
+  operatorComments: Comment[];
+  ticket: Ticket;
+  bundleFiles: SpecBundleFile[];
+}
+
+interface PreparedImplementContext extends LoadedImplementContext {
+  branch: string;
+  worktreePath: string;
+}
+
+interface ImplementAttemptResult {
+  response: ImplementerResponse;
+  turn: TurnResult;
+  gateResults: ContractQualityGateResult[];
+  lastError: string | undefined;
+  commitSha: string;
+}
+
+function requireLinkedIssue(itemId: string, issueNumber: number | undefined): number {
+  if (issueNumber === undefined) {
+    throw new ImplementValidationError(
+      `project item ${itemId} has no linked issue`,
+    );
+  }
+  return issueNumber;
+}
+
+function assertImplementEntryStatus(
+  itemId: string,
+  itemStatus: string | undefined,
+): string | undefined {
+  if (itemStatus && STATUS_BLOCKING_ENTRY.has(itemStatus)) {
+    throw new ImplementValidationError(
+      `cannot enter Implement phase: item ${itemId} is in ${itemStatus}`,
+    );
+  }
+  return itemStatus;
+}
+
+async function readRequiredSpecBundle(
+  fs: ImplementFs,
+  changeName: string,
+  ticketId: string,
+): Promise<SpecBundleFile[]> {
+  const specPath = path.posix.join("openspec", "changes", changeName);
+
+  let bundleFiles: SpecBundleFile[];
+  try {
+    bundleFiles = await fs.readSpecBundle(specPath);
+  } catch (err) {
+    throw new ImplementIoError(
+      `failed to read spec bundle at ${specPath}: ${(err as Error).message}`,
+      { ticketId, cause: err },
+    );
+  }
+
+  if (bundleFiles.length === 0) {
+    throw new ImplementIoError(
+      `spec bundle at ${specPath} is empty`,
+      { ticketId },
+    );
+  }
+
+  return bundleFiles;
+}
+
+async function loadImplementContext(
+  deps: RunImplementPhaseDeps,
+  input: RunImplementPhaseInput,
+): Promise<LoadedImplementContext> {
+  const item = await deps.github.getItem(input.itemId);
+  const issueNumber = requireLinkedIssue(input.itemId, item.issueNumber);
+  const itemStatus = assertImplementEntryStatus(input.itemId, item.status);
+
+  const [issue, allComments] = await Promise.all([
+    deps.github.getIssue(issueNumber),
+    deps.github.listComments(issueNumber),
+  ]);
+
+  const ticket = buildTicket(
+    input.itemId,
+    deps.github.projectNodeId,
+    deps.github.owner,
+    deps.github.repo,
+    issue,
+  );
+
+  const bundleFiles = await readRequiredSpecBundle(
+    deps.fs,
+    input.changeName,
+    ticket.id,
+  );
+
+  return {
+    itemStatus,
+    issue,
+    operatorComments: filterOperatorComments(allComments),
+    ticket,
+    bundleFiles,
+  };
+}
+
+async function prepareImplementContext(
+  deps: RunImplementPhaseDeps,
+  input: RunImplementPhaseInput,
+  context: LoadedImplementContext,
+): Promise<PreparedImplementContext> {
+  if (context.itemStatus !== "In progress") {
+    await deps.github.setStatus(input.itemId, "In progress");
+  }
+
+  const branch = branchNameFor(context.ticket);
+  const worktree = await deps.worktree.create({
+    ticketId: context.ticket.id,
+    branch,
+  });
+
+  return {
+    ...context,
+    branch,
+    worktreePath: worktree.path,
+  };
+}
+
+async function runImplementerTurn(
+  session: ReturnType<AgentAdapter["openSession"]>,
+  deps: RunImplementPhaseDeps,
+  context: PreparedImplementContext,
+  attempt: number,
+  lastError: string | undefined,
+): Promise<{ response: ImplementerResponse; turn: TurnResult }> {
+  const retryCtx =
+    attempt === 1 || lastError === undefined
+      ? undefined
+      : { previousError: lastError, attempt };
+  const message = renderImplementerMessage(
+    context.ticket,
+    context.bundleFiles,
+    context.operatorComments,
+    retryCtx,
+  );
+
+  let turn: TurnResult;
+  try {
+    turn = await session.run(message, {
+      outputSchema: ImplementerResponseJsonSchema,
+    });
+  } catch (err) {
+    throw new ImplementAgentError(
+      "agent",
+      `implementer agent failed: ${(err as Error).message}`,
+      { ticketId: context.ticket.id, worktreePath: context.worktreePath, cause: err },
+    );
+  }
+
+  return {
+    turn,
+    response: parseImplementerResponse(turn.finalText, {
+      ticketId: context.ticket.id,
+      worktreePath: context.worktreePath,
+      latencyMs: turn.latencyMs,
+    }),
+  };
+}
+
+async function writeImplementerCommit(
+  deps: RunImplementPhaseDeps,
+  context: PreparedImplementContext,
+  response: ImplementerResponse,
+): Promise<string> {
+  try {
+    await deps.fs.writeWorktreeFiles(
+      context.worktreePath,
+      response.filesWritten,
+    );
+  } catch (err) {
+    throw new ImplementIoError(
+      `failed to write implementer files: ${(err as Error).message}`,
+      { ticketId: context.ticket.id, worktreePath: context.worktreePath, cause: err },
+    );
+  }
+
+  try {
+    await deps.git.checkoutBranch(context.branch);
+    const { sha } = await deps.git.writeTree(
+      response.filesWritten,
+      response.commitMessage,
+    );
+    return sha;
+  } catch (err) {
+    throw new ImplementGitError(
+      `commit failed: ${(err as Error).message}`,
+      { ticketId: context.ticket.id, worktreePath: context.worktreePath, cause: err },
+    );
+  }
+}
+
+async function runQualityGates(
+  deps: RunImplementPhaseDeps,
+  ticketId: string,
+  worktreePath: string,
+  now: () => Date,
+): Promise<ContractQualityGateResult[]> {
+  const gateResults: ContractQualityGateResult[] = [];
+
+  for (const gate of deps.qualityGates) {
+    const result = await deps.gateRunner.run(gate, { cwd: worktreePath });
+    gateResults.push({
+      name: result.name,
+      status: result.status,
+      durationMs: result.durationMs,
+      logsTail:
+        result.logsTail.length > 4096
+          ? result.logsTail.slice(-4096)
+          : result.logsTail,
+    });
+
+    await emitSafe(deps.events, {
+      kind: "QualityGateEvaluated",
+      ticketId,
+      phase: "implement",
+      profileId: deps.profileId,
+      ts: nowIso(now),
+      runId: deps.runId,
+      gate: gate.name,
+      status: result.status,
+      durationMs: result.durationMs,
+    });
+  }
+
+  return gateResults;
+}
+
+function describeGateFailure(
+  gateResults: ContractQualityGateResult[],
+): string | undefined {
+  const failedGateNames = gateResults
+    .filter((gate) => gate.status === "failed")
+    .map((gate) => gate.name);
+
+  return failedGateNames.length === 0
+    ? undefined
+    : `quality gates failed: ${failedGateNames.join(", ")}`;
+}
+
+async function runImplementAttempts(
+  deps: RunImplementPhaseDeps,
+  context: PreparedImplementContext,
+  now: () => Date,
+  maxAttempts: number,
+): Promise<ImplementAttemptResult> {
+  const session = deps.agent.openSession({
+    role: "implementer",
+    model: deps.implementerModel,
+    systemPrompt: IMPLEMENTER_SYSTEM_PROMPT,
+    runId: deps.runId,
+    ticketId: context.ticket.id,
+    profileId: deps.profileId,
+  });
+
+  let response: ImplementerResponse | undefined;
+  let turn: TurnResult | undefined;
+  let gateResults: ContractQualityGateResult[] = [];
+  let lastError: string | undefined;
+  let commitSha: string | undefined;
+
+  try {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const turnResult = await runImplementerTurn(
+        session,
+        deps,
+        context,
+        attempt,
+        lastError,
+      );
+      response = turnResult.response;
+      turn = turnResult.turn;
+      commitSha = await writeImplementerCommit(deps, context, response);
+      gateResults = await runQualityGates(
+        deps,
+        context.ticket.id,
+        context.worktreePath,
+        now,
+      );
+      lastError = describeGateFailure(gateResults);
+
+      if (lastError === undefined) {
+        break;
+      }
+    }
+  } finally {
+    if (session.close) await session.close();
+  }
+
+  if (!response || !turn || !commitSha) {
+    throw new ImplementPhaseError(
+      "validation",
+      "implement phase produced no response",
+    );
+  }
+
+  return {
+    response,
+    turn,
+    gateResults,
+    lastError,
+    commitSha,
+  };
+}
+
+async function publishPullRequest(
+  deps: RunImplementPhaseDeps,
+  context: PreparedImplementContext,
+  commitSha: string,
+  summary: string,
+): Promise<ImplementPullRequest> {
+  try {
+    await deps.github.pushBranch(context.branch, commitSha);
+    return await deps.github.upsertPullRequest({
+      head: context.branch,
+      base: deps.baseBranch,
+      title: `${context.ticket.id}: ${context.ticket.title}`,
+      body: `Closes ${context.ticket.url}\n\n${summary}`,
+    });
+  } catch (err) {
+    if (err instanceof GitHubPushRejectedError) {
+      throw new ImplementGitError(
+        `push rejected for ${context.branch}`,
+        {
+          ticketId: context.ticket.id,
+          worktreePath: context.worktreePath,
+          code: "push_rejected",
+          cause: err,
+        },
+      );
+    }
+    throw err;
+  }
+}
+
+function buildImplementResult(
+  status: ImplementStatus,
+  ticketId: string,
+  worktreePath: string | undefined,
+  summary: string,
+  gateResults: ContractQualityGateResult[],
+  pr: ImplementPullRequest | undefined,
+): ImplementResult {
+  const result: ImplementResult = {
+    status,
+    ticketId,
+    ...(worktreePath !== undefined ? { worktreePath } : {}),
+    summary,
+  };
+
+  if (status === "pr_opened" && pr) {
+    result.result = ImplementationResultSchema.parse({
+      pr: {
+        number: pr.number,
+        url: pr.url,
+        branch: pr.branch,
+        baseBranch: pr.baseBranch,
+        headSha: pr.headSha,
+      },
+      qualityGates: gateResults,
+      summary,
+    });
+  }
+
+  return result;
+}
+
+function rethrowWithWorktreePath(
+  err: unknown,
+  ticketId: string,
+  worktreePath: string | undefined,
+): never {
+  if (
+    err instanceof ImplementPhaseError &&
+    worktreePath !== undefined &&
+    err.worktreePath === undefined
+  ) {
+    throw new ImplementPhaseError(err.code, err.message, {
+      ticketId: err.ticketId ?? ticketId,
+      worktreePath,
+      ...(err.latencyMs !== undefined ? { latencyMs: err.latencyMs } : {}),
+      cause: err,
+    });
+  }
+
+  throw err;
+}
+
 export async function runImplementPhase(
   deps: RunImplementPhaseDeps,
   input: RunImplementPhaseInput,
@@ -205,255 +605,63 @@ export async function runImplementPhase(
   let ticketId = input.itemId;
 
   try {
-    const item = await deps.github.getItem(input.itemId);
-    if (item.issueNumber === undefined) {
-      throw new ImplementValidationError(
-        `project item ${input.itemId} has no linked issue`,
-      );
-    }
-    const itemStatus = item.status;
-    if (itemStatus && STATUS_BLOCKING_ENTRY.has(itemStatus)) {
-      throw new ImplementValidationError(
-        `cannot enter Implement phase: item ${input.itemId} is in ${itemStatus}`,
-      );
-    }
+    const loaded = await loadImplementContext(deps, input);
+    ticketId = loaded.ticket.id;
 
-    const issue = await deps.github.getIssue(item.issueNumber);
-    const allComments = await deps.github.listComments(item.issueNumber);
-    const operatorComments = filterOperatorComments(allComments);
-    const ticket = buildTicket(
-      input.itemId,
-      deps.github.projectNodeId,
-      deps.github.owner,
-      deps.github.repo,
-      issue,
+    const prepared = await prepareImplementContext(deps, input, loaded);
+    worktreePath = prepared.worktreePath;
+
+    const attemptResult = await runImplementAttempts(
+      deps,
+      prepared,
+      now,
+      maxAttempts,
     );
-    ticketId = ticket.id;
-
-    // Read the spec bundle up front so a missing file fails before any
-    // transitions or worktree work.
-    const specPath = path.posix.join("openspec", "changes", input.changeName);
-    let bundleFiles: SpecBundleFile[];
-    try {
-      bundleFiles = await deps.fs.readSpecBundle(specPath);
-    } catch (err) {
-      throw new ImplementIoError(
-        `failed to read spec bundle at ${specPath}: ${(err as Error).message}`,
-        { ticketId, cause: err },
-      );
-    }
-    if (bundleFiles.length === 0) {
-      throw new ImplementIoError(
-        `spec bundle at ${specPath} is empty`,
-        { ticketId },
-      );
-    }
-
-    // Pre-transition: Ready → In progress (skip when already there).
-    if (itemStatus !== "In progress") {
-      await deps.github.setStatus(input.itemId, "In progress");
-    }
-
-    const branch = branchNameFor(ticket);
-    const wt = await deps.worktree.create({ ticketId: ticket.id, branch });
-    worktreePath = wt.path;
-
-    const bundle: SpecBundle = {
-      specPath,
-      branch,
-      openQuestions: [],
-      assumptions: [],
-      risks: [],
-      commitSha: "0".repeat(40),
-    };
-    void bundle; // downstream consumers may project from this shape
-
-    const implSession = deps.agent.openSession({
-      role: "implementer",
-      model: deps.implementerModel,
-      systemPrompt: IMPLEMENTER_SYSTEM_PROMPT,
-      runId: deps.runId,
-      ticketId: ticket.id,
-      profileId: deps.profileId,
-    });
-
-    let implResponse: ImplementerResponse | undefined;
-    let implTurn: TurnResult | undefined;
-    let gateResults: ContractQualityGateResult[] = [];
-    let lastError: string | undefined;
-    let commitSha: string | undefined;
-
-    try {
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        const retryCtx =
-          attempt === 1 || lastError === undefined
-            ? undefined
-            : { previousError: lastError, attempt };
-        const msg = renderImplementerMessage(
-          ticket,
-          bundleFiles,
-          operatorComments,
-          retryCtx,
+    const needsInput = attemptResult.lastError !== undefined;
+    const pr = needsInput
+      ? undefined
+      : await publishPullRequest(
+          deps,
+          prepared,
+          attemptResult.commitSha,
+          attemptResult.response.summary,
         );
-        let turn: TurnResult;
-        try {
-          turn = await implSession.run(msg, {
-            outputSchema: ImplementerResponseJsonSchema,
-          });
-        } catch (err) {
-          throw new ImplementAgentError(
-            "agent",
-            `implementer agent failed: ${(err as Error).message}`,
-            { ticketId: ticket.id, worktreePath, cause: err },
-          );
-        }
-        implTurn = turn;
-        implResponse = parseImplementerResponse(turn.finalText, {
-          ticketId: ticket.id,
-          worktreePath,
-          latencyMs: turn.latencyMs,
-        });
-
-        // Write files into the worktree + commit on the ticket branch.
-        try {
-          await deps.fs.writeWorktreeFiles(wt.path, implResponse.filesWritten);
-        } catch (err) {
-          throw new ImplementIoError(
-            `failed to write implementer files: ${(err as Error).message}`,
-            { ticketId: ticket.id, worktreePath, cause: err },
-          );
-        }
-        try {
-          await deps.git.checkoutBranch(branch);
-          const { sha } = await deps.git.writeTree(
-            implResponse.filesWritten,
-            implResponse.commitMessage,
-          );
-          commitSha = sha;
-        } catch (err) {
-          throw new ImplementGitError(
-            `commit failed: ${(err as Error).message}`,
-            { ticketId: ticket.id, worktreePath, cause: err },
-          );
-        }
-
-        // Quality gates.
-        gateResults = [];
-        let anyFailed = false;
-        for (const gate of deps.qualityGates) {
-          const r = await deps.gateRunner.run(gate, { cwd: wt.path });
-          gateResults.push({
-            name: r.name,
-            status: r.status,
-            durationMs: r.durationMs,
-            logsTail: r.logsTail.length > 4096 ? r.logsTail.slice(-4096) : r.logsTail,
-          });
-          await emitSafe(deps.events, {
-            kind: "QualityGateEvaluated",
-            ticketId: ticket.id,
-            phase: "implement",
-            profileId: deps.profileId,
-            ts: nowIso(now),
-            runId: deps.runId,
-            gate: gate.name,
-            status: r.status,
-            durationMs: r.durationMs,
-          });
-          if (r.status === "failed") anyFailed = true;
-        }
-        if (!anyFailed) {
-          lastError = undefined;
-          break;
-        }
-        lastError = `quality gates failed: ${gateResults
-          .filter((g) => g.status === "failed")
-          .map((g) => g.name)
-          .join(", ")}`;
-        if (attempt >= maxAttempts) break;
-      }
-    } finally {
-      if (implSession.close) await implSession.close();
-    }
-
-    if (!implResponse || !implTurn || !commitSha) {
-      throw new ImplementPhaseError("validation", "implement phase produced no response");
-    }
-
-    const needsInput = lastError !== undefined;
-
-    let pr:
-      | { number: number; url: string; branch: string; baseBranch: string; headSha: string }
-      | undefined;
-
-    if (!needsInput) {
-      try {
-        await deps.github.pushBranch(branch, commitSha);
-        pr = await deps.github.upsertPullRequest({
-          head: branch,
-          base: deps.baseBranch,
-          title: `${ticket.id}: ${ticket.title}`,
-          body: `Closes ${ticket.url}\n\n${implResponse.summary}`,
-        });
-      } catch (err) {
-        if (err instanceof GitHubPushRejectedError) {
-          throw new ImplementGitError(
-            `push rejected for ${branch}`,
-            {
-              ticketId: ticket.id,
-              worktreePath,
-              code: "push_rejected",
-              cause: err,
-            },
-          );
-        }
-        throw err;
-      }
-    }
 
     const status: ImplementStatus = needsInput ? "needs_input" : "pr_opened";
     const summary = formatSummary(
       status,
-      gateResults,
+      attemptResult.gateResults,
       pr ? { number: pr.number, url: pr.url } : undefined,
-      implResponse,
+      attemptResult.response,
     );
 
-    await deps.github.upsertComment(issue.number, "implement:summary", summary);
+    await deps.github.upsertComment(
+      prepared.issue.number,
+      "implement:summary",
+      summary,
+    );
 
     await deps.github.setStatus(
       input.itemId,
       status === "pr_opened" ? "In review" : "Blocked",
     );
 
-    const baseResult: ImplementResult = {
+    const result = buildImplementResult(
       status,
-      ticketId: ticket.id,
-      ...(worktreePath !== undefined ? { worktreePath } : {}),
+      prepared.ticket.id,
+      worktreePath,
       summary,
-    };
-
-    if (status === "pr_opened" && pr) {
-      const result: ImplementationResult = ImplementationResultSchema.parse({
-        pr: {
-          number: pr.number,
-          url: pr.url,
-          branch: pr.branch,
-          baseBranch: pr.baseBranch,
-          headSha: pr.headSha,
-        },
-        qualityGates: gateResults,
-        summary,
-      });
-      baseResult.result = result;
-    }
+      attemptResult.gateResults,
+      pr,
+    );
 
     // Success: clean up the worktree. On failure we leave it for triage.
-    await deps.worktree.remove(wt.path);
+    await deps.worktree.remove(prepared.worktreePath);
     worktreePath = undefined;
 
     await emitSafe(deps.events, {
       kind: "PhaseCompleted",
-      ticketId: ticket.id,
+      ticketId: prepared.ticket.id,
       phase: "implement",
       profileId: deps.profileId,
       ts: nowIso(now),
@@ -462,12 +670,12 @@ export async function runImplementPhase(
       durationMs: Date.now() - start,
       cost: 0,
       tokens: {
-        input: implTurn.usage.input_tokens,
-        output: implTurn.usage.output_tokens,
+        input: attemptResult.turn.usage.input_tokens,
+        output: attemptResult.turn.usage.output_tokens,
       },
     });
 
-    return baseResult;
+    return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await emitSafe(deps.events, {
@@ -484,18 +692,6 @@ export async function runImplementPhase(
       },
       durationMs: Date.now() - start,
     });
-    if (err instanceof ImplementPhaseError) {
-      if (worktreePath !== undefined && err.worktreePath === undefined) {
-        // Attach the worktree path for post-mortem by throwing a fresh
-        // error of the same code. Keeps the chain intact via `cause`.
-        throw new ImplementPhaseError(err.code, err.message, {
-          ticketId: err.ticketId ?? ticketId,
-          worktreePath,
-          ...(err.latencyMs !== undefined ? { latencyMs: err.latencyMs } : {}),
-          cause: err,
-        });
-      }
-    }
-    throw err;
+    rethrowWithWorktreePath(err, ticketId, worktreePath);
   }
 }
