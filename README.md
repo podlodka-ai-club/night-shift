@@ -6,10 +6,13 @@ See [`openspec/project.md`](openspec/project.md) for the project context and [`o
 
 ## Modules
 
-- [`src/contracts/`](src/contracts/) — shared phase contracts (Ticket, I/O schemas, observability events). All downstream phases depend on this. Spec: [`openspec/changes/phase-contracts/specs/phase-contracts/spec.md`](openspec/changes/phase-contracts/specs/phase-contracts/spec.md).
+- [`src/contracts/`](src/contracts/) — shared phase contracts (Ticket, I/O schemas, observability events). All downstream phases depend on this.
+- [`src/adapters/`](src/adapters/) — normalised agent-SDK interface + provider adapters (Codex, Claude stub, in-memory fake). See [`src/adapters/README.md`](src/adapters/README.md).
+- [`src/config/`](src/config/) — `night-shift.config.*` loader and `NightShiftConfigSchema`. See [`src/config/README.md`](src/config/README.md).
 
 ## Scripts
 
 - `npm run typecheck` — `tsc --noEmit`
 - `npm test` — run Vitest suites
 - `npm run lint:contracts` — guardrail: `src/contracts/**` imports only `zod` and siblings
+- `npm run lint:boundaries` — guardrail: enforce import boundaries for `contracts`, `adapters`, and `config` modules

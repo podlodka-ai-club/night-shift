@@ -11,9 +11,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint:contracts": "node scripts/check-contracts-imports.mjs"
+    "lint:contracts": "node scripts/check-contracts-imports.mjs",
+    "lint:boundaries": "node scripts/check-boundaries.mjs"
   },
   "dependencies": {
+    "@openai/codex-sdk": "^0.124.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
