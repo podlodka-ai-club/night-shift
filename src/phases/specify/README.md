@@ -40,10 +40,10 @@ Exit codes: `0` refined, `2` needs_input, `1` error, `64` usage.
 
 ```ts
 import { runSpecifyPhase } from "./phase.js";
-import { createInMemoryFakeGitHubClient } from "../../github/fake.js";
-import { createInMemoryFakeGitOps } from "../../git/fake.js";
+import { createInMemoryFakeGitHubClient } from "../../github/__test__/fake.js";
+import { createInMemoryFakeGitOps } from "../../git/__test__/fake.js";
 import { createFakeOpenSpecCli } from "./openspec-cli.js";
-import { InMemoryFakeAdapter } from "../../adapters/fake.js";
+import { InMemoryFakeAdapter } from "../../adapters/__test__/fake.js";
 
 const gh = createInMemoryFakeGitHubClient();
 gh.seedIssue({ number: 1 });

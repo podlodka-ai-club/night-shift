@@ -14,7 +14,7 @@ import type {
 
 export { CodexAdapter } from "./codex.js";
 export { ClaudeAgentAdapter } from "./claude-agent.js";
-export { InMemoryFakeAdapter } from "./fake.js";
+export { InMemoryFakeAdapter } from "./__test__/fake.js";
 export { instrumentSession } from "./instrumented.js";
 export { PRICING, computeCost } from "./pricing.js";
 export * from "./types.js";
