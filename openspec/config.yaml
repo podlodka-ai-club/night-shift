@@ -1,0 +1,79 @@
+schema: spec-driven
+
+context: |
+  # Night Shift
+
+  **Mission:** Turn tickets into reviewable PRs with measurable quality, cost,
+  and latency — so human engineers spend their time on the work that actually
+  needs them.
+
+  ## Key Principles
+  - Deterministic baseline workflow, agentic orchestration on top
+  - Extendable to adopt for project needs
+  - Support experiments to find the best setup in practice
+
+  ## Architecture
+
+  ### Baseline Flow (Milestone 1)
+  Three independent phases with clear I/O contracts (no direct dependencies):
+
+      Ticket ──▶ [ Specify ] ──▶ [ Implement ] ──▶ [ Review ] ──▶ PR
+
+  Each phase reads its input contract and produces its output contract.
+  Phases can be run, tested, and replaced independently.
+
+  ### Agent Orchestrator (Milestone 2)
+  An orchestrator agent that:
+  - Delegates to agents executing the Specify / Implement / Review phases
+  - Handles errors and re-iterations
+  - Escalates to human engineers when needed
+
+  ### Extensibility API (Milestone 3)
+  Developer-friendly API to change models and behavior of each flow phase
+  independently. Projects can customize any phase without forking.
+
+  ### Experiments Support (Milestone 4)
+  Execute experiments with several profiles (sets of configurations) completing
+  a ticket in parallel to compare quality, cost, and latency across setups.
+
+  ## Milestone 1 Tech Decisions
+
+  - **Language/Runtime:** Node.js + TypeScript
+  - **Workflow engine:** Temporal (local dev server for M1); one worker process
+    + CLI; Temporal provides visualisation, observability, traceability
+  - **Agent providers:** Claude Agent SDK and Codex SDK behind adapters; no tool
+    restrictions; future providers planned
+  - **Agent roles (M1 defaults):** specifier / implementer / reviewer all use
+    Codex + GPT-5.4
+  - **Ticket source:** GitHub Projects v2 (GraphQL + Octokit webhooks);
+    webhook-driven with polling fallback when no public ingress available
+  - **Status column values (single-select):** Backlog, Refinement, Refined,
+    Ready, In progress, In review, Ready to merge
+  - **Working repo:** GitHub; one branch per ticket; specs live in
+    `openspec/changes/<ticket-id>/`; link posted in ticket description with
+    open questions / assumptions / risks highlighted; no separate spec PR
+  - **Execution sandbox:** fresh `git worktree` per ticket under
+    `.night-shift/worktrees/<ticket-id>/`; always cleaned on success; kept on
+    failure and auto-cleaned after 24h
+  - **Quality gates:** configurable per repo via `night-shift.config.ts`;
+    default set = `tsc --noEmit` + tests + lint
+  - **Review loop:** reviewer consumes diff + specs; max 2 fix iterations;
+    only error-level findings trigger a fix loop, warnings are commented;
+    escalation via GitHub label + comment after limit hit
+  - **Config and secrets:** `night-shift.config.ts` at repo root; secrets
+    loaded from `.env` via dotenv (GITHUB_TOKEN, webhook secret, Codex/OpenAI
+    creds, Anthropic creds)
+  - **Dogfooding:** the orchestrator works on its own repo from day one and is
+    used to develop further milestones
+
+  ## Milestone 1 Change Plan
+
+  M1 is split into 7 OpenSpec changes, built in this order:
+
+  1. `phase-contracts` — ticket model + I/O contracts between phases
+  2. `agent-adapter-api` — provider-agnostic adapter; Codex adapter; role/model config
+  3. `github-integration` — Projects v2 webhooks, status transitions, branch/PR/comment/label ops
+  4. `specify-phase` — Backlog → Refinement → Refined; writes OpenSpec folder + ticket description
+  5. `implement-phase` — Ready → In progress → In review; worktree, implementer + subagent review, quality gates, PR
+  6. `review-phase` — In review → Ready to merge (or escalation); max 2 error-fix loops
+  7. `orchestration-runtime` — Temporal worker + CLI + observability composing the 3 phases
