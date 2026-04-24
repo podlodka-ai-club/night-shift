@@ -1,5 +1,5 @@
 import type { OpenPROpts } from "./prs.js";
-import type { Issue, PRRef, ProjectItem, StatusName } from "./types.js";
+import type { Comment, Issue, PRRef, ProjectItem, StatusName } from "./types.js";
 
 export interface GitHubClient {
   readonly owner: string;
@@ -13,6 +13,7 @@ export interface GitHubClient {
 
   // Issues & comments
   getIssue(issueNumber: number): Promise<Issue>;
+  listComments(issueNumber: number): Promise<Comment[]>;
   addLabels(issueNumber: number, labels: string[]): Promise<void>;
   removeLabel(issueNumber: number, label: string): Promise<void>;
   upsertComment(

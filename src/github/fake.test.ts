@@ -30,6 +30,23 @@ describe("InMemoryFakeGitHubClient", () => {
     expect(first.commentId).toBe(second.commentId);
   });
 
+  it("listComments returns seeded comments in insertion order", async () => {
+    const c = createInMemoryFakeGitHubClient();
+    c.seedIssue({ number: 42 });
+    await c.upsertComment(42, "m1", "a");
+    await c.upsertComment(42, "m2", "b");
+    const comments = await c.listComments(42);
+    expect(comments).toHaveLength(2);
+    expect(comments[0]!.body).toContain("night-shift:marker=m1");
+    expect(comments[1]!.body).toContain("night-shift:marker=m2");
+  });
+
+  it("listComments returns [] for issues with no comments", async () => {
+    const c = createInMemoryFakeGitHubClient();
+    c.seedIssue({ number: 7 });
+    await expect(c.listComments(7)).resolves.toEqual([]);
+  });
+
   it("opens PRs with incrementing numbers and can toggle draft", async () => {
     const c = createInMemoryFakeGitHubClient();
     await c.createBranch("night-shift/t-1");

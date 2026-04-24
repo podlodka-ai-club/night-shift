@@ -177,6 +177,16 @@ export function createInMemoryFakeGitHubClient(config?: {
       i.comments.push({ id, body: bodyWithMarker });
       return { commentId: id };
     },
+    async listComments(issueNumber) {
+      log("listComments", { issueNumber });
+      const i = mustIssue(issueNumber);
+      return i.comments.map((c) => ({
+        id: c.id,
+        body: c.body,
+        createdAt: "1970-01-01T00:00:00Z",
+        updatedAt: "1970-01-01T00:00:00Z",
+      }));
+    },
 
     async createBranch(branch, fromRef) {
       log("createBranch", { branch, ...(fromRef !== undefined ? { fromRef } : {}) });

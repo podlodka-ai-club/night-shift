@@ -13,7 +13,7 @@ describe("StatusNameSchema", () => {
     }
   });
   it("rejects unknown statuses", () => {
-    expect(() => StatusNameSchema.parse("Blocked")).toThrow();
+    expect(() => StatusNameSchema.parse("Wontfix")).toThrow();
   });
 });
 

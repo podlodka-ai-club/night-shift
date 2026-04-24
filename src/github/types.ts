@@ -9,6 +9,7 @@ export const STATUS_NAMES = [
   "In progress",
   "In review",
   "Ready to merge",
+  "Blocked",
 ] as const;
 
 export const StatusNameSchema = z.enum(STATUS_NAMES);

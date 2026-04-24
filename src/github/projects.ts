@@ -31,6 +31,7 @@ const STATUS_COLORS: Record<StatusName, string> = {
   "In progress": "YELLOW",
   "In review": "PURPLE",
   "Ready to merge": "GREEN",
+  Blocked: "RED",
 };
 
 const FIELDS_QUERY = /* GraphQL */ `

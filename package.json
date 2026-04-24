@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint:contracts": "node scripts/check-contracts-imports.mjs",
-    "lint:boundaries": "node scripts/check-boundaries.mjs"
+    "lint:boundaries": "node scripts/check-boundaries.mjs",
+    "specify": "tsx src/cli/specify.ts"
   },
   "dependencies": {
     "@octokit/auth-app": "^8.2.0",
@@ -21,11 +22,14 @@
     "@octokit/rest": "^22.0.1",
     "@octokit/webhooks": "^14.2.0",
     "@openai/codex-sdk": "^0.124.0",
-    "zod": "^3.23.8"
+    "simple-git": "^3.36.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "nock": "^14.0.13",
+    "tsx": "^4.21.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   }

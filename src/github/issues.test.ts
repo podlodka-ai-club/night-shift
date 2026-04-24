@@ -3,6 +3,7 @@ import {
   addLabels,
   ensureLabel,
   getIssue,
+  listComments,
   markerLine,
   removeLabel,
   upsertComment,
@@ -128,5 +129,37 @@ describe("upsertComment", () => {
     const out = await upsertComment(rest, "o", "r", 1, "specify:open-questions", "Q");
     expect(out.commentId).toBe(999);
     expect(calls[1]!.route).toContain("POST");
+  });
+});
+
+describe("listComments", () => {
+  it("returns [] for an issue with no comments", async () => {
+    const { rest } = makeRest([{ data: [] }]);
+    const out = await listComments(rest, "o", "r", 42);
+    expect(out).toEqual([]);
+  });
+
+  it("paginates until a short page", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({
+      id: i + 1,
+      body: `b${i + 1}`,
+      user: { login: "u" },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }));
+    const page2 = Array.from({ length: 50 }, (_, i) => ({
+      id: i + 101,
+      body: `b${i + 101}`,
+      user: { login: "u" },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    }));
+    const { rest, calls } = makeRest([{ data: page1 }, { data: page2 }]);
+    const out = await listComments(rest, "o", "r", 42);
+    expect(out).toHaveLength(150);
+    expect(out[0]!.id).toBe(1);
+    expect(out[149]!.id).toBe(150);
+    expect((calls[0]!.params as { page: number }).page).toBe(1);
+    expect((calls[1]!.params as { page: number }).page).toBe(2);
   });
 });

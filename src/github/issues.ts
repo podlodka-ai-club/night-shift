@@ -1,6 +1,6 @@
 import { retryable } from "./retry.js";
 import { GitHubNotFoundError } from "./errors.js";
-import { type Issue, IssueSchema } from "./types.js";
+import { type Comment, CommentSchema, type Issue, IssueSchema } from "./types.js";
 
 /**
  * Minimal Octokit REST surface we depend on. Satisfied by an `Octokit`
@@ -116,6 +116,53 @@ export async function removeLabel(
 
 export function markerLine(markerId: string): string {
   return `<!-- night-shift:marker=${markerId} -->`;
+}
+
+export async function listComments(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+): Promise<Comment[]> {
+  const out: Comment[] = [];
+  let page = 1;
+  const perPage = 100;
+  // Paginate by incrementing `page` until we get a short page back.
+  // GitHub's default sort for issue comments is ascending by created_at.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data } = await retryable(() =>
+      rest.request<
+        Array<{
+          id: number;
+          body: string | null;
+          user?: { login: string } | null;
+          created_at: string;
+          updated_at: string;
+        }>
+      >("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+        owner,
+        repo,
+        issue_number: issueNumber,
+        per_page: perPage,
+        page,
+      }),
+    );
+    for (const c of data) {
+      out.push(
+        CommentSchema.parse({
+          id: c.id,
+          body: c.body ?? "",
+          authorLogin: c.user?.login,
+          createdAt: c.created_at,
+          updatedAt: c.updated_at,
+        }),
+      );
+    }
+    if (data.length < perPage) break;
+    page += 1;
+  }
+  return out;
 }
 
 export async function upsertComment(

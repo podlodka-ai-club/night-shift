@@ -8,6 +8,7 @@ import {
   addLabels,
   ensureLabel,
   getIssue,
+  listComments,
   removeLabel,
   upsertComment,
 } from "./issues.js";
@@ -124,6 +125,9 @@ export async function createGitHubClient(
 
     async getIssue(issueNumber) {
       return getIssue(rest, owner, repo, issueNumber);
+    },
+    async listComments(issueNumber) {
+      return listComments(rest, owner, repo, issueNumber);
     },
     async addLabels(issueNumber, labels) {
       await run(() => addLabels(rest, owner, repo, issueNumber, labels));

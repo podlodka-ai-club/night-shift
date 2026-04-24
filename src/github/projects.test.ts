@@ -75,6 +75,7 @@ describe("ensureStatusOptions", () => {
       e: "In progress",
       f: "In review",
       g: "Ready to merge",
+      h: "Blocked",
     };
     const { gql, calls } = makeGql([]);
     const resolved = await ensureStatusOptions(gql, {
@@ -85,6 +86,7 @@ describe("ensureStatusOptions", () => {
     expect(calls).toHaveLength(0);
     expect(resolved.statusOptionIds.Backlog).toBe("a");
     expect(resolved.statusOptionIds["Ready to merge"]).toBe("g");
+    expect(resolved.statusOptionIds.Blocked).toBe("h");
   });
 
   it("sends one mutation adding missing options (existing preserved)", async () => {
@@ -102,6 +104,7 @@ describe("ensureStatusOptions", () => {
               { id: "new4", name: "In progress" },
               { id: "new5", name: "In review" },
               { id: "new6", name: "Ready to merge" },
+              { id: "new7", name: "Blocked" },
             ],
           },
         },
@@ -117,7 +120,9 @@ describe("ensureStatusOptions", () => {
       .input.singleSelectOptions;
     expect(input.map((o) => o.name)).toContain("Backlog");
     expect(input.map((o) => o.name)).toContain("Ready to merge");
+    expect(input.map((o) => o.name)).toContain("Blocked");
     expect(resolved.statusOptionIds["Ready to merge"]).toBe("new6");
+    expect(resolved.statusOptionIds.Blocked).toBe("new7");
   });
 
   it("throws ConfigError when missing and manage=false", async () => {

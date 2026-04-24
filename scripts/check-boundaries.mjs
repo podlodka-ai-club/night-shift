@@ -65,6 +65,69 @@ const MODULES = [
       internal: ["src/contracts", "src/github"],
     },
   },
+  {
+    name: "git",
+    dir: join(SRC, "git"),
+    allowed: {
+      externals: new Set([
+        "zod",
+        "simple-git",
+        "node:fs/promises",
+        "node:path",
+        "node:os",
+      ]),
+      internal: ["src/contracts", "src/git"],
+    },
+  },
+  {
+    name: "phases",
+    dir: join(SRC, "phases"),
+    allowed: {
+      externals: new Set([
+        "zod",
+        "zod-to-json-schema",
+        "node:fs",
+        "node:fs/promises",
+        "node:path",
+        "node:child_process",
+        "node:timers/promises",
+        "node:os",
+        "node:util",
+      ]),
+      internal: [
+        "src/contracts",
+        "src/adapters",
+        "src/github",
+        "src/git",
+        "src/config",
+        "src/phases",
+      ],
+    },
+  },
+  {
+    name: "cli",
+    dir: join(SRC, "cli"),
+    allowed: {
+      externals: new Set([
+        "zod",
+        "simple-git",
+        "node:fs",
+        "node:fs/promises",
+        "node:path",
+        "node:process",
+        "node:util",
+      ]),
+      internal: [
+        "src/contracts",
+        "src/adapters",
+        "src/github",
+        "src/git",
+        "src/config",
+        "src/phases",
+        "src/cli",
+      ],
+    },
+  },
 ];
 
 /** @param {string} dir */
