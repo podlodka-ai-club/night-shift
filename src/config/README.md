@@ -10,6 +10,7 @@ type NightShiftConfig = {
   roles: Record<AgentRole, AgentRoleConfig>;
   qualityGates?: Record<string, unknown>;
   adapters?: { codex?: Record<string, unknown> };
+  github?: GitHubConfig;
 };
 
 type AgentRoleConfig = {
@@ -48,5 +49,14 @@ a populated example.
 ## Module boundary
 
 `src/config/**` may import from `src/contracts/**`, `src/adapters/**`,
-`zod`, `node:fs`, `node:path`, `node:url`, and its own siblings. It MUST NOT
-be imported (at runtime) by anything under `src/adapters/`.
+`src/github/**` (for `GitHubConfigSchema` only), `zod`, `node:fs`,
+`node:path`, `node:url`, and its own siblings. It MUST NOT be imported (at
+runtime) by anything under `src/adapters/`.
+
+## `github` section
+
+The optional `github` field is a `GitHubConfigSchema` (see
+[`src/github/README.md`](../github/README.md)). It configures the GitHub
+App credentials, target repo, and Projects v2 node id that
+`createGitHubClient` uses at runtime. Leave it unset to run with the
+in-memory fake during local development.

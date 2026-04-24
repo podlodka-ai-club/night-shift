@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AgentRoleSchema } from "../adapters/types.js";
+import { GitHubConfigSchema } from "../github/types.js";
 
 export const ProviderSchema = z.enum(["codex", "claude-agent"]);
 export type Provider = z.infer<typeof ProviderSchema>;
@@ -36,8 +37,10 @@ export const NightShiftConfigSchema = z.object({
   roles: z.record(AgentRoleSchema, AgentRoleConfigSchema),
   qualityGates: QualityGatesConfigSchema.optional(),
   adapters: AdaptersConfigSchema.optional(),
+  github: GitHubConfigSchema.optional(),
 });
-export type NightShiftConfig = z.infer<typeof NightShiftConfigSchema>;
+export type NightShiftConfig = z.input<typeof NightShiftConfigSchema>;
+export type ResolvedNightShiftConfig = z.infer<typeof NightShiftConfigSchema>;
 
 /**
  * Default configuration used when no `night-shift.config.*` file is found.

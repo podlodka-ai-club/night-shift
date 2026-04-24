@@ -40,6 +40,21 @@ const config: NightShiftConfig = {
     lint: true,
     test: true,
   },
+  // Optional: enable real GitHub integration. Omit this block to run
+  // with the in-memory fake (see `src/github/fake.ts`).
+  github: {
+    appId: 123456,
+    installationId: 7890123,
+    // Provide EXACTLY ONE of privateKey or privateKeyPath.
+    privateKeyPath: "./.secrets/night-shift.pem",
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET ?? "change-me",
+    owner: "acme",
+    repo: "widgets",
+    projectNodeId: "PVT_kwDOABC123",
+    // Defaults:
+    // statusFieldName: "Status",
+    // manageStatusOptions: true,
+  },
 };
 
 export default config;

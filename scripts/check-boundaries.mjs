@@ -43,7 +43,26 @@ const MODULES = [
         "node:path",
         "node:url",
       ]),
-      internal: ["src/contracts", "src/adapters", "src/config"],
+      internal: ["src/contracts", "src/adapters", "src/config", "src/github"],
+    },
+  },
+  {
+    name: "github",
+    dir: join(SRC, "github"),
+    allowed: {
+      externals: new Set([
+        "zod",
+        "@octokit/core",
+        "@octokit/rest",
+        "@octokit/graphql",
+        "@octokit/webhooks",
+        "@octokit/auth-app",
+        "node:crypto",
+        "node:fs/promises",
+        "node:path",
+        "node:timers/promises",
+      ]),
+      internal: ["src/contracts", "src/github"],
     },
   },
 ];
