@@ -22,7 +22,7 @@ or `Blocked` (needs input).
 | dep          | purpose                                                  |
 | ------------ | -------------------------------------------------------- |
 | `github`     | read item/issue/comments; transitions; comment upsert; branch |
-| `git`        | checkout ticket branch + commit specifier output         |
+| `git`        | anchor to the base branch, checkout the ticket branch, commit specifier output |
 | `fs`         | load prior change-folder files for revision round-trips  |
 | `agent`      | run the specifier role against the configured provider   |
 | `openspecCli`| strict-validate the produced change folder               |

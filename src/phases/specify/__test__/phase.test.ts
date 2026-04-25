@@ -311,6 +311,66 @@ describe("runSpecifyPhase", () => {
     expect(capturedPrompt).toContain("old rationale");
   });
 
+  it("checks out the base branch first and creates the ticket branch from that base", async () => {
+    const gh = createInMemoryFakeGitHubClient();
+    gh.seedIssue({ number: 62, title: "t" });
+    gh.seedItem({ itemId: "PVTI_62", issueNumber: 62, status: "Backlog" });
+    const cli = createFakeOpenSpecCli();
+    cli.script([{ ok: true }]);
+    const agent = new InMemoryFakeAdapter({
+      script: [{ events: [], finalText: goodResponseJson(), usage: baseUsage() }],
+    });
+    const checkouts: Array<{ branch: string; opts?: { startPoint?: string; preferRemote?: boolean } }> = [];
+    const git = {
+      async checkoutBranch(branch: string, opts?: { startPoint?: string; preferRemote?: boolean }) {
+        checkouts.push({ branch, ...(opts !== undefined ? { opts } : {}) });
+      },
+      async pushBranch() {},
+      async remoteHeadSha() {
+        return null;
+      },
+      async writeTree() {
+        return { sha: "a100000000000000000000000000000000000000" };
+      },
+      async currentHeadSha() {
+        return "a100000000000000000000000000000000000000";
+      },
+      async diffAgainstBase() {
+        return "";
+      },
+    };
+
+    const result = await runSpecifyPhase(
+      {
+        github: gh,
+        git,
+        fs: fakeFs(),
+        agent,
+        openspecCli: cli,
+        runId: "r",
+        profileId: "p",
+        model: "m",
+        baseBranch: "main",
+      },
+      { itemId: "PVTI_62", changeName: "x" },
+    );
+
+    expect(result.status).toBe("refined");
+    expect(checkouts).toEqual([
+      { branch: "main", opts: { preferRemote: true } },
+      {
+        branch: result.bundle!.branch,
+        opts: { startPoint: "main", preferRemote: true },
+      },
+    ]);
+
+    const createBranchCall = gh.events.find((event) => event.kind === "createBranch");
+    expect(createBranchCall?.args).toMatchObject({
+      branch: result.bundle!.branch,
+      fromRef: "heads/main",
+    });
+  });
+
   it("passes workingDirectory to the specifier session when provided", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 61, title: "t" });

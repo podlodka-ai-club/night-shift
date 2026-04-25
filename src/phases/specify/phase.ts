@@ -303,10 +303,13 @@ export async function runSpecifyPhase(
       await deps.github.setStatus(input.itemId, "Refinement");
     }
 
-    // 3. Ensure branch exists (idempotent).
+    // 3. Ensure the ticket branch exists off the configured base branch.
+    const baseBranch = deps.baseBranch ?? "main";
+    await deps.git.checkoutBranch(baseBranch, { preferRemote: true });
+
     const branch = branchNameFor(ticket);
     try {
-      await deps.github.createBranch(branch);
+      await deps.github.createBranch(branch, `heads/${baseBranch}`);
     } catch (err) {
       // createBranch is idempotent on the fake; real impl returns a known
       // error when the ref exists — tolerate it here.
@@ -315,7 +318,10 @@ export async function runSpecifyPhase(
         throw err;
       }
     }
-    await deps.git.checkoutBranch(branch);
+    await deps.git.checkoutBranch(branch, {
+      startPoint: baseBranch,
+      preferRemote: true,
+    });
 
     const changeDir = changeFolderPath(input.changeName);
     const priorDraft = await deps.fs.readPriorDraft(changeDir);

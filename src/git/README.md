@@ -7,7 +7,10 @@ operations the phases need so tests can swap in an in-memory fake.
 
 ```ts
 interface GitOps {
-  checkoutBranch(branch: string): Promise<void>;
+  checkoutBranch(
+    branch: string,
+    opts?: { startPoint?: string; preferRemote?: boolean },
+  ): Promise<void>;
   writeTree(
     files: Array<{ path: string; content: string }>,
     commitMessage: string,
@@ -30,7 +33,10 @@ interface GitOps {
 
 ```ts
 const git = createInMemoryFakeGitOps();
-await git.checkoutBranch("night-shift/TICKET-1");
+await git.checkoutBranch("night-shift/TICKET-1", {
+  startPoint: "main",
+  preferRemote: true,
+});
 const { sha } = await git.writeTree(
   [{ path: "a.txt", content: "hi" }],
   "first commit",

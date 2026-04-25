@@ -54,7 +54,7 @@ export function createInMemoryFakeGitOps(initialBranch = "main"): FakeGitOps {
     get commits() {
       return commits;
     },
-    async checkoutBranch(b) {
+    async checkoutBranch(b, _opts) {
       branch = b;
       branches.add(b);
     },

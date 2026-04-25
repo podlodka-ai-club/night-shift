@@ -8,8 +8,14 @@ import path from "node:path";
  * at runtime.
  */
 export interface GitOps {
-  /** Checkout the given branch, creating it from the current HEAD if absent. */
-  checkoutBranch(branch: string): Promise<void>;
+  /**
+   * Checkout the given branch, optionally preferring an existing remote ref or
+   * creating it from an explicit start point.
+   */
+  checkoutBranch(
+    branch: string,
+    opts?: { startPoint?: string; preferRemote?: boolean },
+  ): Promise<void>;
   /** Push the current branch HEAD to origin under the given branch name. */
   pushBranch(branch: string): Promise<void>;
   /** Return the current remote HEAD for `branch`, or null when it does not exist yet. */
@@ -53,14 +59,44 @@ export function createSimpleGitOps(deps: SimpleGitOpsDeps): GitOps {
     return /couldn't find remote ref|remote ref does not exist|not our ref/i.test(message);
   }
 
-  return {
-    async checkoutBranch(branch) {
-      const branches = await git.branch();
-      if (branches.all.includes(branch) || branches.all.includes(`remotes/origin/${branch}`)) {
-        await git.checkout(branch);
-      } else {
-        await git.checkoutLocalBranch(branch);
+  async function fetchRemoteBranch(branch: string): Promise<boolean> {
+    try {
+      await git.fetch("origin", branch);
+    } catch (err) {
+      if (isMissingRemoteRefError(err)) {
+        return false;
       }
+      throw err;
+    }
+
+    const branches = await git.branch(["-a"]);
+    return branches.all.includes(`remotes/origin/${branch}`);
+  }
+
+  return {
+    async checkoutBranch(branch, opts = {}) {
+      const localBranches = await git.branchLocal();
+      if (localBranches.all.includes(branch)) {
+        await git.checkout(branch);
+        return;
+      }
+
+      if (opts.preferRemote && await fetchRemoteBranch(branch)) {
+        await git.checkoutBranch(branch, `origin/${branch}`);
+        return;
+      }
+
+      if (opts.startPoint) {
+        if (opts.preferRemote && await fetchRemoteBranch(opts.startPoint)) {
+          await git.checkoutBranch(branch, `origin/${opts.startPoint}`);
+          return;
+        }
+
+        await git.checkoutBranch(branch, opts.startPoint);
+        return;
+      }
+
+      await git.checkoutLocalBranch(branch);
     },
     async pushBranch(branch) {
       try {
