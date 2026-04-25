@@ -179,6 +179,29 @@ describe("runReviewPhase", () => {
     expect(getEvents(gh, "setStatus")).toHaveLength(0);
   });
 
+  it("allows spec bundles without design.md", async () => {
+    const agent = new InMemoryFakeAdapter({
+      script: [{ events: [], finalText: reviewResponseJson(), usage: usage() }],
+    });
+    const { gh, deps } = buildDeps(agent);
+    seedBase(gh);
+
+    const fs = makeFs();
+    const result = await runReviewPhase(phaseInput(), {
+      ...deps,
+      fs: {
+        async readFile(filePath: string) {
+          if (filePath.endsWith("design.md")) {
+            throw new Error("ENOENT");
+          }
+          return await fs.readFile(filePath);
+        },
+      },
+    });
+
+    expect(result.status).toBe("ready_to_merge");
+  });
+
   // 7.3 Happy ready-to-merge
   it("happy ready-to-merge: empty findings → approve + setPullRequestReady + Ready to merge", async () => {
     const agent = new InMemoryFakeAdapter({
@@ -205,6 +228,35 @@ describe("runReviewPhase", () => {
       (e) => (e.args as { markerId: string }).markerId === "review:summary",
     );
     expect(summaryComments).toHaveLength(1);
+  });
+
+  it("falls back to COMMENT when GitHub rejects approving Night Shift's own PR", async () => {
+    const agent = new InMemoryFakeAdapter({
+      script: [{ events: [], finalText: reviewResponseJson(), usage: usage() }],
+    });
+    const gh = createInMemoryFakeGitHubClient();
+    seedBase(gh);
+    const originalCreateReview = gh.createReview.bind(gh);
+    let firstAttempt = true;
+    gh.createReview = async (pullNumber, input) => {
+      if (firstAttempt && input.event === "APPROVE") {
+        firstAttempt = false;
+        throw new Error("Review Can not approve your own pull request");
+      }
+      return await originalCreateReview(pullNumber, input);
+    };
+
+    const { deps } = buildDeps(agent, gh);
+    const result = await runReviewPhase(phaseInput(), deps);
+
+    expect(result.status).toBe("ready_to_merge");
+    const reviews = getEvents(gh, "createReview");
+    expect(reviews).toHaveLength(1);
+    expect((reviews[0]!.args as { event: string }).event).toBe("COMMENT");
+    const statuses = getEvents(gh, "setStatus").map(
+      (e) => (e.args as { status: string }).status,
+    );
+    expect(statuses).toContain("Ready to merge");
   });
 
   it("passes workingDirectory to the reviewer session when provided", async () => {

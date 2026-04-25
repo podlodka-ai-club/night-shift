@@ -28,10 +28,11 @@ Exit codes:
   64 usage error
 `;
 
-function makeFs(): ReviewFs {
+function makeFs(repoRoot: string): ReviewFs {
   return {
-    async readFile(path: string): Promise<string> {
-      return readFile(path, "utf8");
+    async readFile(filePath: string): Promise<string> {
+      const resolved = path.isAbsolute(filePath) ? filePath : path.join(repoRoot, filePath);
+      return readFile(resolved, "utf8");
     },
   };
 }
@@ -177,7 +178,7 @@ export async function main(
       {
         github,
         agent: adapter,
-        fs: makeFs(),
+        fs: makeFs(repoRoot),
         clock: { now: () => new Date() },
         config: resolved,
         runId,

@@ -52,6 +52,17 @@ export interface ReviewPhaseResult {
 
 const NIGHT_SHIFT_MARKER_PREFIX = "<!-- night-shift:marker=";
 
+function isMissingFileError(err: unknown): boolean {
+  return (
+    (typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === "ENOENT") ||
+    (err instanceof Error && /ENOENT/.test(err.message))
+  );
+}
+
+function isOwnPullRequestApprovalError(err: unknown): boolean {
+  return err instanceof Error && /approve your own pull request/i.test(err.message);
+}
+
 function nowIso(clock: { now(): Date }): string {
   return clock.now().toISOString();
 }
@@ -113,6 +124,9 @@ export async function runReviewPhase(
       const content = await deps.fs.readFile(fullPath);
       bundleFiles.push({ path: relPath, content });
     } catch (err) {
+      if (relPath === "design.md" && isMissingFileError(err)) {
+        continue;
+      }
       throw new ReviewIoError(
         `failed to read spec-bundle file: ${fullPath}`,
         { ticketId: ticket.id, prNumber: pr.number, iteration, cause: err },
@@ -248,10 +262,20 @@ export async function runReviewPhase(
           body: summaryBody,
         });
       } else {
-        await deps.github.createReview(pr.number, {
-          event: "APPROVE",
-          body: summaryBody,
-        });
+        try {
+          await deps.github.createReview(pr.number, {
+            event: "APPROVE",
+            body: summaryBody,
+          });
+        } catch (err) {
+          if (!isOwnPullRequestApprovalError(err)) {
+            throw err;
+          }
+          await deps.github.createReview(pr.number, {
+            event: "COMMENT",
+            body: summaryBody,
+          });
+        }
       }
 
       // Upsert line comments for findings with location

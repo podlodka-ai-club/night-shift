@@ -93,10 +93,11 @@ function makeImplementFs(repoRoot: string): ImplementFs {
   };
 }
 
-function makeReviewFs(): ReviewFs {
+function makeReviewFs(repoRoot: string): ReviewFs {
   return {
     async readFile(filePath: string): Promise<string> {
-      return readFile(filePath, "utf8");
+      const resolved = path.isAbsolute(filePath) ? filePath : path.join(repoRoot, filePath);
+      return readFile(resolved, "utf8");
     },
   };
 }
@@ -173,7 +174,7 @@ function buildDepsFactory(
       return {
         github,
         agent: makeAdapter(roleConfig.provider),
-        fs: makeReviewFs(),
+        fs: makeReviewFs(repoRoot),
         clock: { now: () => new Date() },
         config,
         runId,
