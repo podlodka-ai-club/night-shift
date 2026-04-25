@@ -26,6 +26,7 @@ export type {
   Label,
   Comment,
   ProjectItem,
+  ProjectItemSummary,
   StatusName,
   ParsedWebhookEvent,
   ChangedFile,

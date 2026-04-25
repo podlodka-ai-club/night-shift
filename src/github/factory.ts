@@ -16,6 +16,8 @@ import type { RestClient } from "./issues.js";
 import {
   ensureStatusOptions,
   getItem as getProjectItem,
+  listItemsByStatus as listProjectItemsByStatus,
+  resolveProjectNodeId,
   resolveStatusField,
   setStatus as setProjectStatus,
   type GraphQLClient,
@@ -75,29 +77,53 @@ async function resolvePrivateKey(config: GitHubConfig): Promise<string> {
   throw new ConfigError("missing privateKey and privateKeyPath");
 }
 
+function createOctokit(config: GitHubConfig): Octokit {
+  if (config.token) {
+    return new Octokit({ auth: config.token });
+  }
+  // App auth — resolvePrivateKey must be called before this for async key loading.
+  // This sync path is only used after privateKey is already resolved.
+  throw new ConfigError("createOctokit called without token or resolved App auth");
+}
+
 export async function createGitHubClient(
   input: unknown,
 ): Promise<GitHubClient> {
   const config = GitHubConfigSchema.parse(input);
-  const privateKey = await resolvePrivateKey(config);
 
-  const octokit = new Octokit({
-    authStrategy: createAppAuth,
-    auth: {
-      appId: config.appId,
-      privateKey,
-      installationId: config.installationId,
-    },
-  });
+  let octokit: Octokit;
+  if (config.token) {
+    octokit = new Octokit({ auth: config.token });
+  } else {
+    const privateKey = await resolvePrivateKey(config);
+    octokit = new Octokit({
+      authStrategy: createAppAuth,
+      auth: {
+        appId: config.appId,
+        privateKey,
+        installationId: config.installationId,
+      },
+    });
+  }
 
   const rest: RestClient = octokit as unknown as RestClient;
   const gql: GraphQLClient = (async (query: string, variables) => {
     return (await octokit.graphql(query, variables as never)) as never;
   }) as GraphQLClient;
 
+  // Resolve projectNodeId from project number if not provided directly
+  let projectNodeId = config.projectNodeId;
+  if (!projectNodeId) {
+    projectNodeId = await resolveProjectNodeId(gql, {
+      projectOwner: config.projectOwner!,
+      projectOwnerType: config.projectOwnerType!,
+      projectNumber: config.projectNumber!,
+    });
+  }
+
   const field = await resolveStatusField(
     gql,
-    config.projectNodeId,
+    projectNodeId,
     config.statusFieldName,
   );
   const resolved = await ensureStatusOptions(gql, {
@@ -107,7 +133,7 @@ export async function createGitHubClient(
   });
 
   const run = singleFlight();
-  const { owner, repo, projectNodeId } = config;
+  const { owner, repo } = config;
   const statusOptionIds = Object.freeze({ ...resolved.statusOptionIds }) as Readonly<
     Record<StatusName, string>
   >;
@@ -120,6 +146,13 @@ export async function createGitHubClient(
 
     async getItem(itemId) {
       return getProjectItem(gql, { itemId, statusFieldName: config.statusFieldName });
+    },
+    async listItemsByStatus(status) {
+      return listProjectItemsByStatus(gql, {
+        projectNodeId,
+        statusFieldName: config.statusFieldName,
+        status,
+      });
     },
     async setStatus(itemId, status) {
       const optionId = statusOptionIds[status];

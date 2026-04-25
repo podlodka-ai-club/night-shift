@@ -1,5 +1,5 @@
 import type { OpenPROpts, UpsertPROpts } from "./prs.js";
-import type { ChangedFile, Comment, Issue, PRRef, ProjectItem, ReviewComment, Review, StatusName } from "./types.js";
+import type { ChangedFile, Comment, Issue, PRRef, ProjectItem, ProjectItemSummary, ReviewComment, Review, StatusName } from "./types.js";
 
 export interface GitHubClient {
   readonly owner: string;
@@ -9,6 +9,7 @@ export interface GitHubClient {
 
   // Projects v2
   getItem(itemId: string): Promise<ProjectItem>;
+  listItemsByStatus(status: StatusName): Promise<ProjectItemSummary[]>;
   setStatus(itemId: string, status: StatusName): Promise<void>;
 
   // Issues & comments

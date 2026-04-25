@@ -39,12 +39,36 @@ export const ReviewPhaseConfigSchema = z.object({
 });
 export type ReviewPhaseConfig = z.infer<typeof ReviewPhaseConfigSchema>;
 
+export const TemporalConfigSchema = z.object({
+  serverUrl: z.string().min(1).default("localhost:7233"),
+  namespace: z.string().min(1).default("default"),
+  taskQueue: z.string().min(1).default("night-shift"),
+});
+export type TemporalConfig = z.infer<typeof TemporalConfigSchema>;
+
+const VALID_INTERVAL_MINUTES = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60] as const;
+
+export const PickupConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  intervalMinutes: z
+    .number()
+    .int()
+    .refine((v) => (VALID_INTERVAL_MINUTES as readonly number[]).includes(v), {
+      message: `intervalMinutes must be a divisor of 60: ${VALID_INTERVAL_MINUTES.join(", ")}`,
+    })
+    .default(5),
+  maxConcurrent: z.number().int().min(1).default(5),
+});
+export type PickupConfig = z.infer<typeof PickupConfigSchema>;
+
 export const NightShiftConfigSchema = z.object({
   roles: z.record(AgentRoleSchema, AgentRoleConfigSchema),
   qualityGates: QualityGatesConfigSchema.optional(),
   adapters: AdaptersConfigSchema.optional(),
   github: GitHubConfigSchema.optional(),
   reviewPhase: ReviewPhaseConfigSchema.optional(),
+  temporal: TemporalConfigSchema.default({}),
+  pickup: PickupConfigSchema.optional(),
 });
 export type NightShiftConfig = z.input<typeof NightShiftConfigSchema>;
 export type ResolvedNightShiftConfig = z.infer<typeof NightShiftConfigSchema>;

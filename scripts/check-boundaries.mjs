@@ -156,12 +156,39 @@ const MODULES = [
     },
   },
   {
+    name: "orchestration",
+    dir: join(SRC, "orchestration"),
+    allowed: {
+      externals: new Set([
+        "zod",
+        "@temporalio/client",
+        "@temporalio/common",
+        "@temporalio/worker",
+        "@temporalio/workflow",
+        "@temporalio/activity",
+        "node:process",
+      ]),
+      internal: [
+        "src/contracts",
+        "src/config",
+        "src/github",
+        "src/adapters",
+        "src/phases/specify",
+        "src/phases/implement",
+        "src/phases/review",
+        "src/orchestration",
+      ],
+    },
+  },
+  {
     name: "cli",
     dir: join(SRC, "cli"),
     allowed: {
       externals: new Set([
         "zod",
         "simple-git",
+        "@temporalio/client",
+        "@temporalio/worker",
         "node:fs",
         "node:fs/promises",
         "node:path",
@@ -177,6 +204,7 @@ const MODULES = [
         "src/phases",
         "src/worktree",
         "src/quality-gates",
+        "src/orchestration",
         "src/cli",
       ],
     },

@@ -47,10 +47,21 @@ export type Issue = z.infer<typeof IssueSchema>;
 export const ProjectItemSchema = z.object({
   itemId: z.string().min(1),
   projectNodeId: z.string().min(1),
+  ticketId: z.string().min(1),
+  title: z.string(),
   issueNumber: z.number().int().positive().optional(),
   status: StatusNameSchema.optional(),
 });
 export type ProjectItem = z.infer<typeof ProjectItemSchema>;
+
+export const ProjectItemSummarySchema = z.object({
+  itemId: z.string().min(1),
+  issueNumber: z.number().int().positive(),
+  title: z.string(),
+  ticketId: z.string().min(1),
+  createdAt: z.string(),
+});
+export type ProjectItemSummary = z.infer<typeof ProjectItemSummarySchema>;
 
 export { PRRefSchema };
 export type PRRef = z.infer<typeof PRRefSchema>;
@@ -82,28 +93,70 @@ export const ReviewSchema = z.object({
 export type Review = z.infer<typeof ReviewSchema>;
 
 /**
- * GitHub App configuration. Exactly one of `privateKey` | `privateKeyPath`
- * must be supplied; the loader resolves `privateKeyPath` relative to the
- * config file's directory.
+ * GitHub configuration. Supports two auth modes:
+ *
+ * 1. **GitHub App** — provide `appId`, `installationId`, and exactly one of
+ *    `privateKey` | `privateKeyPath`. Preferred for production (bot identity,
+ *    higher rate limits, auto-rotating tokens).
+ *
+ * 2. **Personal Access Token** — provide `token`. Simpler for solo / local use.
+ *
+ * Project board can be identified by `projectNodeId` (direct) or by
+ * `projectNumber` + `projectOwner` + `projectOwnerType` (resolved at startup).
+ *
+ * `webhookSecret` is only required when receiving webhooks.
  */
 export const GitHubConfigSchema = z
   .object({
-    appId: z.number().int().positive(),
-    installationId: z.number().int().positive(),
+    // App auth (all three required together)
+    appId: z.number().int().positive().optional(),
+    installationId: z.number().int().positive().optional(),
     privateKey: z.string().min(1).optional(),
     privateKeyPath: z.string().min(1).optional(),
-    webhookSecret: z.string().min(1),
+    // PAT auth
+    token: z.string().min(1).optional(),
+    // Common
+    webhookSecret: z.string().min(1).optional(),
     owner: z.string().min(1),
     repo: z.string().min(1),
-    projectNodeId: z.string().min(1),
+    // Project — either nodeId directly, or number + owner + ownerType to resolve
+    projectNodeId: z.string().min(1).optional(),
+    projectNumber: z.number().int().positive().optional(),
+    projectOwner: z.string().min(1).optional(),
+    projectOwnerType: z.enum(["user", "org"]).optional(),
     statusFieldName: z.string().min(1).default("Status"),
     manageStatusOptions: z.boolean().default(true),
   })
   .refine(
-    (v) => Boolean(v.privateKey) !== Boolean(v.privateKeyPath),
+    (v) => {
+      const hasApp = v.appId != null && v.installationId != null;
+      const hasKey = Boolean(v.privateKey) || Boolean(v.privateKeyPath);
+      const hasToken = Boolean(v.token);
+      // Exactly one auth mode
+      if (hasToken && hasApp) return false;
+      if (hasToken) return true;
+      if (hasApp && hasKey) {
+        // Exactly one of privateKey / privateKeyPath
+        return Boolean(v.privateKey) !== Boolean(v.privateKeyPath);
+      }
+      return false;
+    },
     {
-      message: "Provide exactly one of `privateKey` or `privateKeyPath`",
-      path: ["privateKey"],
+      message:
+        "Provide either `token` (PAT) or `appId` + `installationId` + exactly one of `privateKey` | `privateKeyPath` (GitHub App)",
+      path: ["token"],
+    },
+  )
+  .refine(
+    (v) => {
+      const hasNodeId = Boolean(v.projectNodeId);
+      const hasNumber = v.projectNumber != null && Boolean(v.projectOwner) && Boolean(v.projectOwnerType);
+      return hasNodeId || hasNumber;
+    },
+    {
+      message:
+        "Provide either `projectNodeId` or `projectNumber` + `projectOwner` + `projectOwnerType`",
+      path: ["projectNodeId"],
     },
   );
 export type GitHubConfig = z.infer<typeof GitHubConfigSchema>;

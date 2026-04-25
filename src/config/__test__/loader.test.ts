@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../loader.js";
-import { DEFAULT_CONFIG } from "../schema.js";
+import { DEFAULT_CONFIG, NightShiftConfigSchema } from "../schema.js";
 
 let tmp: string;
 let originalEnv: string | undefined;
@@ -23,9 +23,13 @@ afterEach(() => {
 describe("loadConfig", () => {
   it("returns DEFAULT_CONFIG when no file is found", async () => {
     const cfg = await loadConfig({ cwd: tmp });
-    expect(cfg).toEqual(DEFAULT_CONFIG);
     expect(cfg.roles.specifier?.provider).toBe("codex");
     expect(cfg.roles.specifier?.model).toBe("gpt-5.4");
+    expect(cfg.temporal).toEqual({
+      serverUrl: "localhost:7233",
+      namespace: "default",
+      taskQueue: "night-shift",
+    });
   });
 
   it("honours an explicit path", async () => {
@@ -75,5 +79,76 @@ describe("loadConfig", () => {
     await expect(
       loadConfig({ explicitPath: join(tmp, "does-not-exist.mjs") }),
     ).rejects.toThrow(/not found/);
+  });
+});
+
+describe("TemporalConfigSchema", () => {
+  it("applies defaults when temporal key is omitted", () => {
+    const parsed = NightShiftConfigSchema.parse(DEFAULT_CONFIG);
+    expect(parsed.temporal).toEqual({
+      serverUrl: "localhost:7233",
+      namespace: "default",
+      taskQueue: "night-shift",
+    });
+  });
+
+  it("custom values override defaults", () => {
+    const parsed = NightShiftConfigSchema.parse({
+      ...DEFAULT_CONFIG,
+      temporal: { namespace: "prod" },
+    });
+    expect(parsed.temporal.namespace).toBe("prod");
+    expect(parsed.temporal.serverUrl).toBe("localhost:7233");
+    expect(parsed.temporal.taskQueue).toBe("night-shift");
+  });
+});
+
+describe("PickupConfigSchema", () => {
+  it("accepts valid pickup config", () => {
+    const parsed = NightShiftConfigSchema.parse({
+      ...DEFAULT_CONFIG,
+      pickup: { enabled: true, intervalMinutes: 10, maxConcurrent: 3 },
+    });
+    expect(parsed.pickup).toEqual({ enabled: true, intervalMinutes: 10, maxConcurrent: 3 });
+  });
+
+  it("applies defaults when section is partial", () => {
+    const parsed = NightShiftConfigSchema.parse({
+      ...DEFAULT_CONFIG,
+      pickup: { enabled: true },
+    });
+    expect(parsed.pickup).toEqual({ enabled: true, intervalMinutes: 5, maxConcurrent: 5 });
+  });
+
+  it("allows omitting pickup entirely", () => {
+    const parsed = NightShiftConfigSchema.parse(DEFAULT_CONFIG);
+    expect(parsed.pickup).toBeUndefined();
+  });
+
+  it("rejects intervalMinutes: 0", () => {
+    expect(() =>
+      NightShiftConfigSchema.parse({
+        ...DEFAULT_CONFIG,
+        pickup: { enabled: true, intervalMinutes: 0 },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects non-divisor intervalMinutes (e.g., 7)", () => {
+    expect(() =>
+      NightShiftConfigSchema.parse({
+        ...DEFAULT_CONFIG,
+        pickup: { enabled: true, intervalMinutes: 7 },
+      }),
+    ).toThrow(/divisor of 60/);
+  });
+
+  it("rejects maxConcurrent: 0", () => {
+    expect(() =>
+      NightShiftConfigSchema.parse({
+        ...DEFAULT_CONFIG,
+        pickup: { enabled: true, maxConcurrent: 0 },
+      }),
+    ).toThrow();
   });
 });

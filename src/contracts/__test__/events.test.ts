@@ -86,6 +86,57 @@ describe("PhaseEventSchema", () => {
     const ev = { ...started, phase: "review" as const };
     expect(PhaseEventSchema.parse(ev)).toEqual(ev);
   });
+
+  it("parses WorkflowStarted", () => {
+    const ev = {
+      kind: "WorkflowStarted" as const,
+      ticketId: "T-12",
+      ts: "2026-04-24T12:00:00.000Z",
+      runId: "run-abc",
+    };
+    expect(PhaseEventSchema.parse(ev)).toEqual(ev);
+  });
+
+  it("parses WorkflowFinished with costRollup", () => {
+    const ev = {
+      kind: "WorkflowFinished" as const,
+      ticketId: "T-12",
+      ts: "2026-04-24T12:05:00.000Z",
+      runId: "run-abc",
+      status: "completed" as const,
+      latencyMs: 300_000,
+      costRollup: { totalMicroUsd: 5000, totalTokens: 2000 },
+    };
+    const parsed = PhaseEventSchema.parse(ev);
+    expect(parsed).toEqual(ev);
+    expect(parsed.kind).toBe("WorkflowFinished");
+  });
+
+  it("discriminator narrows WorkflowFinished status to escalated", () => {
+    const ev = {
+      kind: "WorkflowFinished" as const,
+      ticketId: "T-12",
+      ts: "2026-04-24T12:05:00.000Z",
+      runId: "run-abc",
+      status: "escalated" as const,
+      latencyMs: 7_200_000,
+      costRollup: { totalMicroUsd: 10_000, totalTokens: 5_000 },
+    };
+    expect(PhaseEventSchema.parse(ev)).toEqual(ev);
+  });
+
+  it("rejects WorkflowFinished with invalid status", () => {
+    const ev = {
+      kind: "WorkflowFinished" as const,
+      ticketId: "T-12",
+      ts: "2026-04-24T12:05:00.000Z",
+      runId: "run-abc",
+      status: "unknown",
+      latencyMs: 0,
+      costRollup: { totalMicroUsd: 0, totalTokens: 0 },
+    };
+    expect(() => PhaseEventSchema.parse(ev)).toThrow();
+  });
 });
 
 describe("EventSink", () => {

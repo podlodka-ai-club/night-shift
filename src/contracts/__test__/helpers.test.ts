@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   branchNameFor,
+  deriveChangeName,
   microToUsd,
   slugify,
   usdToMicro,
@@ -61,5 +62,27 @@ describe("usdToMicro / microToUsd", () => {
 
   it("rejects non-integer micro", () => {
     expect(() => microToUsd(1.5)).toThrow(RangeError);
+  });
+});
+
+describe("deriveChangeName", () => {
+  it("produces slug with issue number suffix", () => {
+    expect(deriveChangeName("Add User Authentication!", 42)).toBe("add-user-authentication-42");
+  });
+
+  it("collapses consecutive special characters", () => {
+    expect(deriveChangeName("fix: API -- rate limiting", 7)).toBe("fix-api-rate-limiting-7");
+  });
+
+  it("handles mixed case", () => {
+    expect(deriveChangeName("Fix Login Bug", 10)).toBe("fix-login-bug-10");
+  });
+
+  it("returns just the issue number when title produces empty slug", () => {
+    expect(deriveChangeName("!!!", 99)).toBe("99");
+  });
+
+  it("returns just the issue number for empty title", () => {
+    expect(deriveChangeName("", 1)).toBe("1");
   });
 });

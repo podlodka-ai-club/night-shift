@@ -5,6 +5,7 @@ import {
   DEFAULT_CONFIG,
   NightShiftConfigSchema,
   type NightShiftConfig,
+  type ResolvedNightShiftConfig,
 } from "./schema.js";
 
 const CANDIDATE_FILENAMES = [
@@ -46,7 +47,7 @@ export interface LoadConfigOptions {
 
 export async function loadConfig(
   options: LoadConfigOptions = {},
-): Promise<NightShiftConfig> {
+): Promise<ResolvedNightShiftConfig> {
   const path = resolveConfigPath(options.explicitPath, options.cwd);
   if (!path) return NightShiftConfigSchema.parse(DEFAULT_CONFIG);
 

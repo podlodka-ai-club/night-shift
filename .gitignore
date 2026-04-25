@@ -3,5 +3,7 @@ dist/
 .env
 .env.local
 .night-shift/
+night-shift.config.*
+!night-shift.config.example.ts
 *.log
 .DS_Store

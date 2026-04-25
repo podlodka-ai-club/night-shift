@@ -2,6 +2,7 @@ import { ConfigError } from "./errors.js";
 import { retryable } from "./retry.js";
 import {
   type ProjectItem,
+  type ProjectItemSummary,
   type StatusName,
   StatusNameSchema,
   STATUS_NAMES,
@@ -33,6 +34,39 @@ const STATUS_COLORS: Record<StatusName, string> = {
   "Ready to merge": "GREEN",
   Blocked: "RED",
 };
+
+const RESOLVE_PROJECT_QUERY = /* GraphQL */ `
+  query ResolveProject($owner: String!, $number: Int!) {
+    OWNER_TYPE(login: $owner) {
+      projectV2(number: $number) { id }
+    }
+  }
+`;
+
+/**
+ * Resolve a project's GraphQL node ID from its number + owner.
+ * The `ownerType` determines whether to query `organization` or `user`.
+ */
+export async function resolveProjectNodeId(
+  gql: GraphQLClient,
+  args: { projectOwner: string; projectOwnerType: "user" | "org"; projectNumber: number },
+): Promise<string> {
+  const ownerField = args.projectOwnerType === "org" ? "organization" : "user";
+  const query = RESOLVE_PROJECT_QUERY.replace("OWNER_TYPE", ownerField);
+  const result = await retryable(() =>
+    gql<{ [key: string]: { projectV2: { id: string } | null } }>(query, {
+      owner: args.projectOwner,
+      number: args.projectNumber,
+    }),
+  );
+  const project = result[ownerField]?.projectV2;
+  if (!project) {
+    throw new ConfigError(
+      `Project #${args.projectNumber} not found for ${ownerField} "${args.projectOwner}"`,
+    );
+  }
+  return project.id;
+}
 
 const FIELDS_QUERY = /* GraphQL */ `
   query FieldsForProject($projectNodeId: ID!) {
@@ -94,8 +128,8 @@ const ITEM_QUERY = /* GraphQL */ `
         project { id }
         content {
           __typename
-          ... on Issue { number }
-          ... on PullRequest { number }
+          ... on Issue { number title }
+          ... on PullRequest { number title }
         }
         fieldValues(first: 20) {
           nodes {
@@ -247,7 +281,7 @@ export async function getItem(
   interface ItemNode {
     id: string;
     project: { id: string };
-    content?: { __typename: string; number?: number };
+    content?: { __typename: string; number?: number; title?: string };
     fieldValues: {
       nodes: Array<{
         __typename: string;
@@ -270,13 +304,112 @@ export async function getItem(
   const statusName = statusNode?.name
     ? StatusNameSchema.safeParse(statusNode.name)
     : undefined;
+  const issueNumber = data.node.content?.number;
   const item: ProjectItem = {
     itemId: data.node.id,
     projectNodeId: data.node.project.id,
-    ...(data.node.content?.number ? { issueNumber: data.node.content.number } : {}),
+    ticketId: issueNumber !== undefined ? String(issueNumber) : data.node.id,
+    title: data.node.content?.title ?? "",
+    ...(issueNumber !== undefined ? { issueNumber } : {}),
     ...(statusName && statusName.success ? { status: statusName.data } : {}),
   };
   return item;
+}
+
+const LIST_ITEMS_QUERY = /* GraphQL */ `
+  query ListProjectItems($projectNodeId: ID!, $cursor: String) {
+    node(id: $projectNodeId) {
+      ... on ProjectV2 {
+        items(first: 100, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id
+            createdAt
+            content {
+              __typename
+              ... on Issue { number title }
+              ... on PullRequest { number title }
+            }
+            fieldValues(first: 20) {
+              nodes {
+                __typename
+                ... on ProjectV2ItemFieldSingleSelectValue {
+                  name
+                  field { ... on ProjectV2FieldCommon { name } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+interface ListItemsNode {
+  id: string;
+  createdAt: string;
+  content?: { __typename: string; number?: number; title?: string };
+  fieldValues: {
+    nodes: Array<{
+      __typename: string;
+      name?: string;
+      field?: { name: string };
+    }>;
+  };
+}
+
+export async function listItemsByStatus(
+  gql: GraphQLClient,
+  args: {
+    projectNodeId: string;
+    statusFieldName: string;
+    status: StatusName;
+  },
+): Promise<ProjectItemSummary[]> {
+  const results: ProjectItemSummary[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const data = await retryable(() =>
+      gql<{
+        node?: {
+          items?: {
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            nodes: ListItemsNode[];
+          };
+        };
+      }>(LIST_ITEMS_QUERY, { projectNodeId: args.projectNodeId, cursor }),
+    );
+
+    const items = data.node?.items;
+    if (!items) break;
+
+    for (const node of items.nodes) {
+      const statusNode = node.fieldValues.nodes.find(
+        (n) =>
+          n.__typename === "ProjectV2ItemFieldSingleSelectValue" &&
+          n.field?.name === args.statusFieldName,
+      );
+      if (statusNode?.name !== args.status) continue;
+
+      const issueNumber = node.content?.number;
+      if (issueNumber === undefined) continue;
+
+      results.push({
+        itemId: node.id,
+        issueNumber,
+        title: node.content?.title ?? "",
+        ticketId: String(issueNumber),
+        createdAt: node.createdAt,
+      });
+    }
+
+    cursor = items.pageInfo.hasNextPage ? items.pageInfo.endCursor : null;
+  } while (cursor);
+
+  results.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return results;
 }
 
 function freeze<T extends object>(v: T): Readonly<T> {

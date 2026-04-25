@@ -8,6 +8,7 @@ import {
   type ParsedWebhookEvent,
   type PRRef,
   type ProjectItem,
+  type ProjectItemSummary,
   type Review,
   type ReviewComment,
   type StatusName,
@@ -30,8 +31,11 @@ interface StoredIssue {
 
 interface StoredItem {
   itemId: string;
+  ticketId: string;
+  title: string;
   issueNumber?: number;
   status?: StatusName;
+  createdAt: string;
 }
 
 interface StoredPR {
@@ -56,7 +60,7 @@ export interface FakeGitHubClient extends GitHubClient {
     labels?: string[];
     htmlUrl?: string;
   }): void;
-  seedItem(item: { itemId: string; issueNumber?: number; status?: StatusName }): void;
+  seedItem(item: { itemId: string; ticketId?: string; title?: string; issueNumber?: number; status?: StatusName; createdAt?: string }): void;
   seedDiff(pullNumber: number, diff: string): void;
   seedChangedFiles(pullNumber: number, files: ChangedFile[]): void;
   seedReviewComment(pullNumber: number, comment: ReviewComment): void;
@@ -129,8 +133,11 @@ export function createInMemoryFakeGitHubClient(config?: {
     seedItem(item) {
       items.set(item.itemId, {
         itemId: item.itemId,
+        ticketId: item.ticketId ?? (item.issueNumber !== undefined ? String(item.issueNumber) : item.itemId),
+        title: item.title ?? `Item ${item.itemId}`,
         ...(item.issueNumber !== undefined ? { issueNumber: item.issueNumber } : {}),
         ...(item.status !== undefined ? { status: item.status } : {}),
+        createdAt: item.createdAt ?? "1970-01-01T00:00:00Z",
       });
     },
     seedDiff(pullNumber, diff) {
@@ -168,10 +175,29 @@ export function createInMemoryFakeGitHubClient(config?: {
       const base: ProjectItem = {
         itemId: it.itemId,
         projectNodeId,
+        ticketId: it.ticketId,
+        title: it.title,
         ...(it.issueNumber !== undefined ? { issueNumber: it.issueNumber } : {}),
         ...(it.status !== undefined ? { status: it.status } : {}),
       };
       return base;
+    },
+    async listItemsByStatus(status: StatusName): Promise<ProjectItemSummary[]> {
+      log("listItemsByStatus", { status });
+      const results: ProjectItemSummary[] = [];
+      for (const it of items.values()) {
+        if (it.status === status && it.issueNumber !== undefined) {
+          results.push({
+            itemId: it.itemId,
+            issueNumber: it.issueNumber,
+            title: it.title,
+            ticketId: it.ticketId,
+            createdAt: it.createdAt,
+          });
+        }
+      }
+      results.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      return results;
     },
     async setStatus(itemId: string, status: StatusName): Promise<void> {
       if (!statusOptionIds[status]) {

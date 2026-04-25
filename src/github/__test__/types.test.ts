@@ -18,39 +18,87 @@ describe("StatusNameSchema", () => {
 });
 
 describe("GitHubConfigSchema", () => {
-  const base = {
-    appId: 1,
-    installationId: 2,
-    webhookSecret: "shh",
+  const common = {
     owner: "acme",
     repo: "widgets",
     projectNodeId: "PVT_xxx",
   };
 
-  it("parses with privateKey", () => {
-    const parsed = GitHubConfigSchema.parse({ ...base, privateKey: "abc" });
+  const appBase = {
+    ...common,
+    appId: 1,
+    installationId: 2,
+    webhookSecret: "shh",
+  };
+
+  it("parses App auth with privateKey", () => {
+    const parsed = GitHubConfigSchema.parse({ ...appBase, privateKey: "abc" });
     expect(parsed.statusFieldName).toBe("Status");
     expect(parsed.manageStatusOptions).toBe(true);
   });
 
-  it("parses with privateKeyPath", () => {
-    const parsed = GitHubConfigSchema.parse({ ...base, privateKeyPath: "./key.pem" });
+  it("parses App auth with privateKeyPath", () => {
+    const parsed = GitHubConfigSchema.parse({ ...appBase, privateKeyPath: "./key.pem" });
     expect(parsed.privateKeyPath).toBe("./key.pem");
   });
 
-  it("rejects when both privateKey and privateKeyPath are provided", () => {
+  it("rejects App auth when both privateKey and privateKeyPath are provided", () => {
     expect(() =>
-      GitHubConfigSchema.parse({ ...base, privateKey: "a", privateKeyPath: "b" }),
+      GitHubConfigSchema.parse({ ...appBase, privateKey: "a", privateKeyPath: "b" }),
     ).toThrow();
   });
 
-  it("rejects when neither is provided", () => {
-    expect(() => GitHubConfigSchema.parse(base)).toThrow();
+  it("rejects App auth when neither key is provided", () => {
+    expect(() => GitHubConfigSchema.parse(appBase)).toThrow();
+  });
+
+  it("parses PAT auth with token", () => {
+    const parsed = GitHubConfigSchema.parse({ ...common, token: "ghp_abc123" });
+    expect(parsed.token).toBe("ghp_abc123");
+    expect(parsed.appId).toBeUndefined();
+  });
+
+  it("rejects when both token and App auth are provided", () => {
+    expect(() =>
+      GitHubConfigSchema.parse({ ...appBase, privateKey: "abc", token: "ghp_abc123" }),
+    ).toThrow();
+  });
+
+  it("rejects when no auth is provided", () => {
+    expect(() => GitHubConfigSchema.parse(common)).toThrow();
+  });
+
+  it("webhookSecret is optional", () => {
+    const parsed = GitHubConfigSchema.parse({ ...common, token: "ghp_abc123" });
+    expect(parsed.webhookSecret).toBeUndefined();
+  });
+
+  it("accepts projectNumber + projectOwner + projectOwnerType instead of projectNodeId", () => {
+    const parsed = GitHubConfigSchema.parse({
+      token: "ghp_abc",
+      owner: "acme",
+      repo: "widgets",
+      projectNumber: 1,
+      projectOwner: "acme",
+      projectOwnerType: "org",
+    });
+    expect(parsed.projectNumber).toBe(1);
+    expect(parsed.projectNodeId).toBeUndefined();
+  });
+
+  it("rejects when neither projectNodeId nor projectNumber is provided", () => {
+    expect(() =>
+      GitHubConfigSchema.parse({
+        token: "ghp_abc",
+        owner: "acme",
+        repo: "widgets",
+      }),
+    ).toThrow("projectNodeId");
   });
 
   it("honors custom statusFieldName and manageStatusOptions", () => {
     const parsed = GitHubConfigSchema.parse({
-      ...base,
+      ...appBase,
       privateKey: "x",
       statusFieldName: "Column",
       manageStatusOptions: false,

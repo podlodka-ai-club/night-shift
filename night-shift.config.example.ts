@@ -40,20 +40,35 @@ const config: NightShiftConfig = {
     lint: true,
     test: true,
   },
-  // Optional: enable real GitHub integration. Omit this block to run
-  // with the in-memory fake (see `src/github/fake.ts`).
+  // GitHub connection. Uses env vars from .env (see README).
+  //
+  // Auth: provide `token` (PAT, simplest) or App credentials (appId + installationId + privateKeyPath).
+  // Project: provide `projectNodeId` directly, or `projectNumber` + `projectOwner` + `projectOwnerType`
+  //          to resolve it automatically at startup.
+  //
+  // Tests use an in-memory fake automatically (see `src/github/__test__/fake.ts`).
   github: {
-    appId: 123456,
-    installationId: 7890123,
-    // Provide EXACTLY ONE of privateKey or privateKeyPath.
-    privateKeyPath: "./.secrets/night-shift.pem",
-    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET ?? "change-me",
-    owner: "acme",
-    repo: "widgets",
-    projectNodeId: "PVT_kwDOABC123",
-    // Defaults:
-    // statusFieldName: "Status",
-    // manageStatusOptions: true,
+    token: process.env.GITHUB_TOKEN,
+    owner: process.env.GITHUB_REPO_OWNER ?? "your-username",
+    repo: process.env.GITHUB_REPO_NAME ?? "your-repo",
+    projectOwner: process.env.GITHUB_PROJECT_OWNER ?? "your-username-or-org",
+    projectOwnerType: (process.env.GITHUB_PROJECT_OWNER_TYPE as "user" | "org") ?? "user",
+    projectNumber: Number(process.env.GITHUB_PROJECT_NUMBER ?? "1"),
+    // Or provide projectNodeId directly (skips the lookup):
+    // projectNodeId: "PVT_kwDOABC123",
+  },
+  // Optional: Auto-pickup from the board. When enabled, a cron workflow
+  // periodically scans Backlog + Ready columns and starts ticket workflows.
+  pickup: {
+    enabled: true,
+    intervalMinutes: 5, // must evenly divide 60
+    maxConcurrent: 5,
+  },
+  // Optional: Temporal server connection. Defaults shown below.
+  temporal: {
+    serverUrl: "localhost:7233",
+    namespace: "default",
+    taskQueue: "night-shift",
   },
 };
 

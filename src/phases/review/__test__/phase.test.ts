@@ -25,6 +25,11 @@ const DEFAULT_CONFIG: ResolvedNightShiftConfig = {
   roles: {
     reviewer: { provider: "codex", model: "gpt-test" },
   },
+  temporal: {
+    serverUrl: "localhost:7233",
+    namespace: "default",
+    taskQueue: "night-shift",
+  },
 };
 
 function makeFs(files: Record<string, string> = {}) {

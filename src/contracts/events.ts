@@ -88,12 +88,40 @@ export const QualityGateEvaluatedSchema = z.object({
 });
 export type QualityGateEvaluated = z.infer<typeof QualityGateEvaluatedSchema>;
 
+const CostRollupSchema = z.object({
+  totalMicroUsd: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+});
+
+const WorkflowEventCommon = {
+  ticketId: z.string().min(1),
+  ts: IsoTimestampSchema,
+  runId: z.string().min(1),
+} as const;
+
+export const WorkflowStartedSchema = z.object({
+  kind: z.literal("WorkflowStarted"),
+  ...WorkflowEventCommon,
+});
+export type WorkflowStarted = z.infer<typeof WorkflowStartedSchema>;
+
+export const WorkflowFinishedSchema = z.object({
+  kind: z.literal("WorkflowFinished"),
+  ...WorkflowEventCommon,
+  status: z.enum(["completed", "escalated", "error"]),
+  latencyMs: z.number().int().nonnegative(),
+  costRollup: CostRollupSchema,
+});
+export type WorkflowFinished = z.infer<typeof WorkflowFinishedSchema>;
+
 export const PhaseEventSchema = z.discriminatedUnion("kind", [
   PhaseStartedSchema,
   PhaseCompletedSchema,
   PhaseFailedSchema,
   AgentInvokedSchema,
   QualityGateEvaluatedSchema,
+  WorkflowStartedSchema,
+  WorkflowFinishedSchema,
 ]);
 export type PhaseEvent = z.infer<typeof PhaseEventSchema>;
 

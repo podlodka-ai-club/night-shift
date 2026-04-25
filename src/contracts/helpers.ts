@@ -32,6 +32,16 @@ export function branchNameFor(ticket: Pick<Ticket, "id" | "title">): string {
 }
 
 /**
+ * Derive a deterministic change name from an issue title and number.
+ * Uses `slugify(title)` and appends `-<issueNumber>` for uniqueness.
+ * When the title produces an empty slug, returns just `String(issueNumber)`.
+ */
+export function deriveChangeName(title: string, issueNumber: number): string {
+  const slug = slugify(title);
+  return slug.length > 0 ? `${slug}-${issueNumber}` : String(issueNumber);
+}
+
+/**
  * Convert decimal USD (e.g. 0.0123) to integer micro-USD (12300).
  * Rounded to nearest integer; negative inputs throw.
  */
