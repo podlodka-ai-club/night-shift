@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addLabels,
+  createIssue,
   ensureLabel,
   getIssue,
   listComments,
@@ -48,6 +49,36 @@ describe("getIssue", () => {
     const issue = await getIssue(rest, "acme", "w", 1);
     expect(issue.labels).toEqual(["bug", "tag2"]);
     expect(issue.state).toBe("open");
+  });
+});
+
+describe("createIssue", () => {
+  it("ensures labels before creating the issue", async () => {
+    const { rest, calls } = makeRest([
+      { data: { name: "night-shift:test", color: "ededed" } },
+      {
+        data: {
+          number: 12,
+          title: "Improve test utility",
+          body: "seed workflow tests",
+          state: "open",
+          labels: [{ name: "night-shift:test" }],
+          html_url: "https://example.com/issues/12",
+          node_id: "I_12",
+        },
+      },
+    ]);
+
+    const issue = await createIssue(rest, "o", "r", {
+      title: "Improve test utility",
+      body: "seed workflow tests",
+      labels: ["night-shift:test"],
+    });
+
+    expect(issue.number).toBe(12);
+    expect(issue.nodeId).toBe("I_12");
+    expect(calls[0]!.route).toBe("POST /repos/{owner}/{repo}/labels");
+    expect(calls[1]!.route).toBe("POST /repos/{owner}/{repo}/issues");
   });
 });
 

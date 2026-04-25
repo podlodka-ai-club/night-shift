@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../errors.js";
 import {
+  addItemToProject,
   buildStatusOptionIds,
   ensureStatusOptions,
   getItem,
@@ -148,6 +149,26 @@ describe("setStatus", () => {
     });
     const vars = calls[0]!.variables as { input: { value: { singleSelectOptionId: string } } };
     expect(vars.input.value.singleSelectOptionId).toBe("opt-ready");
+  });
+});
+
+describe("addItemToProject", () => {
+  it("sends the expected mutation", async () => {
+    const { gql, calls } = makeGql([
+      { addProjectV2ItemById: { item: { id: "PVTI_99" } } },
+    ]);
+
+    const result = await addItemToProject(gql, {
+      projectNodeId: "PVT_1",
+      contentNodeId: "I_42",
+    });
+
+    expect(result.itemId).toBe("PVTI_99");
+    const vars = calls[0]!.variables as {
+      input: { projectId: string; contentId: string };
+    };
+    expect(vars.input.projectId).toBe("PVT_1");
+    expect(vars.input.contentId).toBe("I_42");
   });
 });
 

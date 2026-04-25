@@ -6,6 +6,7 @@ import { ConfigError } from "./errors.js";
 import type { GitHubClient } from "./client.js";
 import {
   addLabels,
+  createIssue,
   ensureLabel,
   getIssue,
   listComments,
@@ -14,6 +15,7 @@ import {
 } from "./issues.js";
 import type { RestClient } from "./issues.js";
 import {
+  addItemToProject,
   ensureStatusOptions,
   getItem as getProjectItem,
   listItemsByStatus as listProjectItemsByStatus,
@@ -171,6 +173,35 @@ export async function createGitHubClient(
 
     async getIssue(issueNumber) {
       return getIssue(rest, owner, repo, issueNumber);
+    },
+    async createProjectTicket(opts) {
+      return run(async () => {
+        const issue = await createIssue(rest, owner, repo, opts);
+        const { itemId } = await addItemToProject(gql, {
+          projectNodeId,
+          contentNodeId: issue.nodeId,
+        });
+        const status = opts.status ?? "Backlog";
+        const optionId = statusOptionIds[status];
+        if (!optionId) {
+          throw new ConfigError(`missing option id for status "${status}"`);
+        }
+        await setProjectStatus(gql, {
+          projectNodeId,
+          itemId,
+          fieldId: resolved.fieldId,
+          optionId,
+        });
+        return {
+          itemId,
+          projectNodeId,
+          ticketId: String(issue.number),
+          title: issue.title,
+          issueNumber: issue.number,
+          status,
+          issueUrl: issue.htmlUrl,
+        };
+      });
     },
     async listComments(issueNumber) {
       return listComments(rest, owner, repo, issueNumber);

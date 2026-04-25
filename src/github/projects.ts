@@ -120,6 +120,16 @@ const SET_STATUS_MUTATION = /* GraphQL */ `
   }
 `;
 
+const ADD_ITEM_MUTATION = /* GraphQL */ `
+  mutation AddProjectItem($input: AddProjectV2ItemByIdInput!) {
+    addProjectV2ItemById(input: $input) {
+      item {
+        id
+      }
+    }
+  }
+`;
+
 const ITEM_QUERY = /* GraphQL */ `
   query GetItem($itemId: ID!) {
     node(id: $itemId) {
@@ -272,6 +282,29 @@ export async function setStatus(
       },
     }),
   );
+}
+
+export async function addItemToProject(
+  gql: GraphQLClient,
+  args: {
+    projectNodeId: string;
+    contentNodeId: string;
+  },
+): Promise<{ itemId: string }> {
+  const data = await retryable(() =>
+    gql<{
+      addProjectV2ItemById: {
+        item: { id: string };
+      };
+    }>(ADD_ITEM_MUTATION, {
+      input: {
+        projectId: args.projectNodeId,
+        contentId: args.contentNodeId,
+      },
+    }),
+  );
+
+  return { itemId: data.addProjectV2ItemById.item.id };
 }
 
 export async function getItem(

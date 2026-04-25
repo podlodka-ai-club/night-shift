@@ -4,6 +4,7 @@ import { markerLine } from "../issues.js";
 import {
   STATUS_NAMES,
   type ChangedFile,
+  type CreatedProjectTicket,
   type Issue,
   type ParsedWebhookEvent,
   type PRRef,
@@ -91,6 +92,8 @@ export function createInMemoryFakeGitHubClient(config?: {
   const reviewComments = new Map<number, ReviewComment[]>();
   const reviews = new Map<number, Review[]>();
   let nextCommentId = 1;
+  let nextIssueNumber = 1;
+  let nextItemNumber = 1;
   let nextPrNumber = 1;
   let nextReviewCommentId = 1000;
   let nextReviewId = 100;
@@ -120,6 +123,7 @@ export function createInMemoryFakeGitHubClient(config?: {
     },
 
     seedIssue(issue) {
+      nextIssueNumber = Math.max(nextIssueNumber, issue.number + 1);
       issues.set(issue.number, {
         number: issue.number,
         title: issue.title ?? `Issue ${issue.number}`,
@@ -131,6 +135,9 @@ export function createInMemoryFakeGitHubClient(config?: {
       });
     },
     seedItem(item) {
+      if (item.issueNumber !== undefined) {
+        nextIssueNumber = Math.max(nextIssueNumber, item.issueNumber + 1);
+      }
       items.set(item.itemId, {
         itemId: item.itemId,
         ticketId: item.ticketId ?? (item.issueNumber !== undefined ? String(item.issueNumber) : item.itemId),
@@ -218,6 +225,43 @@ export function createInMemoryFakeGitHubClient(config?: {
         state: i.state,
         labels: [...i.labels],
         htmlUrl: i.htmlUrl,
+      };
+    },
+    async createProjectTicket(opts): Promise<CreatedProjectTicket> {
+      const issueNumber = nextIssueNumber++;
+      const itemId = `PVTI_${nextItemNumber++}`;
+      const status = opts.status ?? "Backlog";
+      log("createProjectTicket", {
+        title: opts.title,
+        ...(opts.status !== undefined ? { status: opts.status } : {}),
+      });
+
+      issues.set(issueNumber, {
+        number: issueNumber,
+        title: opts.title,
+        body: opts.body ?? null,
+        state: "open",
+        labels: new Set(opts.labels ?? []),
+        htmlUrl: `https://github.com/${owner}/${repo}/issues/${issueNumber}`,
+        comments: [],
+      });
+      items.set(itemId, {
+        itemId,
+        ticketId: String(issueNumber),
+        title: opts.title,
+        issueNumber,
+        status,
+        createdAt: "1970-01-01T00:00:00Z",
+      });
+
+      return {
+        itemId,
+        projectNodeId,
+        ticketId: String(issueNumber),
+        title: opts.title,
+        issueNumber,
+        status,
+        issueUrl: `https://github.com/${owner}/${repo}/issues/${issueNumber}`,
       };
     },
     async addLabels(issueNumber: number, labels: string[]): Promise<void> {

@@ -1,5 +1,23 @@
 import type { OpenPROpts, UpsertPROpts } from "./prs.js";
-import type { ChangedFile, Comment, Issue, PRRef, ProjectItem, ProjectItemSummary, ReviewComment, Review, StatusName } from "./types.js";
+import type {
+  ChangedFile,
+  Comment,
+  CreatedProjectTicket,
+  Issue,
+  PRRef,
+  ProjectItem,
+  ProjectItemSummary,
+  ReviewComment,
+  Review,
+  StatusName,
+} from "./types.js";
+
+export interface CreateProjectTicketOpts {
+  title: string;
+  body?: string;
+  labels?: string[];
+  status?: StatusName;
+}
 
 export interface GitHubClient {
   readonly owner: string;
@@ -14,6 +32,9 @@ export interface GitHubClient {
 
   // Issues & comments
   getIssue(issueNumber: number): Promise<Issue>;
+  createProjectTicket(
+    opts: CreateProjectTicketOpts,
+  ): Promise<CreatedProjectTicket>;
   listComments(issueNumber: number): Promise<Comment[]>;
   addLabels(issueNumber: number, labels: string[]): Promise<void>;
   removeLabel(issueNumber: number, label: string): Promise<void>;

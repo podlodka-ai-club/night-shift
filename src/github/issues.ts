@@ -1,6 +1,21 @@
+import { z } from "zod";
 import { retryable } from "./retry.js";
 import { GitHubNotFoundError } from "./errors.js";
 import { type Comment, CommentSchema, type Issue, IssueSchema } from "./types.js";
+
+const CreatedIssueSchema = IssueSchema.extend({
+  nodeId: z.string().min(1),
+});
+
+export interface CreateIssueOpts {
+  title: string;
+  body?: string;
+  labels?: string[];
+}
+
+export interface CreatedIssue extends Issue {
+  nodeId: string;
+}
 
 /**
  * Minimal Octokit REST surface we depend on. Satisfied by an `Octokit`
@@ -37,6 +52,48 @@ export async function getIssue(
     state: data.state,
     labels,
     htmlUrl: data.html_url,
+  });
+}
+
+export async function createIssue(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  opts: CreateIssueOpts,
+): Promise<CreatedIssue> {
+  const labels = opts.labels ?? [];
+  for (const label of labels) {
+    await ensureLabel(rest, owner, repo, label);
+  }
+
+  const { data } = await retryable(() =>
+    rest.request<{
+      number: number;
+      title: string;
+      body: string | null;
+      state: "open" | "closed";
+      labels: Array<{ name: string } | string>;
+      html_url: string;
+      node_id: string;
+    }>("POST /repos/{owner}/{repo}/issues", {
+      owner,
+      repo,
+      title: opts.title,
+      ...(opts.body !== undefined ? { body: opts.body } : {}),
+      ...(labels.length > 0 ? { labels } : {}),
+    }),
+  );
+
+  return CreatedIssueSchema.parse({
+    number: data.number,
+    title: data.title,
+    body: data.body,
+    state: data.state,
+    labels: data.labels.map((label) =>
+      typeof label === "string" ? label : label.name,
+    ),
+    htmlUrl: data.html_url,
+    nodeId: data.node_id,
   });
 }
 

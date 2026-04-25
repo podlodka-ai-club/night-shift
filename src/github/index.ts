@@ -2,6 +2,7 @@ export { createGitHubClient } from "./factory.js";
 export { createInMemoryFakeGitHubClient } from "./__test__/fake.js";
 export type { FakeGitHubClient, FakeEvent } from "./__test__/fake.js";
 export type { GitHubClient } from "./client.js";
+export type { CreateProjectTicketOpts } from "./client.js";
 export {
   ConfigError,
   GitHubApiError,
@@ -22,6 +23,7 @@ export {
 } from "./types.js";
 export type {
   GitHubConfig,
+  CreatedProjectTicket,
   Issue,
   Label,
   Comment,

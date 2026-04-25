@@ -44,6 +44,17 @@ export const IssueSchema = z.object({
 });
 export type Issue = z.infer<typeof IssueSchema>;
 
+export const CreatedProjectTicketSchema = z.object({
+  itemId: z.string().min(1),
+  projectNodeId: z.string().min(1),
+  ticketId: z.string().min(1),
+  title: z.string(),
+  issueNumber: z.number().int().positive(),
+  status: StatusNameSchema,
+  issueUrl: z.string().url(),
+});
+export type CreatedProjectTicket = z.infer<typeof CreatedProjectTicketSchema>;
+
 export const ProjectItemSchema = z.object({
   itemId: z.string().min(1),
   projectNodeId: z.string().min(1),

@@ -34,6 +34,26 @@ describe("InMemoryFakeGitHubClient", () => {
     expect(i.labels).toEqual(["b"]);
   });
 
+  it("creates a project ticket with an issue and board item", async () => {
+    const c = createInMemoryFakeGitHubClient();
+    const ticket = await c.createProjectTicket({
+      title: "Workflow test ticket",
+      body: "used for e2e verification",
+      labels: ["night-shift:test"],
+      status: "Ready",
+    });
+
+    expect(ticket.issueNumber).toBe(1);
+    expect(ticket.itemId).toBe("PVTI_1");
+    expect(ticket.status).toBe("Ready");
+
+    const issue = await c.getIssue(ticket.issueNumber);
+    const item = await c.getItem(ticket.itemId);
+    expect(issue.title).toBe("Workflow test ticket");
+    expect(item.status).toBe("Ready");
+    expect(c.events[0]!.kind).toBe("createProjectTicket");
+  });
+
   it("upserts a comment matching the marker", async () => {
     const c = createInMemoryFakeGitHubClient();
     c.seedIssue({ number: 1 });

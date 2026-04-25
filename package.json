@@ -20,7 +20,8 @@
     "worker:restart-clean": "node scripts/restart-worker-clean.mjs",
     "temporal:restart-clean": "node scripts/restart-temporal-clean.mjs",
     "start": "node --env-file-if-exists=.env --import tsx src/cli/start.ts",
-    "pickup": "node --env-file=.env --import tsx src/cli/pickup.ts"
+    "pickup": "node --env-file=.env --import tsx src/cli/pickup.ts",
+    "create-ticket": "node --env-file-if-exists=.env --import tsx src/cli/create-ticket.ts"
   },
   "dependencies": {
     "@octokit/auth-app": "^8.2.0",
