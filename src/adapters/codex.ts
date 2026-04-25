@@ -247,7 +247,7 @@ class EventTranslator {
         return this.toolItem(
           ev,
           item.id,
-          "shell-command",
+          item.command,
           { command: item.command },
           { kind: "shell" },
           stage,
@@ -368,12 +368,63 @@ function threadItemToAgentItem(i: ThreadItem): AgentThreadItem {
   return { id: i.id, type: i.type, payload: i };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function resolveLocalSchemaRef(
+  rootSchema: Record<string, unknown>,
+  ref: string,
+): Record<string, unknown> | undefined {
+  if (!ref.startsWith("#/")) {
+    return undefined;
+  }
+
+  const segments = ref
+    .slice(2)
+    .split("/")
+    .map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
+
+  let current: unknown = rootSchema;
+  for (const segment of segments) {
+    if (!isRecord(current) || !(segment in current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+
+  return isRecord(current) ? current : undefined;
+}
+
+function normalizeOutputSchema(outputSchema: unknown): unknown {
+  if (!isRecord(outputSchema)) {
+    return outputSchema;
+  }
+
+  let normalized = outputSchema;
+  if (typeof normalized.type !== "string" && typeof normalized.$ref === "string") {
+    const resolved = resolveLocalSchemaRef(normalized, normalized.$ref);
+    if (resolved) {
+      normalized = resolved;
+    }
+  }
+
+  if (!("$schema" in normalized)) {
+    return normalized;
+  }
+
+  const { $schema: _ignored, ...withoutMeta } = normalized;
+  return withoutMeta;
+}
+
 function buildTurnOptions(opts?: TurnOpts): {
   outputSchema?: unknown;
   signal?: AbortSignal;
 } {
   const out: { outputSchema?: unknown; signal?: AbortSignal } = {};
-  if (opts?.outputSchema !== undefined) out.outputSchema = opts.outputSchema;
+  if (opts?.outputSchema !== undefined) {
+    out.outputSchema = normalizeOutputSchema(opts.outputSchema);
+  }
   if (opts?.signal) out.signal = opts.signal;
   return out;
 }

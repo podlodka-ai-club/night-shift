@@ -20,6 +20,7 @@ function implResponseJson(
     ],
     commitMessage: overrides.commitMessage ?? "feat: add a",
     summary: "added a",
+    followUps: [],
   });
 }
 
@@ -87,6 +88,7 @@ describe("runImplementPhase", () => {
 
     expect(result.status).toBe("pr_opened");
     expect(result.result?.pr.number).toBe(1);
+    expect(result.specBundle?.commitSha).toBe(result.result?.pr.headSha);
     const statuses = gh.events
       .filter((e) => e.kind === "setStatus")
       .map((e) => (e.args as { status: string }).status);
@@ -94,6 +96,118 @@ describe("runImplementPhase", () => {
     const comments = gh.events.filter((e) => e.kind === "upsertComment");
     expect(comments).toHaveLength(1);
     expect(worktree.events.map((e) => e.kind)).toEqual(["create", "remove"]);
+  });
+
+  it("commits and pushes through worktree-scoped git when provided", async () => {
+    const agent = new InMemoryFakeAdapter({
+      script: [
+        { events: [], finalText: implResponseJson(), usage: usage() },
+      ],
+    });
+    const mainGit = createInMemoryFakeGitOps();
+    const worktreeGit = createInMemoryFakeGitOps();
+    const gh = createInMemoryFakeGitHubClient();
+    const worktree = createInMemoryFakeWorktreeOps();
+    const gates = createInMemoryFakeQualityGateRunner();
+    const scopedRepoRoots: string[] = [];
+    gh.seedIssue({ number: 14, title: "Add thing" });
+    gh.seedItem({ itemId: "PVTI_14", issueNumber: 14, status: "Ready" });
+
+    const result = await runImplementPhase(
+      {
+        github: gh,
+        git: mainGit,
+        gitForRepo(repoRoot) {
+          scopedRepoRoots.push(repoRoot);
+          return worktreeGit;
+        },
+        fs: makeFs(BUNDLE),
+        worktree,
+        gateRunner: gates,
+        agent,
+        runId: "run1",
+        profileId: "default",
+        implementerModel: "gpt-test",
+        qualityGates: [{ name: "typecheck", command: ["true"] }],
+        baseBranch: "main",
+      },
+      {
+        itemId: "PVTI_14",
+        changeName: "c",
+      },
+    );
+
+    expect(result.status).toBe("pr_opened");
+    expect(scopedRepoRoots).toHaveLength(1);
+    expect(mainGit.commits).toHaveLength(0);
+    expect(mainGit.pushes).toHaveLength(0);
+    expect(worktreeGit.commits).toHaveLength(1);
+    expect(worktreeGit.pushes).toHaveLength(1);
+  });
+
+  it("reuses unpublished branch state when a retry returns no new file changes", async () => {
+    const agent = new InMemoryFakeAdapter({
+      script: [
+        {
+          events: [],
+          finalText: JSON.stringify({
+            filesWritten: [],
+            commitMessage: "feat: already implemented",
+            summary: "Existing branch already contains the fix.",
+            followUps: [],
+          }),
+          usage: usage(),
+        },
+      ],
+    });
+    const mainGit = createInMemoryFakeGitOps();
+    const worktreeGit = createInMemoryFakeGitOps();
+    const gh = createInMemoryFakeGitHubClient();
+    const worktree = createInMemoryFakeWorktreeOps();
+    const gates = createInMemoryFakeQualityGateRunner();
+    gh.seedIssue({ number: 15, title: "Already fixed" });
+    gh.seedItem({ itemId: "PVTI_15", issueNumber: 15, status: "Ready" });
+
+    await worktreeGit.writeTree(
+      [{ path: "openspec/changes/c/tasks.md", content: "spec state\n" }],
+      "spec state",
+    );
+    await worktreeGit.pushBranch("night-shift/acme/widgets#15-already-fixed");
+    const { sha: implementSha } = await worktreeGit.writeTree(
+      [{ path: "src/a.ts", content: "export const a = 1;\n" }],
+      "implement state",
+    );
+
+    const result = await runImplementPhase(
+      {
+        github: gh,
+        git: mainGit,
+        gitForRepo() {
+          return worktreeGit;
+        },
+        fs: makeFs(BUNDLE),
+        worktree,
+        gateRunner: gates,
+        agent,
+        runId: "run1",
+        profileId: "default",
+        implementerModel: "gpt-test",
+        qualityGates: [{ name: "typecheck", command: ["true"] }],
+        baseBranch: "main",
+      },
+      {
+        itemId: "PVTI_15",
+        changeName: "c",
+      },
+    );
+
+    expect(result.status).toBe("pr_opened");
+    expect(result.result?.pr.branch).toBe("night-shift/acme/widgets#15-already-fixed");
+    expect(worktreeGit.commits).toHaveLength(2);
+    expect(worktreeGit.pushes.at(-1)).toEqual({
+      branch: "night-shift/acme/widgets#15-already-fixed",
+      sha: implementSha,
+    });
   });
 
   it("skips pre-transition when already In progress", async () => {

@@ -84,6 +84,19 @@ describe("runSpecifyPhase", () => {
     const comments = gh.events.filter((e) => e.kind === "upsertComment");
     expect(comments).toHaveLength(1);
     expect((comments[0]!.args as { markerId: string }).markerId).toBe("specify:summary");
+    expect(git.pushes).toEqual([{ branch: result.bundle!.branch, sha: result.bundle!.commitSha }]);
+    const prs = gh.events.filter((e) => e.kind === "upsertPullRequest");
+    expect(prs).toHaveLength(1);
+    const [summaryComment] = await gh.listComments(1);
+    expect(summaryComment?.body).toContain(
+      `https://github.com/acme/widgets/tree/${result.bundle?.commitSha}/openspec/changes/add-feature`,
+    );
+    expect(summaryComment?.body).toContain(
+      "https://github.com/acme/widgets/pull/1",
+    );
+    expect(summaryComment?.body).toContain(`Branch: \`${result.bundle!.branch}\``);
+    expect(summaryComment?.body).toContain("_Latency:");
+    expect(summaryComment?.body).toContain("Usage:");
   });
 
   it("throws SpecifyItemMissingError when item has no issue", async () => {
@@ -168,6 +181,7 @@ describe("runSpecifyPhase", () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 4 });
     gh.seedItem({ itemId: "PVTI_4", issueNumber: 4, status: "Backlog" });
+    const git = createInMemoryFakeGitOps();
     const cli = createFakeOpenSpecCli();
     cli.script([
       { ok: false, error: "missing ## Why" },
@@ -182,7 +196,7 @@ describe("runSpecifyPhase", () => {
     const result = await runSpecifyPhase(
       {
         github: gh,
-        git: createInMemoryFakeGitOps(),
+        git,
         fs: fakeFs(),
         agent,
         openspecCli: cli,
@@ -194,6 +208,10 @@ describe("runSpecifyPhase", () => {
     );
     expect(result.status).toBe("needs_input");
     expect(result.summary).toContain("still missing ## Why");
+    expect(result.summary).toContain("[Change folder](https://github.com/acme/widgets/tree/");
+    expect(result.summary).not.toContain("Spec review PR");
+    expect(git.pushes).toHaveLength(0);
+    expect(gh.events.filter((e) => e.kind === "upsertPullRequest")).toHaveLength(0);
     const statuses = gh.events
       .filter((e) => e.kind === "setStatus")
       .map((e) => (e.args as { status: string }).status);
@@ -350,6 +368,8 @@ describe("runSpecifyPhase", () => {
     // createBranch called twice (second call tolerated as already-exists).
     const branchCalls = gh.events.filter((e) => e.kind === "createBranch");
     expect(branchCalls.length).toBeGreaterThanOrEqual(2);
+    const prCalls = gh.events.filter((e) => e.kind === "upsertPullRequest");
+    expect(prCalls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("emits PhaseFailed when item missing", async () => {

@@ -11,7 +11,7 @@ This module defines the **types + runtime validators** every other module of Nig
 - **Helpers** — `slugify`, `branchNameFor(ticket)`, `usdToMicro`, `microToUsd`
 - **Specify contract** — `SpecifyInput`, `SpecBundle`, `validateSpecBundle(ticket, bundle)`
 - **Implement contract** — `ImplementInput`, `ImplementationResult`, `QualityGateResult`, `PRRef`
-- **Review contract** — `ReviewInput`, `ReviewResult`, `Finding`, `Verdict`, `decideVerdict(findings, iteration)`
+- **Review contract** — `ReviewInput`, `ReviewResult`, `Finding`, `Verdict`, `decideVerdict(findings, iteration, maxIterations?)`
 - **Observability** — `PhaseEvent` discriminated union, `EventSink` interface
 
 ## What NOT to import here

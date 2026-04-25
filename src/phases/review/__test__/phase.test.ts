@@ -301,6 +301,28 @@ describe("runReviewPhase", () => {
     expect((reviews[0]!.args as { event: string }).event).toBe("COMMENT");
   });
 
+  it("honors maxIterations from the review input", async () => {
+    const findings = [{ severity: "error", message: "still broken" }];
+    const agent = new InMemoryFakeAdapter({
+      script: [
+        {
+          events: [],
+          finalText: reviewResponseJson({ findings }),
+          usage: usage(),
+        },
+      ],
+    });
+    const { gh, deps } = buildDeps(agent);
+    seedBase(gh);
+
+    const result = await runReviewPhase(
+      phaseInput({ iteration: 1, maxIterations: 2 }),
+      deps,
+    );
+
+    expect(result.status).toBe("escalated");
+  });
+
   // 7.7 Schema-invalid once → retry → happy
   it("schema-invalid once → retry → success", async () => {
     const badResponse = JSON.stringify({

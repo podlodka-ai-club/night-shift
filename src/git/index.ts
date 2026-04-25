@@ -10,6 +10,10 @@ import path from "node:path";
 export interface GitOps {
   /** Checkout the given branch, creating it from the current HEAD if absent. */
   checkoutBranch(branch: string): Promise<void>;
+  /** Push the current branch HEAD to origin under the given branch name. */
+  pushBranch(branch: string): Promise<void>;
+  /** Return the current remote HEAD for `branch`, or null when it does not exist yet. */
+  remoteHeadSha(branch: string): Promise<string | null>;
   /**
    * Stage the given files (paths relative to the repo root) with the given
    * contents, commit them, and return the new HEAD sha.
@@ -43,6 +47,12 @@ export interface SimpleGitOpsDeps {
  */
 export function createSimpleGitOps(deps: SimpleGitOpsDeps): GitOps {
   const { repoRoot, git } = deps;
+
+  function isMissingRemoteRefError(err: unknown): boolean {
+    const message = err instanceof Error ? err.message : String(err);
+    return /couldn't find remote ref|remote ref does not exist|not our ref/i.test(message);
+  }
+
   return {
     async checkoutBranch(branch) {
       const branches = await git.branch();
@@ -50,6 +60,35 @@ export function createSimpleGitOps(deps: SimpleGitOpsDeps): GitOps {
         await git.checkout(branch);
       } else {
         await git.checkoutLocalBranch(branch);
+      }
+    },
+    async pushBranch(branch) {
+      try {
+        await git.fetch("origin", branch);
+      } catch (err) {
+        if (!isMissingRemoteRefError(err)) {
+          throw err;
+        }
+      }
+
+      // Reruns reuse deterministic automation-owned branch names, so update
+      // the remote branch with a lease instead of requiring fast-forward only.
+      await git.push([
+        "--force-with-lease",
+        "--set-upstream",
+        "origin",
+        `HEAD:refs/heads/${branch}`,
+      ]);
+    },
+    async remoteHeadSha(branch) {
+      try {
+        const sha = await git.revparse([`origin/${branch}`]);
+        return sha.trim();
+      } catch (err) {
+        if (isMissingRemoteRefError(err)) {
+          return null;
+        }
+        throw err;
       }
     },
     async writeTree(files, commitMessage) {

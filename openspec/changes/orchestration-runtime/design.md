@@ -205,6 +205,15 @@ human intervention. The same signal pattern is used for the Refined→Ready
 gate (Decision 3) — the only difference is the signal name and the
 transition that triggers it.
 
+Unexpected phase failures follow a different path. If specify, implement, or
+review throws after retries are exhausted, the workflow does **not** enter a
+resume gate. Instead it runs a small orchestration activity that sets the item
+to `Blocked` and upserts a ticket comment with the failing phase, root cause,
+and the intake status for the next attempt (`Backlog` after specify failures,
+`Ready` after implement/review failures). The workflow then exits so the next
+operator move back to intake starts a fresh workflow attempt rather than
+resuming mid-phase.
+
 **Alternatives considered:**
 - Polling activity that checks item status every N minutes — works but wastes
   activity slots and complicates testing.

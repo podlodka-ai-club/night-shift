@@ -1,5 +1,8 @@
 import type { Client, WorkflowHandle } from "@temporalio/client";
-import { WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
+import {
+  WorkflowExecutionAlreadyStartedError,
+  WorkflowNotFoundError,
+} from "@temporalio/client";
 import type { BlockedReason, TicketWorkflowInput } from "./workflow.js";
 
 export interface WebhookEvent {
@@ -29,7 +32,7 @@ export async function handleWorkflowTrigger(
     return handleBacklog(event, client, taskQueue, workflowId);
   }
   if (event.currentStatus === "Ready") {
-    return handleReady(client, workflowId);
+    return handleReady(event, client, taskQueue, workflowId);
   }
   if (event.currentStatus === "In review") {
     return handleInReview(client, workflowId);
@@ -72,7 +75,60 @@ async function handleBacklog(
   return { action: "ignored", workflowId };
 }
 
-async function handleReady(client: Client, workflowId: string): Promise<HandleResult> {
+async function handleReady(
+  event: WebhookEvent,
+  client: Client,
+  taskQueue: string,
+  workflowId: string,
+): Promise<HandleResult> {
+  let reason: BlockedReason;
+  try {
+    reason = await queryBlockedReason(client, workflowId);
+  } catch (err) {
+    if (err instanceof WorkflowNotFoundError) {
+      return startReadyWorkflow(event, client, taskQueue, workflowId);
+    }
+    throw err;
+  }
+
+  if (reason === "awaiting_spec_review") {
+    await signalWorkflow(client, workflowId, "specReviewed");
+    return { action: "signaled", workflowId, signal: "specReviewed" };
+  }
+  if (reason === "implement_needs_input") {
+    await signalWorkflow(client, workflowId, "implementRetry");
+    return { action: "signaled", workflowId, signal: "implementRetry" };
+  }
+
+  // Closed runs can still answer queries, so fall back to a fresh implement start
+  // unless the current workflow is at a resumable human gate handled above.
+  return startReadyWorkflow(event, client, taskQueue, workflowId);
+}
+
+async function startReadyWorkflow(
+  event: WebhookEvent,
+  client: Client,
+  taskQueue: string,
+  workflowId: string,
+): Promise<HandleResult> {
+  const input: TicketWorkflowInput = {
+    itemId: event.itemId,
+    ticketId: event.ticketId,
+    changeName: event.changeName,
+    startPhase: "implement",
+  };
+
+  try {
+    await client.workflow.start("ticketWorkflow", {
+      taskQueue,
+      workflowId,
+      args: [input],
+    });
+    return { action: "started", workflowId };
+  } catch (err) {
+    if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;
+  }
+
   const reason = await queryBlockedReason(client, workflowId);
   if (reason === "awaiting_spec_review") {
     await signalWorkflow(client, workflowId, "specReviewed");
@@ -82,6 +138,7 @@ async function handleReady(client: Client, workflowId: string): Promise<HandleRe
     await signalWorkflow(client, workflowId, "implementRetry");
     return { action: "signaled", workflowId, signal: "implementRetry" };
   }
+
   return { action: "ignored", workflowId };
 }
 

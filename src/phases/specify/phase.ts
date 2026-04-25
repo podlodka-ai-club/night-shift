@@ -1,5 +1,6 @@
 import path from "node:path";
-import type { AgentAdapter, TurnResult } from "../../adapters/events.js";
+import type { AgentAdapter, AgentStreamEvent, TurnResult } from "../../adapters/events.js";
+import { runTurnWithProgress } from "../../adapters/run-turn.js";
 import type { EventSink } from "../../contracts/events.js";
 import type { SpecBundle } from "../../contracts/specify.js";
 import { validateSpecBundle } from "../../contracts/specify.js";
@@ -11,6 +12,7 @@ import { markerLine } from "../../github/issues.js";
 import type { GitOps } from "../../git/index.js";
 import {
   SpecifyAgentError,
+  SpecifyGitError,
   SpecifyItemMissingError,
   SpecifyPhaseError,
   SpecifyValidationError,
@@ -56,7 +58,10 @@ export interface RunSpecifyPhaseDeps {
   fs: SpecifyFs;
   agent: AgentAdapter;
   openspecCli: OpenSpecCli;
+  /** Base branch the spec review PR targets. Defaults to `main`. */
+  baseBranch?: string;
   events?: EventSink;
+  onAgentEvent?: (event: AgentStreamEvent) => Promise<void> | void;
   now?: () => Date;
   runId: string;
   profileId: string;
@@ -132,24 +137,74 @@ function buildTicket(
   // itemStatus intentionally unused here — it informs the caller's pre-transition.
 }
 
-function formatSummary(response: SpecifierResponse, status: SpecifyStatus): string {
+function repoUrlFromIssueUrl(issueUrl: string): string {
+  const url = new URL(issueUrl);
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length >= 2) {
+    url.pathname = `/${segments[0]}/${segments[1]}`;
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  }
+  return issueUrl;
+}
+
+function encodeRepoPath(pathValue: string): string {
+  return pathValue
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function renderList(items: string[]): string[] {
+  return items.length > 0 ? items.map((item) => `- ${item}`) : ["- _None._"];
+}
+
+function formatUsageSummary(usage: TurnResult["usage"]): string {
+  return [
+    `${usage.input_tokens.toLocaleString("en-US")} input`,
+    `${usage.output_tokens.toLocaleString("en-US")} output`,
+    `${usage.cached_input_tokens.toLocaleString("en-US")} cached`,
+  ].join(", ");
+}
+
+function formatSummary(opts: {
+  response: SpecifierResponse;
+  status: SpecifyStatus;
+  issueUrl: string;
+  changeDir: string;
+  branch: string;
+  commitSha: string;
+  latencyMs: number;
+  usage: TurnResult["usage"];
+  specPrUrl?: string;
+}): string {
+  const repoUrl = repoUrlFromIssueUrl(opts.issueUrl);
+  const changeFolderUrl = `${repoUrl}/tree/${opts.commitSha}/${encodeRepoPath(opts.changeDir)}`;
   const parts: string[] = [];
-  parts.push(`Specify phase: **${status}**`);
-  if (response.openQuestions.length > 0) {
-    parts.push("");
-    parts.push("### Open questions");
-    for (const q of response.openQuestions) parts.push(`- ${q}`);
+  parts.push(`Specify phase: **${opts.status}**`);
+  parts.push("");
+  parts.push("### Links");
+  parts.push(`- [Change folder](${changeFolderUrl})`);
+  parts.push(`- Branch: \`${opts.branch}\``);
+  if (opts.specPrUrl) {
+    parts.push(`- [Spec review PR](${opts.specPrUrl})`);
   }
-  if (response.assumptions.length > 0) {
-    parts.push("");
-    parts.push("### Assumptions");
-    for (const a of response.assumptions) parts.push(`- ${a}`);
-  }
-  if (response.risks.length > 0) {
-    parts.push("");
-    parts.push("### Risks");
-    for (const r of response.risks) parts.push(`- ${r}`);
-  }
+
+  parts.push("");
+  parts.push("### Open questions");
+  parts.push(...renderList(opts.response.openQuestions));
+
+  parts.push("");
+  parts.push("### Assumptions");
+  parts.push(...renderList(opts.response.assumptions));
+
+  parts.push("");
+  parts.push("### Risks");
+  parts.push(...renderList(opts.response.risks));
+
+  parts.push("");
+  parts.push(`_Latency: ${opts.latencyMs}ms · Usage: ${formatUsageSummary(opts.usage)}_`);
   return parts.join("\n");
 }
 
@@ -165,6 +220,35 @@ function filesToTree(
     path: path.posix.join(changeDir, f.path),
     content: f.content,
   }));
+}
+
+async function publishSpecReviewPullRequest(
+  deps: RunSpecifyPhaseDeps,
+  ticket: Ticket,
+  branch: string,
+  commitSha: string,
+  issueUrl: string,
+  changeDir: string,
+): Promise<Awaited<ReturnType<GitHubClient["upsertPullRequest"]>>> {
+  try {
+    await deps.git.pushBranch(branch);
+    return await deps.github.upsertPullRequest({
+      head: branch,
+      base: deps.baseBranch ?? "main",
+      title: `Spec: ${ticket.id}: ${ticket.title}`,
+      body: [
+        `Spec review for ${issueUrl}`,
+        "",
+        `OpenSpec change folder: ${changeDir}`,
+      ].join("\n"),
+      draft: true,
+    });
+  } catch (err) {
+    throw new SpecifyGitError(
+      `failed to publish spec review PR for ${branch}: ${(err as Error).message}`,
+      { ticketId: ticket.id, cause: err },
+    );
+  }
 }
 
 export async function runSpecifyPhase(
@@ -226,7 +310,9 @@ export async function runSpecifyPhase(
       // createBranch is idempotent on the fake; real impl returns a known
       // error when the ref exists — tolerate it here.
       const message = err instanceof Error ? err.message : String(err);
-      if (!/already exists|reference already exists/i.test(message)) throw err;
+      if (!/already exists|reference already exists|branch .* exists at /i.test(message)) {
+        throw err;
+      }
     }
     await deps.git.checkoutBranch(branch);
 
@@ -257,9 +343,9 @@ export async function runSpecifyPhase(
               `\n\n## Previous validation errors\n${validatorError}\nFix these and return the full updated response.`;
 
         try {
-          turn = await session.run(userMessage, {
+          turn = await runTurnWithProgress(session, userMessage, {
             outputSchema: SpecifierResponseJsonSchema,
-          });
+          }, deps.onAgentEvent);
         } catch (err) {
           throw new SpecifyAgentError(
             "agent",
@@ -306,10 +392,34 @@ export async function runSpecifyPhase(
     const status: SpecifyStatus =
       validatorFailed || openQuestionsNonEmpty ? "needs_input" : "refined";
 
+    const specPr =
+      status === "refined"
+        ? await publishSpecReviewPullRequest(
+            deps,
+            ticket,
+            branch,
+            commitSha,
+            issue.htmlUrl,
+            changeDir,
+          )
+        : undefined;
+
+    const summaryBase = formatSummary({
+      response,
+      status,
+      issueUrl: issue.htmlUrl,
+      changeDir,
+      branch,
+      commitSha,
+      latencyMs: turn.latencyMs,
+      usage: turn.usage,
+      ...(specPr ? { specPrUrl: specPr.url } : {}),
+    });
+
     const summary =
       status === "needs_input" && validatorFailed
-        ? `${formatSummary(response, status)}\n\n### Validator errors\n\`\`\`\n${validatorError}\n\`\`\``
-        : formatSummary(response, status);
+        ? `${summaryBase}\n\n### Validator errors\n\`\`\`\n${validatorError}\n\`\`\``
+        : summaryBase;
 
     await deps.github.upsertComment(issue.number, "specify:summary", summary);
 

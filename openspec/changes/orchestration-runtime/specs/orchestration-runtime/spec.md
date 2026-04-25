@@ -109,6 +109,31 @@ Transient failures (network errors, GitHub 5xx, agent provider timeouts) SHALL b
 - **WHEN** the activity wraps it as a non-retryable `ApplicationFailure`
 - **THEN** Temporal does not retry and the workflow receives the failure immediately
 
+### Requirement: Workflow blocks tickets on terminal phase failures
+
+If any phase activity fails after Temporal retries are exhausted, or fails immediately with a non-retryable phase error, `ticketWorkflow` SHALL catch that failure, invoke an orchestration activity that transitions the project item to `Blocked`, and upsert a ticket comment describing the failing phase, the root-cause message, and the suggested intake status for a fresh attempt. The suggested intake status SHALL be `Backlog` for specify failures and `Ready` for implement or review failures. After recording the failure, the current workflow attempt SHALL end instead of waiting for a human-resume signal; a later move back to the suggested intake status SHALL start a new workflow attempt through the normal intake path.
+
+#### Scenario: Specify failure blocks the ticket and points back to Backlog
+- **GIVEN** `specifyActivity` fails with a non-retryable provider or validation error
+- **WHEN** `ticketWorkflow` handles that failure
+- **THEN** the item is transitioned to `Blocked`
+- **AND** a ticket comment is upserted with the specify root cause and a suggestion to move the item back to `Backlog`
+- **AND** the workflow ends the current attempt without invoking `implementActivity`
+
+#### Scenario: Implement failure blocks the ticket and points back to Ready
+- **GIVEN** `implementActivity` fails after retries are exhausted
+- **WHEN** `ticketWorkflow` handles that failure
+- **THEN** the item is transitioned to `Blocked`
+- **AND** a ticket comment is upserted with the implement root cause and a suggestion to move the item back to `Ready`
+- **AND** the workflow ends the current attempt without invoking `reviewActivity`
+
+#### Scenario: Review failure blocks the ticket and points back to Ready
+- **GIVEN** `reviewActivity` fails after retries are exhausted
+- **WHEN** `ticketWorkflow` handles that failure
+- **THEN** the item is transitioned to `Blocked`
+- **AND** a ticket comment is upserted with the review root cause and a suggestion to move the item back to `Ready`
+- **AND** the workflow ends the current attempt without waiting for `resume`
+
 ### Requirement: Activity retry policy uses bounded exponential backoff
 
 Activities SHALL be configured with an initial interval of 1 second, a backoff coefficient of 2, a maximum interval of 30 seconds, and a maximum of 5 attempts. The start-to-close timeout SHALL be 15 minutes (configurable via `NightShiftConfig`). Activities SHALL heartbeat every 30 seconds during long-running agent calls.

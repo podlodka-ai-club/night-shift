@@ -49,12 +49,10 @@ export const ImplementerFileSchema = z.object({
 
 export const ImplementerResponseSchema = z
   .object({
-    filesWritten: z.array(ImplementerFileSchema).min(1, {
-      message: "at least one file must be written",
-    }),
+    filesWritten: z.array(ImplementerFileSchema),
     commitMessage: z.string().min(1),
     summary: z.string().min(1),
-    followUps: z.array(z.string()).optional(),
+    followUps: z.array(z.string()),
   })
   .superRefine((val, ctx) => {
     const paths = new Set(val.filesWritten.map((f) => f.path));
@@ -70,5 +68,5 @@ export type ImplementerResponse = z.infer<typeof ImplementerResponseSchema>;
 
 export const ImplementerResponseJsonSchema = zodToJsonSchema(
   ImplementerResponseSchema,
-  { name: "ImplementerResponse", $refStrategy: "none" },
+  { $refStrategy: "none" },
 );

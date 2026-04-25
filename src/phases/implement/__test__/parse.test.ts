@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { parseImplementerResponse } from "../parse.js";
 import { ImplementAgentError } from "../errors.js";
+import { ImplementerResponseJsonSchema } from "../response.js";
 
 const valid = {
   filesWritten: [{ path: "src/a.ts", content: "export {}" }],
   commitMessage: "feat: a",
   summary: "ok",
+  followUps: [],
 };
 
 describe("parseImplementerResponse", () => {
@@ -24,15 +26,11 @@ describe("parseImplementerResponse", () => {
     }
   });
 
-  it("throws `schema` on empty filesWritten", () => {
-    try {
-      parseImplementerResponse(
-        JSON.stringify({ ...valid, filesWritten: [] }),
-      );
-      throw new Error("should have thrown");
-    } catch (err) {
-      expect((err as ImplementAgentError).code).toBe("schema");
-    }
+  it("accepts empty filesWritten so retries can reuse unpublished branch state", () => {
+    const out = parseImplementerResponse(
+      JSON.stringify({ ...valid, filesWritten: [] }),
+    );
+    expect(out.filesWritten).toEqual([]);
   });
 
   it("rejects `..` path segments", () => {
@@ -78,5 +76,13 @@ describe("parseImplementerResponse", () => {
     } catch (err) {
       expect((err as ImplementAgentError).code).toBe("schema");
     }
+  });
+
+  it("requires followUps in the JSON schema sent to the agent", () => {
+    const schema = ImplementerResponseJsonSchema as {
+      required?: string[];
+    };
+
+    expect(schema.required).toContain("followUps");
   });
 });

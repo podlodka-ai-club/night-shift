@@ -6,7 +6,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 type ConditionFn = () => boolean;
 let pendingConditions: Array<{ fn: ConditionFn; resolve: () => void }> = [];
-const signalHandlers = new Map<string, () => void>();
+const signalHandlers = new Map<string, (...args: unknown[]) => unknown>();
 const queryHandlers = new Map<string, () => unknown>();
 
 function resolveConditions() {
@@ -18,9 +18,9 @@ function resolveConditions() {
   }
 }
 
-function fireSignal(name: string) {
+function fireSignal(name: string, ...args: unknown[]) {
   const handler = signalHandlers.get(name);
-  if (handler) handler();
+  if (handler) handler(...args);
   // After signal, check if any conditions are now satisfied
   resolveConditions();
 }
@@ -33,6 +33,7 @@ function queryValue(name: string): unknown {
 const mockSpecify = vi.fn();
 const mockImplement = vi.fn();
 const mockReview = vi.fn();
+const mockMarkPhaseFailure = vi.fn();
 const mockSetCurrentDetails = vi.fn();
 
 vi.mock("@temporalio/workflow", () => ({
@@ -40,13 +41,14 @@ vi.mock("@temporalio/workflow", () => ({
     specifyActivity: (...args: unknown[]) => mockSpecify(...args),
     implementActivity: (...args: unknown[]) => mockImplement(...args),
     reviewActivity: (...args: unknown[]) => mockReview(...args),
+    markPhaseFailureActivity: (...args: unknown[]) => mockMarkPhaseFailure(...args),
   }),
   defineSignal: (name: string) => name,
   defineQuery: (name: string) => name,
   setHandler: (nameOrSignal: string, handler: () => unknown) => {
     // Check if it's a signal or query by whether the test registered it
-    if (["specifyRetry", "specReviewed", "implementRetry", "resume"].includes(nameOrSignal)) {
-      signalHandlers.set(nameOrSignal, handler as () => void);
+    if (["specifyRetry", "specReviewed", "implementRetry", "resume", "activityProgress"].includes(nameOrSignal)) {
+      signalHandlers.set(nameOrSignal, handler as (...args: unknown[]) => unknown);
     } else if (nameOrSignal === "getBlockedReason") {
       queryHandlers.set(nameOrSignal, handler);
     }
@@ -57,7 +59,7 @@ vi.mock("@temporalio/workflow", () => ({
       pendingConditions.push({ fn, resolve });
     });
   },
-  workflowInfo: () => ({ workflowId: "ticket-T-42" }),
+  workflowInfo: () => ({ workflowId: "ticket-T-42", runId: "run-1" }),
   setCurrentDetails: (...args: unknown[]) => mockSetCurrentDetails(...args),
 }));
 
@@ -72,10 +74,66 @@ const BASE_INPUT = {
   maxReviewIterations: 2,
 };
 
+const BASE_TICKET = {
+  id: "owner/repo#42",
+  title: "Fix login",
+  description: "Details",
+  status: "Ready",
+  labels: ["bug"],
+  url: "https://example.com/issues/42",
+  source: "github" as const,
+  sourceRef: {
+    kind: "github" as const,
+    projectNodeId: "PVT_1",
+    projectItemId: "PVTI_1",
+    repoOwner: "owner",
+    repoName: "repo",
+    issueNumber: 42,
+  },
+};
+
+const BASE_SPEC_BUNDLE = {
+  specPath: "openspec/changes/my-change",
+  branch: "ns/owner-repo-42",
+  openQuestions: [],
+  assumptions: [],
+  risks: [],
+  commitSha: "abc1234",
+};
+
+const BASE_IMPLEMENT_RESULT = {
+  status: "pr_opened" as const,
+  ticketId: "T-42",
+  summary: "done",
+  ticket: BASE_TICKET,
+  specBundle: BASE_SPEC_BUNDLE,
+  result: {
+    pr: {
+      number: 42,
+      url: "https://example.com/pull/42",
+      branch: "ns/owner-repo-42",
+      baseBranch: "main",
+      headSha: "def5678",
+    },
+    qualityGates: [],
+    summary: "done",
+  },
+};
+
+const BASE_SPECIFY_RESULT = {
+  status: "refined" as const,
+  bundle: BASE_SPEC_BUNDLE,
+  openQuestions: [],
+  assumptions: [],
+  risks: [],
+  summary: "done",
+};
+
 beforeEach(() => {
   mockSpecify.mockReset();
   mockImplement.mockReset();
   mockReview.mockReset();
+  mockMarkPhaseFailure.mockReset();
   mockSetCurrentDetails.mockReset();
   pendingConditions = [];
   signalHandlers.clear();
@@ -84,8 +142,8 @@ beforeEach(() => {
 
 describe("ticketWorkflow", () => {
   it("happy path: specify → specReviewed → implement → review → completed", async () => {
-    mockSpecify.mockResolvedValue({ status: "refined" });
-    mockImplement.mockResolvedValue({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
 
     const wfPromise = ticketWorkflow(BASE_INPUT);
@@ -105,9 +163,9 @@ describe("ticketWorkflow", () => {
 
   it("specify needs_input → blocks → specifyRetry → re-runs specify", async () => {
     mockSpecify
-      .mockResolvedValueOnce({ status: "needs_input" })
-      .mockResolvedValueOnce({ status: "refined" });
-    mockImplement.mockResolvedValue({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+      .mockResolvedValueOnce({ status: "needs_input", openQuestions: [], assumptions: [], risks: [], summary: "need help" })
+      .mockResolvedValueOnce(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
 
     const wfPromise = ticketWorkflow(BASE_INPUT);
@@ -128,9 +186,9 @@ describe("ticketWorkflow", () => {
 
   it("specify refined → specifyRetry (operator rejects) → re-runs specify", async () => {
     mockSpecify
-      .mockResolvedValueOnce({ status: "refined" })
-      .mockResolvedValueOnce({ status: "refined" });
-    mockImplement.mockResolvedValue({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+      .mockResolvedValueOnce(BASE_SPECIFY_RESULT)
+      .mockResolvedValueOnce(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
 
     const wfPromise = ticketWorkflow(BASE_INPUT);
@@ -151,10 +209,10 @@ describe("ticketWorkflow", () => {
   });
 
   it("implement needs_input → blocks → implementRetry → re-runs implement", async () => {
-    mockSpecify.mockResolvedValue({ status: "refined" });
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
     mockImplement
       .mockResolvedValueOnce({ status: "needs_input", ticketId: "T-42", summary: "blocked" })
-      .mockResolvedValueOnce({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+      .mockResolvedValueOnce(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
 
     const wfPromise = ticketWorkflow(BASE_INPUT);
@@ -171,9 +229,76 @@ describe("ticketWorkflow", () => {
     expect(mockImplement).toHaveBeenCalledTimes(2);
   });
 
+  it("specify failure blocks the item and ends the attempt", async () => {
+    mockSpecify.mockRejectedValue(new Error("specifier agent failed: invalid schema"));
+    mockMarkPhaseFailure.mockResolvedValue(undefined);
+
+    await expect(ticketWorkflow(BASE_INPUT)).resolves.toBeUndefined();
+
+    expect(mockMarkPhaseFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        itemId: "PVTI_1",
+        changeName: "my-change",
+        phase: "specify",
+        rootCause: "specifier agent failed: invalid schema",
+        nextStepStatus: "Backlog",
+      }),
+      "run-1",
+      "default",
+    );
+    expect(mockImplement).not.toHaveBeenCalled();
+    expect(mockReview).not.toHaveBeenCalled();
+  });
+
+  it("implement failure blocks the item and ends the attempt", async () => {
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockRejectedValue(new Error("git push rejected"));
+    mockMarkPhaseFailure.mockResolvedValue(undefined);
+
+    const wfPromise = ticketWorkflow(BASE_INPUT);
+    await flushMicrotasks();
+    fireSignal("specReviewed");
+
+    await expect(wfPromise).resolves.toBeUndefined();
+
+    expect(mockMarkPhaseFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "implement",
+        rootCause: "git push rejected",
+        nextStepStatus: "Ready",
+      }),
+      "run-1",
+      "default",
+    );
+    expect(mockReview).not.toHaveBeenCalled();
+  });
+
+  it("review failure blocks the item and ends the attempt", async () => {
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
+    mockReview.mockRejectedValue(new Error("review provider unavailable"));
+    mockMarkPhaseFailure.mockResolvedValue(undefined);
+
+    const wfPromise = ticketWorkflow(BASE_INPUT);
+    await flushMicrotasks();
+    fireSignal("specReviewed");
+
+    await expect(wfPromise).resolves.toBeUndefined();
+
+    expect(mockMarkPhaseFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "review",
+        rootCause: "review provider unavailable",
+        nextStepStatus: "Ready",
+      }),
+      "run-1",
+      "default",
+    );
+  });
+
   it("review needs_fix loops implement + review, max iterations escalates", async () => {
-    mockSpecify.mockResolvedValue({ status: "refined" });
-    mockImplement.mockResolvedValue({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "needs_fix", result: { verdict: "needs-fix", findings: [], iteration: 0, summary: "fix it" } });
 
     const wfPromise = ticketWorkflow({ ...BASE_INPUT, maxReviewIterations: 2 });
@@ -198,8 +323,8 @@ describe("ticketWorkflow", () => {
   });
 
   it("review escalate → blocks → resume → re-enters review at iteration 0", async () => {
-    mockSpecify.mockResolvedValue({ status: "refined" });
-    mockImplement.mockResolvedValue({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview
       .mockResolvedValueOnce({ status: "escalated", result: { verdict: "escalate", findings: [], iteration: 0, summary: "too complex" } })
       .mockResolvedValueOnce({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
@@ -220,8 +345,8 @@ describe("ticketWorkflow", () => {
   });
 
   it("getBlockedReason returns null when no gate is active", async () => {
-    mockSpecify.mockResolvedValue({ status: "refined" });
-    mockImplement.mockResolvedValue({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
 
     const wfPromise = ticketWorkflow(BASE_INPUT);
@@ -238,10 +363,10 @@ describe("ticketWorkflow", () => {
   });
 
   it("stale signal does not unblock unrelated gate", async () => {
-    mockSpecify.mockResolvedValue({ status: "refined" });
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
     mockImplement
       .mockResolvedValueOnce({ status: "needs_input", ticketId: "T-42", summary: "blocked" })
-      .mockResolvedValueOnce({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+      .mockResolvedValueOnce(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
 
     const wfPromise = ticketWorkflow(BASE_INPUT);
@@ -270,9 +395,9 @@ describe("ticketWorkflow", () => {
 
   it("rapid duplicate signals are idempotent", async () => {
     mockSpecify
-      .mockResolvedValueOnce({ status: "needs_input" })
-      .mockResolvedValueOnce({ status: "refined" });
-    mockImplement.mockResolvedValue({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+      .mockResolvedValueOnce({ status: "needs_input", openQuestions: [], assumptions: [], risks: [], summary: "need help" })
+      .mockResolvedValueOnce(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
 
     const wfPromise = ticketWorkflow(BASE_INPUT);
@@ -371,6 +496,23 @@ describe("renderDashboard", () => {
     });
     expect(Buffer.byteLength(md, "utf-8")).toBeLessThan(2048);
   });
+
+  it("includes activity detail when present and stays under 4096 bytes", () => {
+    const md = renderDashboard({
+      ...baseDashState,
+      activityDetail: [
+        "### 🤖 Specify — running",
+        "",
+        ...Array.from({ length: 10 }, (_value, index) => `⚡ shell \`command-${index + 1}\``),
+      ].join("\n"),
+      phases: [
+        { name: "specify", startedAt: 0, finishedAt: 120000, result: "refined" },
+        { name: "implement", startedAt: 120000, finishedAt: 300000, result: "pr_opened" },
+      ],
+    });
+    expect(md).toContain("### 🤖 Specify — running");
+    expect(Buffer.byteLength(md, "utf-8")).toBeLessThan(4096);
+  });
 });
 
 describe("formatDuration", () => {
@@ -393,8 +535,8 @@ describe("formatDuration", () => {
 
 describe("ticketWorkflow dashboard integration", () => {
   it("calls setCurrentDetails at workflow start, after phases, and at completion", async () => {
-    mockSpecify.mockResolvedValue({ status: "refined" });
-    mockImplement.mockResolvedValue({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
 
     const wfPromise = ticketWorkflow(BASE_INPUT);
@@ -419,7 +561,7 @@ describe("ticketWorkflow dashboard integration", () => {
   });
 
   it("updates dashboard on blocked gate entry", async () => {
-    mockSpecify.mockResolvedValue({ status: "needs_input" });
+    mockSpecify.mockResolvedValue({ status: "needs_input", openQuestions: [], assumptions: [], risks: [], summary: "need help" });
 
     const wfPromise = ticketWorkflow(BASE_INPUT);
     await flushMicrotasks();
@@ -429,13 +571,47 @@ describe("ticketWorkflow dashboard integration", () => {
     expect(calls.some((c) => c.includes("specify_needs_input"))).toBe(true);
 
     // Clean up
-    mockSpecify.mockResolvedValue({ status: "refined" });
-    mockImplement.mockResolvedValue({ status: "pr_opened", ticketId: "T-42", summary: "done" });
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
     fireSignal("specifyRetry");
     await flushMicrotasks();
     fireSignal("specReviewed");
     await wfPromise;
+  });
+
+  it("activityProgress signal updates activity detail in the dashboard", async () => {
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
+    mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
+
+    const wfPromise = ticketWorkflow(BASE_INPUT);
+    await flushMicrotasks();
+
+    fireSignal("activityProgress", "### 🤖 Specify — running\n\n⚡ shell `npm test`");
+    await flushMicrotasks();
+
+    expect(mockSetCurrentDetails.mock.calls.at(-1)?.[0]).toContain("### 🤖 Specify — running");
+    expect(mockSetCurrentDetails.mock.calls.at(-1)?.[0]).toContain("⚡ shell `npm test`");
+
+    fireSignal("specReviewed");
+    await wfPromise;
+  });
+
+  it("clears stale activity detail when the phase completes", async () => {
+    mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
+    mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
+    mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
+
+    const wfPromise = ticketWorkflow(BASE_INPUT);
+    await flushMicrotasks();
+
+    fireSignal("activityProgress", "### 🤖 Specify — running\n\n⚡ shell `npm test`");
+    await flushMicrotasks();
+    fireSignal("specReviewed");
+    await wfPromise;
+
+    expect(mockSetCurrentDetails.mock.calls.at(-1)?.[0]).not.toContain("### 🤖 Specify — running");
   });
 });
 

@@ -43,4 +43,14 @@ describe("InMemoryFakeGitOps", () => {
     const g = createInMemoryFakeGitOps();
     expect(await g.diffAgainstBase("main")).toBe("");
   });
+
+  it("pushBranch records the current head sha for the target branch", async () => {
+    const g = createInMemoryFakeGitOps();
+    await g.checkoutBranch("feat/x");
+    const commit = await g.writeTree([{ path: "a.txt", content: "hello" }], "c1");
+
+    await g.pushBranch("feat/x");
+
+    expect(g.pushes).toEqual([{ branch: "feat/x", sha: commit.sha }]);
+  });
 });

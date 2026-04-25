@@ -16,10 +16,11 @@ const USAGE = `night-shift specify
 Usage:
   night-shift specify --item <projectItemId> --change <change-name>
                       [--config <path>] [--repo-root <path>]
+                      [--base-branch <branch>]
                       [--run-id <id>] [--profile <id>]
 
 Runs the Specify phase against a GitHub Projects v2 item. Produces an
-OpenSpec change folder on the ticket branch.
+OpenSpec change folder on the ticket branch and opens/updates a spec review PR.
 
 Exit codes:
   0  refined
@@ -63,6 +64,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
         change: { type: "string" },
         config: { type: "string" },
         "repo-root": { type: "string" },
+        "base-branch": { type: "string" },
         "run-id": { type: "string" },
         profile: { type: "string" },
         help: { type: "boolean", short: "h" },
@@ -85,6 +87,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
     return 64;
   }
   const repoRoot = args.values["repo-root"] ?? process.cwd();
+  const baseBranch = args.values["base-branch"] ?? "main";
   const runId = args.values["run-id"] ?? `specify-${Date.now()}`;
   const profileId = args.values.profile ?? "default";
 
@@ -122,6 +125,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
         fs: makeFs(repoRoot),
         agent: adapter,
         openspecCli,
+        baseBranch,
         runId,
         profileId,
         model: roleConfig.model,

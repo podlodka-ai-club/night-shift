@@ -1,5 +1,5 @@
 import type { SimpleGit } from "simple-git";
-import { rm, stat } from "node:fs/promises";
+import { lstat, rm, stat, symlink } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -33,9 +33,36 @@ export function createSimpleGitWorktreeOps(
 ): WorktreeOps {
   const { repoRoot, git } = deps;
   const root = deps.worktreesRoot ?? path.join(repoRoot, ".worktrees");
+
+  async function linkNodeModules(worktreePath: string): Promise<void> {
+    const source = path.join(repoRoot, "node_modules");
+    try {
+      await stat(source);
+    } catch {
+      return;
+    }
+
+    const target = path.join(worktreePath, "node_modules");
+    try {
+      await lstat(target);
+      return;
+    } catch {
+      // Fresh worktree target, safe to link shared dependencies.
+    }
+
+    await symlink(path.relative(worktreePath, source), target, "dir");
+  }
+
   return {
     async create({ ticketId, branch, fromRef }) {
       const worktreePath = path.join(root, ticketId);
+      try {
+        await stat(worktreePath);
+        await this.remove(worktreePath);
+      } catch {
+        // Fresh path, nothing to clean up.
+      }
+
       const branches = await git.branch();
       const exists =
         branches.all.includes(branch) ||
@@ -51,6 +78,7 @@ export function createSimpleGitWorktreeOps(
         args.push(branch);
       }
       await git.raw(args);
+      await linkNodeModules(worktreePath);
       return { path: worktreePath, branch };
     },
     async remove(worktreePath) {

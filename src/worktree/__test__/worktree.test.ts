@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, rm, readdir, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInMemoryFakeWorktreeOps } from "./fake.js";
@@ -43,6 +43,48 @@ describe("createSimpleGitWorktreeOps", () => {
       await ops.remove(out.path);
       const after = await readdir(path.join(dir, ".worktrees")).catch(() => []);
       expect(after).not.toContain("t-9");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("recreates an existing deterministic worktree path on retry", async () => {
+    const { dir, git } = await makeTempRepo();
+    try {
+      const ops = createSimpleGitWorktreeOps({ repoRoot: dir, git });
+      const first = await ops.create({
+        ticketId: "t-9",
+        branch: "night-shift/t-9",
+      });
+
+      const second = await ops.create({
+        ticketId: "t-9",
+        branch: "night-shift/t-9",
+      });
+
+      expect(second).toEqual(first);
+      expect((await stat(second.path)).isDirectory()).toBe(true);
+      await ops.remove(second.path);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("links repo node_modules into the worktree when dependencies already exist", async () => {
+    const { dir, git } = await makeTempRepo();
+    try {
+      await mkdir(path.join(dir, "node_modules"), { recursive: true });
+      const ops = createSimpleGitWorktreeOps({ repoRoot: dir, git });
+      const out = await ops.create({
+        ticketId: "t-10",
+        branch: "night-shift/t-10",
+      });
+
+      const linkPath = path.join(out.path, "node_modules");
+      expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+      expect(await realpath(linkPath)).toBe(await realpath(path.join(dir, "node_modules")));
+
+      await ops.remove(out.path);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -1,9 +1,9 @@
 import { parseArgs } from "node:util";
-import { Connection, Client, WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
+import { Connection, Client } from "@temporalio/client";
 import { loadConfig } from "../config/loader.js";
 import { createGitHubClient } from "../github/factory.js";
 import { deriveChangeName } from "../contracts/helpers.js";
-import type { TicketWorkflowInput } from "../orchestration/workflow.js";
+import { handleWorkflowTrigger } from "../orchestration/webhook-bridge.js";
 
 const USAGE = `night-shift pickup
 
@@ -79,37 +79,41 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
     const client = new Client({ connection, namespace: temporalConfig.namespace });
 
     let started = 0;
+    let signaled = 0;
     let skipped = 0;
 
     for (const item of allItems) {
-      const workflowId = `ticket-${item.ticketId}`;
       const changeName = deriveChangeName(item.title, item.issueNumber);
-      const input: TicketWorkflowInput = {
-        itemId: item.itemId,
-        ticketId: item.ticketId,
-        changeName,
-        startPhase: item.startPhase,
-      };
+      const workflowId = `ticket-${item.ticketId}`;
+      const result = await handleWorkflowTrigger(
+        {
+          action: "pickup.scan",
+          currentStatus: item.startPhase === "specify" ? "Backlog" : "Ready",
+          itemId: item.itemId,
+          ticketId: item.ticketId,
+          changeName,
+        },
+        client,
+        temporalConfig.taskQueue,
+      );
 
-      try {
-        await client.workflow.start("ticketWorkflow", {
-          taskQueue: temporalConfig.taskQueue,
-          workflowId,
-          args: [input],
-        });
+      if (result.action === "started") {
         process.stdout.write(`Started: ${workflowId} (${item.startPhase}) — ${item.title}\n`);
         started++;
-      } catch (err) {
-        if (err instanceof WorkflowExecutionAlreadyStartedError) {
-          process.stdout.write(`Skipped: ${workflowId} (already running)\n`);
-          skipped++;
-          continue;
-        }
-        throw err;
+        continue;
       }
+
+      if (result.action === "signaled") {
+        process.stdout.write(`Signaled: ${workflowId} (${result.signal}) — ${item.title}\n`);
+        signaled++;
+        continue;
+      }
+
+      process.stdout.write(`Skipped: ${workflowId} (already running)\n`);
+      skipped++;
     }
 
-    process.stdout.write(`\nSummary: ${started} started, ${skipped} skipped\n`);
+    process.stdout.write(`\nSummary: ${started} started, ${signaled} signaled, ${skipped} skipped\n`);
     return 0;
   } catch (err) {
     process.stderr.write(`Error: ${(err as Error).message}\n`);

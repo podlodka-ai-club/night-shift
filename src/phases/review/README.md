@@ -36,14 +36,15 @@ night-shift review <projectItemId> [--iteration <n>]
 | Verdict | Condition | PR Action | Item Status |
 | --- | --- | --- | --- |
 | `ready-to-merge` | No error-level findings | APPROVE + `setPullRequestReady(true)` | `Ready to merge` |
-| `needs-fix` | Errors present, iteration < 2 | REQUEST_CHANGES | `Ready` |
-| `escalate` | Errors present, iteration ≥ 2 | COMMENT + escalation label | `Blocked` |
+| `needs-fix` | Errors present before the final configured iteration | REQUEST_CHANGES | `Ready` |
+| `escalate` | Errors present on the final configured iteration | COMMENT + escalation label | `Blocked` |
 
 ## Iteration Model
 
 - `iteration` is supplied by the orchestrator (or CLI flag)
-- Iterations 0 and 1 may produce `needs-fix`
-- Iteration 2 with errors produces `escalate`
+- `maxIterations` defaults to 3 when omitted
+- Iterations before `maxIterations - 1` may produce `needs-fix`
+- Iteration `maxIterations - 1` with errors produces `escalate`
 - The phase is stateless; it does not track iterations itself
 
 ## Test Recipe

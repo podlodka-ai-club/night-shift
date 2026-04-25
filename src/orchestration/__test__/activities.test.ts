@@ -4,6 +4,7 @@ import {
   specifyActivity,
   implementActivity,
   reviewActivity,
+  markPhaseFailureActivity,
   setActivityDepsFactory,
   type ActivityDepsFactory,
 } from "../activities.js";
@@ -12,10 +13,12 @@ import { ImplementPhaseError } from "../../phases/implement/errors.js";
 import { ReviewPhaseError } from "../../phases/review/errors.js";
 
 // Mock @temporalio/activity to avoid needing a real Temporal runtime
+const mockHeartbeat = vi.fn();
 vi.mock("@temporalio/activity", () => ({
   Context: {
     current: () => ({
-      heartbeat: vi.fn(),
+      heartbeat: mockHeartbeat,
+      info: { workflowExecution: { workflowId: "ticket-1" } },
     }),
   },
 }));
@@ -25,6 +28,11 @@ vi.mock("@temporalio/activity", () => ({
 const mockRunSpecify = vi.fn();
 const mockRunImplement = vi.fn();
 const mockRunReview = vi.fn();
+const mockGitHub = {
+  getItem: vi.fn(),
+  upsertComment: vi.fn(),
+  setStatus: vi.fn(),
+};
 
 vi.mock("../../phases/specify/phase.js", () => ({
   runSpecifyPhase: (...args: unknown[]) => mockRunSpecify(...args),
@@ -38,9 +46,9 @@ vi.mock("../../phases/review/phase.js", () => ({
 
 // ── Fake deps factory ─────────────────────────────────────────────────
 
-const fakeSpecifyDeps = { fake: "specify-deps" };
-const fakeImplementDeps = { fake: "implement-deps" };
-const fakeReviewDeps = { fake: "review-deps" };
+const fakeSpecifyDeps = { fake: "specify-deps", github: mockGitHub };
+const fakeImplementDeps = { fake: "implement-deps", github: mockGitHub };
+const fakeReviewDeps = { fake: "review-deps", github: mockGitHub };
 
 const factory: ActivityDepsFactory = {
   buildSpecifyDeps: () => fakeSpecifyDeps as any,
@@ -49,10 +57,15 @@ const factory: ActivityDepsFactory = {
 };
 
 beforeEach(() => {
+  mockHeartbeat.mockReset();
+  delete factory.signalProgress;
   setActivityDepsFactory(factory);
   mockRunSpecify.mockReset();
   mockRunImplement.mockReset();
   mockRunReview.mockReset();
+  mockGitHub.getItem.mockReset();
+  mockGitHub.upsertComment.mockReset();
+  mockGitHub.setStatus.mockReset();
 });
 
 describe("specifyActivity", () => {
@@ -155,5 +168,74 @@ describe("error classification", () => {
     await expect(
       reviewActivity({ itemId: "PVTI_1", reviewInput }, "run-1", "default"),
     ).rejects.toThrow(ApplicationFailure);
+  });
+});
+
+describe("markPhaseFailureActivity", () => {
+  it("blocks the item and upserts an operator comment", async () => {
+    mockGitHub.getItem.mockResolvedValue({ issueNumber: 42 });
+    mockGitHub.setStatus.mockResolvedValue(undefined);
+    mockGitHub.upsertComment.mockResolvedValue({ commentId: 1 });
+
+    await markPhaseFailureActivity(
+      {
+        itemId: "PVTI_1",
+        changeName: "my-change",
+        phase: "implement",
+        rootCause: "quality gate runner crashed",
+        nextStepStatus: "Ready",
+      },
+      "run-1",
+      "default",
+    );
+
+    expect(mockGitHub.setStatus).toHaveBeenCalledWith("PVTI_1", "Blocked");
+    expect(mockGitHub.upsertComment).toHaveBeenCalledWith(
+      42,
+      "workflow:phase-failure",
+      expect.stringContaining("move the ticket to **Ready**"),
+    );
+    expect(mockGitHub.upsertComment).toHaveBeenCalledWith(
+      42,
+      "workflow:phase-failure",
+      expect.stringContaining("quality gate runner crashed"),
+    );
+  });
+});
+
+describe("activity progress wiring", () => {
+  it("signals activity progress when the phase emits streamed agent events", async () => {
+    const signalProgress = vi.fn(async () => undefined);
+    factory.signalProgress = signalProgress;
+    setActivityDepsFactory(factory);
+
+    mockRunSpecify.mockImplementation(async (deps) => {
+      await deps.onAgentEvent?.({
+        kind: "tool-use",
+        toolCallId: "tool-1",
+        tool: "npm test",
+        input: {},
+        source: { kind: "shell" },
+      });
+      return {
+        status: "refined",
+        bundle: { specPath: "/p", branch: "b", openQuestions: [], assumptions: [], risks: [], commitSha: "abc1234" },
+        openQuestions: [],
+        assumptions: [],
+        risks: [],
+        summary: "done",
+      };
+    });
+
+    await specifyActivity({ itemId: "PVTI_1", changeName: "c" }, "run-1", "default");
+
+    expect(signalProgress).toHaveBeenCalledWith(
+      "ticket-1",
+      expect.stringContaining("### 🤖 Specify — running"),
+    );
+    expect(signalProgress).toHaveBeenCalledWith(
+      "ticket-1",
+      expect.stringContaining("⚡ shell `npm test`"),
+    );
   });
 });

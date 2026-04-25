@@ -105,8 +105,9 @@ describe("parseResponse", () => {
 describe("SpecifierResponseJsonSchema", () => {
   it("is a plain object schema ready for outputSchema consumption", () => {
     expect(typeof SpecifierResponseJsonSchema).toBe("object");
-    // Should encode the top-level object shape without $ref indirection.
     const s = SpecifierResponseJsonSchema as Record<string, unknown>;
-    expect(s.type ?? (s as { definitions?: unknown }).definitions).toBeDefined();
+    expect(s.type).toBe("object");
+    expect(s.$ref).toBeUndefined();
+    expect(s.definitions).toBeUndefined();
   });
 });

@@ -3,6 +3,8 @@ import type { GitOps } from "../index.js";
 export interface FakeGitOps extends GitOps {
   /** Current HEAD branch. */
   readonly branch: string;
+  /** Ordered list of remote push targets recorded via `pushBranch`. */
+  readonly pushes: ReadonlyArray<{ branch: string; sha: string }>;
   /** Files committed so far, keyed by path, latest wins. */
   readonly files: ReadonlyMap<string, string>;
   /** Ordered list of commits produced by `writeTree`. */
@@ -22,6 +24,7 @@ export function createInMemoryFakeGitOps(initialBranch = "main"): FakeGitOps {
   let branch = initialBranch;
   const branches = new Set<string>([initialBranch]);
   const files = new Map<string, string>();
+  const pushes: Array<{ branch: string; sha: string }> = [];
   const commits: Array<{
     sha: string;
     branch: string;
@@ -42,6 +45,9 @@ export function createInMemoryFakeGitOps(initialBranch = "main"): FakeGitOps {
     get branch() {
       return branch;
     },
+    get pushes() {
+      return pushes;
+    },
     get files() {
       return files;
     },
@@ -51,6 +57,13 @@ export function createInMemoryFakeGitOps(initialBranch = "main"): FakeGitOps {
     async checkoutBranch(b) {
       branch = b;
       branches.add(b);
+    },
+    async pushBranch(targetBranch) {
+      pushes.push({ branch: targetBranch, sha: head });
+    },
+    async remoteHeadSha(targetBranch) {
+      const pushed = [...pushes].reverse().find((entry) => entry.branch === targetBranch);
+      return pushed?.sha ?? null;
     },
     async writeTree(newFiles, commitMessage) {
       for (const f of newFiles) files.set(f.path, f.content);

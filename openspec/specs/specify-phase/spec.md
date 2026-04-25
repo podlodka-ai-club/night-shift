@@ -176,7 +176,7 @@ After writing the files and committing them on the ticket branch via `git.writeT
 
 ### Requirement: Ticket comment is upserted with the specify:summary marker
 
-The phase SHALL upsert a ticket comment via `github.upsertComment(issueNumber, "specify:summary", body)` on every terminal outcome (refined or needs_input). The body SHALL include: a link to the change folder, the `openQuestions`, `assumptions`, and `risks` lists, and a footer with `latencyMs` and the adapter's reported usage. Repeated runs SHALL update the same comment rather than creating duplicates.
+The phase SHALL upsert a ticket comment via `github.upsertComment(issueNumber, "specify:summary", body)` on every terminal outcome (refined or needs_input). The body SHALL include: a link to the change folder, the `openQuestions`, `assumptions`, and `risks` lists, and a footer with `latencyMs` and the adapter's reported usage. On a `refined` outcome, the body SHALL also include a link to the opened spec review PR so an operator can review the specs before implementation. Repeated runs SHALL update the same comment rather than creating duplicates.
 
 #### Scenario: First run creates a comment
 - **WHEN** the phase runs for the first time on a fresh issue
@@ -189,6 +189,30 @@ The phase SHALL upsert a ticket comment via `github.upsertComment(issueNumber, "
 #### Scenario: needs_input still comments
 - **WHEN** the phase ends in `needs_input`
 - **THEN** the comment body lists the open questions verbatim
+
+#### Scenario: refined comment includes operator handoff links
+- **WHEN** the phase ends in `refined`
+- **THEN** the comment body links to the committed change folder
+- **AND** the comment body includes the opened spec review PR URL
+
+### Requirement: Refined specs are pushed and exposed as a PR
+
+On a `refined` outcome, after the spec commit is created locally, the phase SHALL push the ticket branch to GitHub via `github.pushBranch(branch, commitSha)` and SHALL open or update a PR for that branch via `github.upsertPullRequest(...)`. The PR SHALL target the configured base branch (default `main`) and SHALL be suitable for operator review of the generated specs.
+
+#### Scenario: refined outcome pushes the branch and opens a PR
+- **WHEN** the phase ends in `refined`
+- **THEN** `github.pushBranch(branch, commitSha)` is called exactly once
+- **AND** `github.upsertPullRequest(...)` is called exactly once for the ticket branch
+
+#### Scenario: needs_input does not publish a PR
+- **WHEN** the phase ends in `needs_input`
+- **THEN** `github.pushBranch(...)` is NOT called
+- **AND** `github.upsertPullRequest(...)` is NOT called
+
+#### Scenario: rerun updates the same spec PR
+- **GIVEN** a prior `refined` run already opened a PR for the ticket branch
+- **WHEN** the phase runs again and ends in `refined`
+- **THEN** `github.upsertPullRequest(...)` updates the existing open PR instead of creating a duplicate
 
 ### Requirement: SpecBundle branch and commitSha are populated
 

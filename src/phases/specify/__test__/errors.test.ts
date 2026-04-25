@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SpecifyAgentError,
+  SpecifyGitError,
   SpecifyItemMissingError,
   SpecifyPhaseError,
   SpecifyValidationError,
@@ -26,6 +27,12 @@ describe("specify errors", () => {
     const e = new SpecifyValidationError("bad");
     expect(e).toBeInstanceOf(SpecifyPhaseError);
     expect(e.code).toBe("validation");
+  });
+
+  it("SpecifyGitError code is git", () => {
+    const e = new SpecifyGitError("push failed");
+    expect(e).toBeInstanceOf(SpecifyPhaseError);
+    expect(e.code).toBe("git");
   });
 
   it("propagates cause through Error options", () => {

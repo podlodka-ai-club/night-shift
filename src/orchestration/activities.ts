@@ -1,5 +1,6 @@
 import { Context } from "@temporalio/activity";
 import { ApplicationFailure } from "@temporalio/common";
+import type { AgentStreamEvent } from "../adapters/events.js";
 import type { SpecifyResult } from "../phases/specify/phase.js";
 import type { ImplementResult } from "../phases/implement/phase.js";
 import type { ReviewPhaseResult } from "../phases/review/phase.js";
@@ -29,6 +30,14 @@ export interface ReviewActivityInput {
   reviewInput: ReviewInput;
 }
 
+export interface MarkPhaseFailureActivityInput {
+  itemId: string;
+  changeName: string;
+  phase: "specify" | "implement" | "review";
+  rootCause: string;
+  nextStepStatus: "Backlog" | "Ready";
+}
+
 // ── Deps factory (set once by the worker on startup) ──────────────────
 
 export interface ActivityDepsFactory {
@@ -46,6 +55,10 @@ export interface ActivityDepsFactory {
   ): Parameters<typeof runReviewPhase>[1];
   /** Signal the parent workflow with activity progress Markdown. Optional for backward compat. */
   signalProgress?: (workflowId: string, md: string) => Promise<void>;
+}
+
+interface ProgressAwareDeps {
+  onAgentEvent?: (event: AgentStreamEvent) => Promise<void> | void;
 }
 
 let _depsFactory: ActivityDepsFactory | undefined;
@@ -97,6 +110,84 @@ function createReporter(phaseName: string): ActivityProgressReporter | null {
   return new ActivityProgressReporter({ signalFn, phaseName });
 }
 
+function attachProgressObserver<T extends object>(
+  deps: T,
+  reporter: ActivityProgressReporter | null,
+): T & ProgressAwareDeps {
+  if (!reporter) {
+    return deps as T & ProgressAwareDeps;
+  }
+
+  return Object.assign(deps, {
+    onAgentEvent: async (event: AgentStreamEvent) => {
+      try {
+        await reporter.push(event);
+      } catch {
+        // progress signalling must not break the underlying phase
+      }
+    },
+  });
+}
+
+function getGitHubClientForPhase(
+  phase: MarkPhaseFailureActivityInput["phase"],
+  runId: string,
+  profileId: string,
+) {
+  const factory = getDepsFactory();
+  switch (phase) {
+    case "specify":
+      return factory.buildSpecifyDeps(runId, profileId).github;
+    case "implement":
+      return factory.buildImplementDeps(runId, profileId).github;
+    case "review":
+      return factory.buildReviewDeps(runId, profileId).github;
+  }
+}
+
+function capitalizePhase(phase: MarkPhaseFailureActivityInput["phase"]): string {
+  return phase.charAt(0).toUpperCase() + phase.slice(1);
+}
+
+function formatPhaseFailureComment(input: MarkPhaseFailureActivityInput): string {
+  return [
+    `## ${capitalizePhase(input.phase)} attempt blocked`,
+    "",
+    `This workflow attempt stopped during the **${capitalizePhase(input.phase)}** phase.`,
+    "",
+    "### Root cause",
+    "```text",
+    input.rootCause,
+    "```",
+    "",
+    "### Suggested next step",
+    `Fix the underlying issue, then move the ticket to **${input.nextStepStatus}** to start a fresh attempt.`,
+    "",
+    `Change: ${input.changeName}`,
+  ].join("\n");
+}
+
+export async function markPhaseFailureActivity(
+  input: MarkPhaseFailureActivityInput,
+  runId: string,
+  profileId: string,
+): Promise<void> {
+  const github = getGitHubClientForPhase(input.phase, runId, profileId);
+  const item = await github.getItem(input.itemId);
+
+  await github.setStatus(input.itemId, "Blocked");
+
+  if (item.issueNumber === undefined) {
+    return;
+  }
+
+  await github.upsertComment(
+    item.issueNumber,
+    "workflow:phase-failure",
+    formatPhaseFailureComment(input),
+  );
+}
+
 export async function specifyActivity(
   input: SpecifyActivityInput,
   runId: string,
@@ -104,17 +195,22 @@ export async function specifyActivity(
 ): Promise<SpecifyResult> {
   Context.current().heartbeat();
   const reporter = createReporter("specify");
-  const deps = getDepsFactory().buildSpecifyDeps(runId, profileId);
+  const deps = attachProgressObserver(
+    getDepsFactory().buildSpecifyDeps(runId, profileId),
+    reporter,
+  );
+  let result!: SpecifyResult;
   try {
-    return await runSpecifyPhase(deps, {
+    result = await runSpecifyPhase(deps, {
       itemId: input.itemId,
       changeName: input.changeName,
     });
   } catch (err) {
-    await reporter?.flush();
     wrapIfNonRetryable(err);
+  } finally {
+    await reporter?.flush();
   }
-  await reporter?.flush();
+  return result;
 }
 
 export async function implementActivity(
@@ -124,17 +220,22 @@ export async function implementActivity(
 ): Promise<ImplementResult> {
   Context.current().heartbeat();
   const reporter = createReporter("implement");
-  const deps = getDepsFactory().buildImplementDeps(runId, profileId);
+  const deps = attachProgressObserver(
+    getDepsFactory().buildImplementDeps(runId, profileId),
+    reporter,
+  );
+  let result!: ImplementResult;
   try {
-    return await runImplementPhase(deps, {
+    result = await runImplementPhase(deps, {
       itemId: input.itemId,
       changeName: input.changeName,
     });
   } catch (err) {
-    await reporter?.flush();
     wrapIfNonRetryable(err);
+  } finally {
+    await reporter?.flush();
   }
-  await reporter?.flush();
+  return result;
 }
 
 export async function reviewActivity(
@@ -144,15 +245,20 @@ export async function reviewActivity(
 ): Promise<ReviewPhaseResult> {
   Context.current().heartbeat();
   const reporter = createReporter("review");
-  const deps = getDepsFactory().buildReviewDeps(runId, profileId);
+  const deps = attachProgressObserver(
+    getDepsFactory().buildReviewDeps(runId, profileId),
+    reporter,
+  );
+  let result!: ReviewPhaseResult;
   try {
-    return await runReviewPhase(
+    result = await runReviewPhase(
       { itemId: input.itemId, input: input.reviewInput },
       deps,
     );
   } catch (err) {
-    await reporter?.flush();
     wrapIfNonRetryable(err);
+  } finally {
+    await reporter?.flush();
   }
-  await reporter?.flush();
+  return result;
 }

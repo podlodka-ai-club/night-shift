@@ -7,10 +7,16 @@ import {
   workflowInfo,
   setCurrentDetails,
 } from "@temporalio/workflow";
+import type { PRRef } from "../contracts/implement.js";
+import type { ReviewInput } from "../contracts/review.js";
+import type { SpecBundle } from "../contracts/specify.js";
+import type { Ticket } from "../contracts/ticket.js";
+import type { ImplementResult } from "../phases/implement/phase.js";
 import type {
   specifyActivity,
   implementActivity,
   reviewActivity,
+  markPhaseFailureActivity,
 } from "./activities.js";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -143,21 +149,33 @@ const { specifyActivity: specify, implementActivity: implement, reviewActivity: 
     specifyActivity: typeof specifyActivity;
     implementActivity: typeof implementActivity;
     reviewActivity: typeof reviewActivity;
+    markPhaseFailureActivity: typeof markPhaseFailureActivity;
   }>({
     startToCloseTimeout: "15 minutes",
-    heartbeatTimeout: "1 minute",
     retry: {
       initialInterval: "1s",
       backoffCoefficient: 2,
       maximumInterval: "30s",
-      maximumAttempts: 5,
+      maximumAttempts: 2,
     },
   });
+
+const { markPhaseFailureActivity: markPhaseFailure } = proxyActivities<{
+  markPhaseFailureActivity: typeof markPhaseFailureActivity;
+}>({
+  startToCloseTimeout: "2 minutes",
+  retry: {
+    initialInterval: "1s",
+    backoffCoefficient: 2,
+    maximumInterval: "30s",
+    maximumAttempts: 5,
+  },
+});
 
 // ── Workflow ───────────────────────────────────────────────────────────
 
 export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> {
-  const runId = workflowInfo().workflowId;
+  const runId = workflowInfo().runId;
   const profileId = input.profileId ?? "default";
   const maxIterations = input.maxReviewIterations ?? 2;
 
@@ -169,6 +187,8 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
   const phases: PhaseEntry[] = [];
   let activityDetail = "";
   const skippedPhases = new Set<string>();
+  let latestSpecBundle: SpecBundle | undefined;
+  let reviewArtifacts: { ticket: Ticket; specBundle: SpecBundle; pr: PRRef } | undefined;
 
   if (input.startPhase === "implement") {
     skippedPhases.add("specify");
@@ -187,6 +207,144 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
       activityDetail,
       skippedPhases,
     }));
+  }
+
+  function requireReviewArtifacts(implResult: ImplementResult): {
+    ticket: Ticket;
+    specBundle: SpecBundle;
+    pr: PRRef;
+  } {
+    if (!implResult.ticket) {
+      throw new Error("Implement phase completed without ticket context");
+    }
+    if (!implResult.specBundle) {
+      throw new Error("Implement phase completed without spec bundle context");
+    }
+    if (!implResult.result) {
+      throw new Error("Implement phase completed without PR result");
+    }
+
+    return {
+      ticket: implResult.ticket,
+      specBundle: latestSpecBundle ?? implResult.specBundle,
+      pr: implResult.result.pr,
+    };
+  }
+
+  function buildReviewInput(iteration: number): ReviewInput {
+    if (!reviewArtifacts) {
+      throw new Error("Review phase started without review artifacts");
+    }
+
+    return {
+      ticket: reviewArtifacts.ticket,
+      specBundle: reviewArtifacts.specBundle,
+      pr: reviewArtifacts.pr,
+      iteration,
+      maxIterations,
+    };
+  }
+
+  function extractRootCauseMessage(error: unknown): string {
+    const seen = new Set<unknown>();
+    let current: unknown = error;
+    let message: string | undefined;
+
+    while (current !== undefined && current !== null && !seen.has(current)) {
+      seen.add(current);
+
+      if (current instanceof Error) {
+        if (current.message) {
+          message = current.message;
+        }
+        current = current.cause;
+        continue;
+      }
+
+      if (typeof current === "object") {
+        if ("message" in current && typeof current.message === "string") {
+          message = current.message;
+        }
+        if ("cause" in current) {
+          current = current.cause;
+          continue;
+        }
+      }
+
+      break;
+    }
+
+    return message ?? String(error);
+  }
+
+  async function handlePhaseFailure(
+    phase: "specify" | "implement" | "review",
+    error: unknown,
+  ): Promise<void> {
+    await markPhaseFailure(
+      {
+        itemId: input.itemId,
+        changeName: input.changeName,
+        phase,
+        rootCause: extractRootCauseMessage(error),
+        nextStepStatus: phase === "specify" ? "Backlog" : "Ready",
+      },
+      runId,
+      profileId,
+    );
+  }
+
+  async function waitForImplementRetry(): Promise<void> {
+    blockedReason = "implement_needs_input";
+    implementRetryRequested = false;
+    updateDashboard();
+
+    await condition(() => implementRetryRequested);
+    implementRetryRequested = false;
+    blockedReason = null;
+    updateDashboard();
+  }
+
+  async function runImplementLoop(iteration?: number): Promise<boolean> {
+    let implementReady = false;
+
+    while (!implementReady) {
+      const implStart = Date.now();
+      let implResult: ImplementResult;
+      try {
+        implResult = await implement(
+          { itemId: input.itemId, changeName: input.changeName },
+          runId,
+          profileId,
+        );
+      } catch (error) {
+        await handlePhaseFailure("implement", error);
+        return false;
+      }
+
+      activityDetail = "";
+      phases.push({
+        name: "implement",
+        startedAt: implStart,
+        finishedAt: Date.now(),
+        result:
+          iteration !== undefined && implResult.status === "pr_opened"
+            ? "fix"
+            : implResult.status,
+        ...(iteration !== undefined ? { iteration } : {}),
+      });
+      updateDashboard();
+
+      if (implResult.status === "pr_opened") {
+        reviewArtifacts = requireReviewArtifacts(implResult);
+        implementReady = true;
+        continue;
+      }
+
+      await waitForImplementRetry();
+    }
+
+    return true;
   }
 
   // Signal flags (consumed-flag pattern to prevent buffered-signal leakage)
@@ -225,16 +383,27 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
     let specifyDone = false;
     while (!specifyDone) {
       const specStart = Date.now();
-      const specResult = await specify(
-        { itemId: input.itemId, changeName: input.changeName },
-        runId,
-        profileId,
-      );
+      let specResult: Awaited<ReturnType<typeof specify>>;
+      try {
+        specResult = await specify(
+          { itemId: input.itemId, changeName: input.changeName },
+          runId,
+          profileId,
+        );
+      } catch (error) {
+        await handlePhaseFailure("specify", error);
+        return;
+      }
       activityDetail = "";
       phases.push({ name: "specify", startedAt: specStart, finishedAt: Date.now(), result: specResult.status });
       updateDashboard();
 
       if (specResult.status === "refined") {
+        if (!specResult.bundle) {
+          throw new Error("Specify phase returned refined without a spec bundle");
+        }
+        latestSpecBundle = specResult.bundle;
+
         // Wait for human to review the spec
         blockedReason = "awaiting_spec_review";
         specReviewedRequested = false;
@@ -277,32 +446,8 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
   currentPhase = "implement";
   updateDashboard();
 
-  let implementDone = false;
-  while (!implementDone) {
-    const implStart = Date.now();
-    const implResult = await implement(
-      { itemId: input.itemId, changeName: input.changeName },
-      runId,
-      profileId,
-    );
-    activityDetail = "";
-    phases.push({ name: "implement", startedAt: implStart, finishedAt: Date.now(), result: implResult.status });
-    updateDashboard();
-
-    if (implResult.status === "pr_opened") {
-      implementDone = true;
-    } else {
-      // needs_input
-      blockedReason = "implement_needs_input";
-      implementRetryRequested = false;
-      updateDashboard();
-
-      await condition(() => implementRetryRequested);
-      implementRetryRequested = false;
-      blockedReason = null;
-      updateDashboard();
-      // Loop continues → re-run implement
-    }
+  if (!(await runImplementLoop())) {
+    return;
   }
 
   // ── Review loop ───────────────────────────────────────────────────
@@ -320,31 +465,26 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
 
       if (iteration > 0) {
         // Re-run implement before re-reviewing (needs_fix path)
-        const fixStart = Date.now();
-        await implement(
-          { itemId: input.itemId, changeName: input.changeName },
-          runId,
-          profileId,
-        );
-        activityDetail = "";
-        phases.push({ name: "implement", startedAt: fixStart, finishedAt: Date.now(), result: "fix", iteration });
-        updateDashboard();
+        if (!(await runImplementLoop(iteration))) {
+          return;
+        }
       }
 
       const revStart = Date.now();
-      const reviewResult = await review(
-        {
-          itemId: input.itemId,
-          reviewInput: {
-            ticket: { id: input.ticketId, title: "", description: "", status: "In review" as any, labels: [], url: "", source: "github" as const, sourceRef: { kind: "github" as const, projectNodeId: "", projectItemId: input.itemId, repoOwner: "", repoName: "", issueNumber: 0 } },
-            specBundle: { specPath: "", branch: "", openQuestions: [], assumptions: [], risks: [], commitSha: "0000000" },
-            pr: { number: 0, url: "", branch: "", baseBranch: "main", headSha: "0000000" },
-            iteration,
+      let reviewResult: Awaited<ReturnType<typeof review>>;
+      try {
+        reviewResult = await review(
+          {
+            itemId: input.itemId,
+            reviewInput: buildReviewInput(iteration),
           },
-        },
-        runId,
-        profileId,
-      );
+          runId,
+          profileId,
+        );
+      } catch (error) {
+        await handlePhaseFailure("review", error);
+        return;
+      }
 
       if (reviewResult.status === "ready_to_merge") {
         activityDetail = "";
@@ -390,3 +530,6 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
     }
   }
 }
+
+// Re-export pickupWorkflow so it's included in the Temporal workflow bundle
+export { pickupWorkflow } from "./pickup-workflow.js";

@@ -22,6 +22,7 @@ export async function startWorker(opts: StartWorkerOpts): Promise<Worker> {
 
   if (config.pickup?.enabled && opts.github) {
     pickupActivities.setPickupGitHubClient(opts.github);
+    pickupActivities.setPickupTemporalConfig(temporalConfig.serverUrl, temporalConfig.namespace);
     Object.assign(allActivities, pickupActivities);
   }
 
@@ -70,9 +71,21 @@ export async function startPickupCronWorkflow(opts: {
       "name" in err &&
       (err as { name: string }).name === "WorkflowExecutionAlreadyStartedError"
     ) {
-      return;
+      // Cron already exists — fall through to fire immediate run
+    } else {
+      throw err;
     }
-    throw err;
+  }
+
+  // Fire an immediate one-off pickup so we don't wait for the first cron tick.
+  try {
+    await client.workflow.start("pickupWorkflow", {
+      taskQueue: temporalConfig.taskQueue,
+      workflowId: `pickup-immediate-${Date.now()}`,
+      args: [pickup.maxConcurrent],
+    });
+  } catch {
+    // Best-effort — cron will catch up regardless
   }
 }
 

@@ -26,6 +26,11 @@ describe("decideVerdict", () => {
   it("errors on iteration 2 escalate", () => {
     expect(decideVerdict([err], 2)).toBe("escalate");
   });
+
+  it("honors a smaller maxIterations override", () => {
+    expect(decideVerdict([err], 0, 2)).toBe("needs-fix");
+    expect(decideVerdict([err], 1, 2)).toBe("escalate");
+  });
 });
 
 describe("FindingSchema", () => {

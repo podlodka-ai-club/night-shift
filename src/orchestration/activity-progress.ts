@@ -6,11 +6,16 @@ const MAX_TEXT_LEN = 60;
 
 const IMMEDIATE_KINDS = new Set(["tool-use", "turn-completed", "turn-failed"]);
 
+interface BufferEntry {
+  text: string;
+  toolCallId?: string;
+}
+
 export class ActivityProgressReporter {
   private readonly signalFn: (md: string) => Promise<void>;
   private readonly phaseName: string;
   private readonly minIntervalMs: number;
-  private buffer: string[] = [];
+  private buffer: BufferEntry[] = [];
   private turnCount = 0;
   private lastSignalAt = 0;
   private toolTimestamps = new Map<string, number>();
@@ -30,15 +35,50 @@ export class ActivityProgressReporter {
   private _now: () => number;
 
   async push(event: AgentStreamEvent): Promise<void> {
-    const line = this.format(event);
-    if (line == null) return;
-
-    this.buffer.push(line);
-    if (this.buffer.length > MAX_BUFFER) {
-      this.buffer = this.buffer.slice(-MAX_BUFFER);
+    const now = this._now();
+    switch (event.kind) {
+      case "tool-use": {
+        this.toolTimestamps.set(event.toolCallId, now);
+        this.appendEntry(`⚡ ${event.source.kind} \`${event.tool}\``, event.toolCallId);
+        break;
+      }
+      case "tool-result": {
+        const startTs = this.toolTimestamps.get(event.toolCallId);
+        this.toolTimestamps.delete(event.toolCallId);
+        const icon = event.status === "completed" ? "✅" : "❌";
+        const suffix = startTs != null
+          ? ` → ${icon} (${((now - startTs) / 1000).toFixed(1)}s)`
+          : `→ ${icon}`;
+        const lineIndex = this.findToolLineIndex(event.toolCallId);
+        if (lineIndex >= 0) {
+          this.buffer[lineIndex]!.text += suffix;
+        } else {
+          this.appendEntry(suffix.trimStart());
+        }
+        break;
+      }
+      case "message-completed": {
+        const text = event.text.length > MAX_TEXT_LEN
+          ? `${event.text.slice(0, MAX_TEXT_LEN)}...`
+          : event.text;
+        this.appendEntry(`💬 "${text}"`);
+        break;
+      }
+      case "turn-completed": {
+        this.turnCount += 1;
+        const totalTokens = event.usage.input_tokens + event.usage.output_tokens;
+        const formattedTokens = totalTokens.toLocaleString("en-US");
+        const usd = (event.cost / 1_000_000).toFixed(2);
+        this.appendEntry(`📊 Turn ${this.turnCount} — ${formattedTokens} tokens ($${usd})`);
+        break;
+      }
+      case "turn-failed":
+        this.appendEntry(`❌ Turn failed: ${event.error.message}`);
+        break;
+      default:
+        return;
     }
 
-    const now = this._now();
     const elapsed = now - this.lastSignalAt;
     if (elapsed >= this.minIntervalMs && IMMEDIATE_KINDS.has(event.kind)) {
       await this.send(now);
@@ -54,56 +94,23 @@ export class ActivityProgressReporter {
   private async send(now: number): Promise<void> {
     this.lastSignalAt = now;
     const header = `### 🤖 ${capitalize(this.phaseName)} — running`;
-    const payload = `${header}\n\n${this.buffer.join("\n")}`;
+    const payload = `${header}\n\n${this.buffer.map((entry) => entry.text).join("\n")}`;
     await this.signalFn(payload);
   }
 
-  private format(event: AgentStreamEvent): string | null {
-    switch (event.kind) {
-      case "tool-use": {
-        this.toolTimestamps.set(event.toolCallId, this._now());
-        return `⚡ ${event.source.kind} \`${event.tool}\``;
+  private appendEntry(text: string, toolCallId?: string): void {
+    this.buffer.push({ text, ...(toolCallId ? { toolCallId } : {}) });
+    while (this.buffer.length > MAX_BUFFER) {
+      const removed = this.buffer.shift();
+      if (removed?.toolCallId) {
+        this.toolTimestamps.delete(removed.toolCallId);
       }
-      case "tool-result": {
-        const startTs = this.toolTimestamps.get(event.toolCallId);
-        this.toolTimestamps.delete(event.toolCallId);
-        const icon = event.status === "completed" ? "✅" : "❌";
-        if (startTs != null) {
-          const dur = ((this._now() - startTs) / 1000).toFixed(1);
-          // Append to the last tool-use line if it matches
-          const lastIdx = this.findLastToolUseLine(event.toolCallId);
-          if (lastIdx >= 0) {
-            this.buffer[lastIdx] += ` → ${icon} (${dur}s)`;
-            return null; // Already appended
-          }
-          return `→ ${icon} (${dur}s)`;
-        }
-        return `→ ${icon}`;
-      }
-      case "message-completed": {
-        const text = event.text.length > MAX_TEXT_LEN
-          ? `${event.text.slice(0, MAX_TEXT_LEN)}...`
-          : event.text;
-        return `💬 "${text}"`;
-      }
-      case "turn-completed": {
-        this.turnCount++;
-        const totalTokens = event.usage.input_tokens + event.usage.output_tokens;
-        const formattedTokens = totalTokens.toLocaleString("en-US");
-        const usd = (event.cost / 1_000_000).toFixed(2);
-        return `📊 Turn ${this.turnCount} — ${formattedTokens} tokens ($${usd})`;
-      }
-      case "turn-failed":
-        return `❌ Turn failed: ${event.error.message}`;
-      default:
-        return null;
     }
   }
 
-  private findLastToolUseLine(_toolCallId: string): number {
-    // Find the last line that starts with ⚡ and doesn't have a result appended yet
+  private findToolLineIndex(toolCallId: string): number {
     for (let i = this.buffer.length - 1; i >= 0; i--) {
-      if (this.buffer[i]!.startsWith("⚡") && !this.buffer[i]!.includes("→")) {
+      if (this.buffer[i]!.toolCallId === toolCallId) {
         return i;
       }
     }

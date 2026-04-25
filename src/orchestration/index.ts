@@ -3,11 +3,13 @@ export {
   specifyActivity,
   implementActivity,
   reviewActivity,
+  markPhaseFailureActivity,
   setActivityDepsFactory,
   type ActivityDepsFactory,
   type SpecifyActivityInput,
   type ImplementActivityInput,
   type ReviewActivityInput,
+  type MarkPhaseFailureActivityInput,
 } from "./activities.js";
 
 // Workflow

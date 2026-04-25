@@ -6,6 +6,7 @@
 export type SpecifyErrorCode =
   | "item_missing"
   | "agent"
+  | "git"
   | "validation"
   | "parse"
   | "schema";
@@ -50,5 +51,15 @@ export class SpecifyValidationError extends SpecifyPhaseError {
   constructor(message: string, opts: { ticketId?: string; cause?: unknown } = {}) {
     super("validation", message, opts);
     this.name = "SpecifyValidationError";
+  }
+}
+
+export class SpecifyGitError extends SpecifyPhaseError {
+  constructor(
+    message: string,
+    opts: { ticketId?: string; cause?: unknown } = {},
+  ) {
+    super("git", message, opts);
+    this.name = "SpecifyGitError";
   }
 }

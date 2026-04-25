@@ -11,6 +11,7 @@ function impl(files: Array<{ path: string; content: string }>) {
     filesWritten: files,
     commitMessage: "feat: add",
     summary: "done",
+    followUps: [],
   });
 }
 

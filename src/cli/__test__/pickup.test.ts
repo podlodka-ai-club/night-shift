@@ -17,10 +17,15 @@ vi.mock("../../github/factory.js", () => ({
 }));
 
 const mockStart = vi.fn();
+const mockQuery = vi.fn();
+const mockSignal = vi.fn();
 
 vi.mock("@temporalio/client", () => {
   class WorkflowExecutionAlreadyStartedError extends Error {
     override name = "WorkflowExecutionAlreadyStartedError";
+  }
+  class WorkflowNotFoundError extends Error {
+    override name = "WorkflowNotFoundError";
   }
   return {
     Connection: {
@@ -29,9 +34,14 @@ vi.mock("@temporalio/client", () => {
     Client: vi.fn().mockImplementation(() => ({
       workflow: {
         start: (...args: unknown[]) => mockStart(...args),
+        getHandle: () => ({
+          query: (...args: unknown[]) => mockQuery(...args),
+          signal: (...args: unknown[]) => mockSignal(...args),
+        }),
       },
     })),
     WorkflowExecutionAlreadyStartedError,
+    WorkflowNotFoundError,
   };
 });
 
@@ -44,6 +54,8 @@ beforeEach(() => {
   vi.spyOn(process.stdout, "write").mockImplementation((s) => { stdout += s; return true; });
   vi.spyOn(process.stderr, "write").mockImplementation((s) => { stderr += s; return true; });
   mockStart.mockReset().mockResolvedValue({ workflowId: "ticket-1" });
+  mockQuery.mockReset().mockResolvedValue(null);
+  mockSignal.mockReset().mockResolvedValue(undefined);
   mockListItemsByStatus.mockReset();
 });
 
@@ -56,13 +68,15 @@ describe("night-shift pickup CLI", () => {
       .mockResolvedValueOnce([
         { itemId: "PVTI_2", issueNumber: 2, title: "Add tests", ticketId: "2", createdAt: "2026-01-02T00:00:00Z" },
       ]);
+    const { WorkflowNotFoundError } = await import("@temporalio/client");
+    mockQuery.mockRejectedValueOnce(new WorkflowNotFoundError("missing", "ticket-2", "run-1"));
 
     const code = await main([], {});
     expect(code).toBe(0);
     expect(mockStart).toHaveBeenCalledTimes(2);
     expect(stdout).toContain("Started: ticket-1");
     expect(stdout).toContain("Started: ticket-2");
-    expect(stdout).toContain("2 started");
+    expect(stdout).toContain("2 started, 0 signaled, 0 skipped");
   });
 
   it("prints 'No items to pick up' and exits 0 when board is empty", async () => {
@@ -93,6 +107,24 @@ describe("night-shift pickup CLI", () => {
     const code = await main([], {});
     expect(code).toBe(0);
     expect(stdout).toContain("Skipped: ticket-1");
-    expect(stdout).toContain("0 started, 1 skipped");
+    expect(stdout).toContain("0 started, 0 signaled, 1 skipped");
+  });
+
+  it("signals specifyRetry for backlog items with blocked running workflows", async () => {
+    mockListItemsByStatus
+      .mockResolvedValueOnce([
+        { itemId: "PVTI_1", issueNumber: 1, title: "Fix login", ticketId: "1", createdAt: "2026-01-01T00:00:00Z" },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const { WorkflowExecutionAlreadyStartedError } = await import("@temporalio/client");
+    mockStart.mockRejectedValue(new WorkflowExecutionAlreadyStartedError("dup", "ticket-1", "ticketWorkflow"));
+    mockQuery.mockResolvedValue("awaiting_spec_review");
+
+    const code = await main([], {});
+    expect(code).toBe(0);
+    expect(stdout).toContain("Signaled: ticket-1 (specifyRetry)");
+    expect(stdout).toContain("0 started, 1 signaled, 0 skipped");
+    expect(mockSignal).toHaveBeenCalledWith("specifyRetry");
   });
 });

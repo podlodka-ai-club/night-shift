@@ -1,4 +1,5 @@
-import type { AgentAdapter, TurnResult } from "../../adapters/events.js";
+import type { AgentAdapter, AgentStreamEvent, TurnResult } from "../../adapters/events.js";
+import { runTurnWithProgress } from "../../adapters/run-turn.js";
 import type { EventSink } from "../../contracts/events.js";
 import {
   decideVerdict,
@@ -29,6 +30,7 @@ export interface ReviewDeps {
   fs: ReviewFs;
   clock: { now(): Date };
   logger?: EventSink;
+  onAgentEvent?: (event: AgentStreamEvent) => Promise<void> | void;
   config: ResolvedNightShiftConfig;
   runId: string;
   profileId: string;
@@ -168,9 +170,9 @@ export async function runReviewPhase(
     let summary: string;
 
     try {
-      turnResult = await session.run(message, {
+      turnResult = await runTurnWithProgress(session, message, {
         outputSchema: ReviewerResponseJsonSchema,
-      });
+      }, deps.onAgentEvent);
       const parsed = parseReviewerResponse(turnResult.finalText, {
         ticketId: ticket.id,
         prNumber: pr.number,
@@ -197,9 +199,9 @@ export async function runReviewPhase(
             attempt: 1,
           },
         );
-        turnResult = await session.run(retryMessage, {
+        turnResult = await runTurnWithProgress(session, retryMessage, {
           outputSchema: ReviewerResponseJsonSchema,
-        });
+        }, deps.onAgentEvent);
         const retryParsed = parseReviewerResponse(turnResult.finalText, {
           ticketId: ticket.id,
           prNumber: pr.number,
@@ -215,7 +217,7 @@ export async function runReviewPhase(
     }
 
     // 6.7 Decide verdict
-    verdict = decideVerdict(findings, iteration);
+    verdict = decideVerdict(findings, iteration, input.maxIterations);
 
     result = {
       verdict,

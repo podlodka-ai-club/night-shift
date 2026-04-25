@@ -13,7 +13,7 @@ export type ReviewerResponse = z.infer<typeof ReviewerResponseSchema>;
 
 export const ReviewerResponseJsonSchema = zodToJsonSchema(
   ReviewerResponseSchema,
-  { name: "ReviewerResponse", $refStrategy: "none" },
+  { $refStrategy: "none" },
 );
 
 export interface SpecBundleFile {

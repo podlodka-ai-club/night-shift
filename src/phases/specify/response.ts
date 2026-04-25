@@ -51,11 +51,12 @@ export const SpecifierResponseSchema = z
 export type SpecifierResponse = z.infer<typeof SpecifierResponseSchema>;
 
 /**
- * JSON-Schema projection for `TurnOpts.outputSchema`. We strip the generated
- * `$schema` / `$ref` wrappers the `zod-to-json-schema` library adds by default
- * so the output is a plain self-contained schema object.
+ * JSON-Schema projection for `TurnOpts.outputSchema`.
+ *
+ * Omitting a schema name keeps the result as a plain top-level object schema
+ * instead of a `$ref` wrapper under `definitions`, which the Codex API rejects.
  */
 export const SpecifierResponseJsonSchema = zodToJsonSchema(
   SpecifierResponseSchema,
-  { name: "SpecifierResponse", $refStrategy: "none" },
+  { $refStrategy: "none" },
 );

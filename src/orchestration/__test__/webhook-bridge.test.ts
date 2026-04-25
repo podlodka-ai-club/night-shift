@@ -72,6 +72,37 @@ describe("handleWorkflowTrigger", () => {
     expect(result).toEqual({ action: "signaled", workflowId: "ticket-42", signal: "implementRetry" });
   });
 
+  it("Ready event starts implement-phase workflow when none exists", async () => {
+    const { WorkflowNotFoundError } = await import("@temporalio/client");
+    mockQuery.mockRejectedValue(new WorkflowNotFoundError("missing", "ticket-42", "run-1"));
+    mockStart.mockResolvedValue({ workflowId: "ticket-42" });
+
+    const event = { ...baseEvent, currentStatus: "Ready" };
+    const result = await handleWorkflowTrigger(event, fakeClient, "q");
+
+    expect(result).toEqual({ action: "started", workflowId: "ticket-42" });
+    expect(mockStart).toHaveBeenCalledWith("ticketWorkflow", expect.objectContaining({
+      taskQueue: "q",
+      workflowId: "ticket-42",
+      args: [expect.objectContaining({ startPhase: "implement" })],
+    }));
+  });
+
+  it("Ready event starts a fresh implement run when the previous workflow is closed", async () => {
+    mockQuery.mockResolvedValue(null);
+    mockStart.mockResolvedValue({ workflowId: "ticket-42" });
+
+    const event = { ...baseEvent, currentStatus: "Ready" };
+    const result = await handleWorkflowTrigger(event, fakeClient, "q");
+
+    expect(result).toEqual({ action: "started", workflowId: "ticket-42" });
+    expect(mockStart).toHaveBeenCalledWith("ticketWorkflow", expect.objectContaining({
+      taskQueue: "q",
+      workflowId: "ticket-42",
+      args: [expect.objectContaining({ startPhase: "implement" })],
+    }));
+  });
+
   it("In-review event signals resume", async () => {
     mockQuery.mockResolvedValue("review_escalation");
     const event = { ...baseEvent, currentStatus: "In review" };
@@ -96,8 +127,10 @@ describe("handleWorkflowTrigger", () => {
     expect(result).toEqual({ action: "ignored", workflowId: "ticket-42" });
   });
 
-  it("transition matching workflow with blockedReason null is no-op", async () => {
+  it("Ready transition remains a no-op when a workflow with null blockedReason is still running", async () => {
+    const { WorkflowExecutionAlreadyStartedError } = await import("@temporalio/client");
     mockQuery.mockResolvedValue(null);
+    mockStart.mockRejectedValue(new WorkflowExecutionAlreadyStartedError("dup", "ticket-42", "ticketWorkflow"));
     const event = { ...baseEvent, currentStatus: "Ready" };
 
     const result = await handleWorkflowTrigger(event, fakeClient, "q");

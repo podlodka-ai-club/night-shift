@@ -16,13 +16,15 @@ function makeMockClient(opts: {
   usage?: { input_tokens: number; output_tokens: number; cached_input_tokens: number } | null;
   threadId?: string;
   startThreadSpy?: (threadOptions: unknown) => void;
+  runSpy?: (input: unknown, turnOptions: unknown) => void;
 }): Pick<Codex, "startThread" | "resumeThread"> {
   const threadId = opts.threadId ?? "thread-xyz";
   const thread: CodexThread = {
     get id() {
       return threadId;
     },
-    async run() {
+    async run(input: unknown, turnOptions: unknown) {
+      opts.runSpy?.(input, turnOptions);
       return {
         items: [],
         finalResponse: opts.finalResponse ?? "",
@@ -195,10 +197,12 @@ describe("CodexAdapter event translation (runStreamed)", () => {
     ];
     const out = await collect(events);
     expect(out.map((e) => (e as { kind: string }).kind)).toEqual(["tool-use", "tool-result"]);
-    const use = out[0] as { source: { kind: string }; toolCallId: string };
+    const use = out[0] as { source: { kind: string }; toolCallId: string; tool: string; input: { command: string } };
     const res = out[1] as { toolCallId: string; status: string };
     expect(use.source.kind).toBe("shell");
     expect(use.toolCallId).toBe(res.toolCallId);
+    expect(use.tool).toBe("ls");
+    expect(use.input.command).toBe("ls");
     expect(res.status).toBe("completed");
   });
 
@@ -246,5 +250,42 @@ describe("CodexAdapter.run", () => {
     // 1000*1.0 + 500*2.0 = 1000 + 1000 = 2000 micro-USD
     expect(result.cost).toBe(2000);
     expect(result.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("normalizes top-level $ref output schemas before sending them to Codex", async () => {
+    let capturedTurnOptions: Record<string, unknown> | undefined;
+    const client = makeMockClient({
+      runSpy: (_input, turnOptions) => {
+        capturedTurnOptions = turnOptions as Record<string, unknown>;
+      },
+    });
+    const adapter = new CodexAdapter({ codexClient: client });
+    const session = adapter.openSession(baseSessionOpts);
+
+    await session.run("hi", {
+      outputSchema: {
+        $ref: "#/definitions/CodexOutput",
+        definitions: {
+          CodexOutput: {
+            type: "object",
+            properties: {
+              summary: { type: "string" },
+            },
+            required: ["summary"],
+            additionalProperties: false,
+          },
+        },
+        $schema: "http://json-schema.org/draft-07/schema#",
+      },
+    });
+
+    expect(capturedTurnOptions?.outputSchema).toEqual({
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+      },
+      required: ["summary"],
+      additionalProperties: false,
+    });
   });
 });

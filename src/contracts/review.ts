@@ -27,6 +27,7 @@ export const ReviewInputSchema = z.object({
   specBundle: SpecBundleSchema,
   pr: PRRefSchema,
   iteration: z.number().int().nonnegative(),
+  maxIterations: z.number().int().positive().optional(),
 });
 export type ReviewInput = z.infer<typeof ReviewInputSchema>;
 
@@ -41,15 +42,19 @@ export type ReviewResult = z.infer<typeof ReviewResultSchema>;
 /**
  * Verdict rules (pure):
  *   - no error-level findings        → "ready-to-merge"
- *   - errors present, iteration < 2  → "needs-fix"   (implementer gets another chance)
- *   - errors present, iteration ≥ 2  → "escalate"    (human takes over)
+ *   - errors present before the final configured iteration → "needs-fix"
+ *   - errors present on the final configured iteration     → "escalate"
  *
  * Warnings never block and never change the verdict.
- * The maximum of two fix loops corresponds to iterations 0 and 1 triggering
- * a re-implementation; on iteration 2 the reviewer escalates.
+ * `maxIterations` counts review attempts, not fix loops. With the default of
+ * 3, iterations 0 and 1 trigger re-implementation and iteration 2 escalates.
  */
-export function decideVerdict(findings: Finding[], iteration: number): Verdict {
+export function decideVerdict(
+  findings: Finding[],
+  iteration: number,
+  maxIterations: number = 3,
+): Verdict {
   const hasErrors = findings.some((f) => f.severity === "error");
   if (!hasErrors) return "ready-to-merge";
-  return iteration < 2 ? "needs-fix" : "escalate";
+  return iteration + 1 < maxIterations ? "needs-fix" : "escalate";
 }

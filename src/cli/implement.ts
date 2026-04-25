@@ -157,6 +157,8 @@ export async function main(
       {
         github,
         git,
+        gitForRepo: (scopedRepoRoot: string) =>
+          createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
         fs: makeFs(),
         worktree,
         gateRunner,

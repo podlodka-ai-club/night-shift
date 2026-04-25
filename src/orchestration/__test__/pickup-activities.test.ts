@@ -1,13 +1,48 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { createInMemoryFakeGitHubClient } from "../../github/__test__/fake.js";
 import type { FakeGitHubClient } from "../../github/__test__/fake.js";
-import { setPickupGitHubClient, scanBoardActivity } from "../pickup-activities.js";
+
+const mockStart = vi.fn();
+const mockQuery = vi.fn();
+const mockSignal = vi.fn();
+
+vi.mock("@temporalio/client", () => {
+  class WorkflowExecutionAlreadyStartedError extends Error {
+    override name = "WorkflowExecutionAlreadyStartedError";
+  }
+  return {
+    Connection: {
+      connect: vi.fn().mockResolvedValue({}),
+    },
+    Client: vi.fn().mockImplementation(() => ({
+      workflow: {
+        start: (...args: unknown[]) => mockStart(...args),
+        getHandle: () => ({
+          query: (...args: unknown[]) => mockQuery(...args),
+          signal: (...args: unknown[]) => mockSignal(...args),
+        }),
+      },
+    })),
+    WorkflowExecutionAlreadyStartedError,
+  };
+});
+
+import {
+  setPickupGitHubClient,
+  setPickupTemporalConfig,
+  scanBoardActivity,
+  startTicketWorkflowsActivity,
+} from "../pickup-activities.js";
 
 let gh: FakeGitHubClient;
 
 beforeEach(() => {
   gh = createInMemoryFakeGitHubClient();
   setPickupGitHubClient(gh);
+  setPickupTemporalConfig("localhost:7233", "default");
+  mockStart.mockReset().mockResolvedValue({ workflowId: "ticket-1" });
+  mockQuery.mockReset().mockResolvedValue(null);
+  mockSignal.mockReset().mockResolvedValue(undefined);
 });
 
 describe("scanBoardActivity", () => {
@@ -61,5 +96,65 @@ describe("scanBoardActivity", () => {
     // getItem() returns ticketId = String(issueNumber)
     const workflowId = `ticket-${result.items[0]!.ticketId}`;
     expect(workflowId).toBe("ticket-42");
+  });
+});
+
+describe("startTicketWorkflowsActivity", () => {
+  it("signals specifyRetry for blocked backlog workflows instead of skipping them", async () => {
+    const { WorkflowExecutionAlreadyStartedError } = await import("@temporalio/client");
+    mockStart.mockRejectedValue(new WorkflowExecutionAlreadyStartedError("dup", "ticket-1", "ticketWorkflow"));
+    mockQuery.mockResolvedValue("awaiting_spec_review");
+
+    const result = await startTicketWorkflowsActivity({
+      items: [
+        {
+          itemId: "PVTI_1",
+          ticketId: "1",
+          issueNumber: 1,
+          title: "Fix login",
+          changeName: "fix-login-1",
+          startPhase: "specify",
+        },
+      ],
+      maxStarts: 1,
+      taskQueue: "night-shift",
+    });
+
+    expect(result).toEqual({ started: 0, signaled: 1, skipped: 0 });
+    expect(mockSignal).toHaveBeenCalledWith("specifyRetry");
+  });
+
+  it("counts signaled workflows against the per-tick cap", async () => {
+    const { WorkflowExecutionAlreadyStartedError } = await import("@temporalio/client");
+    mockStart
+      .mockRejectedValueOnce(new WorkflowExecutionAlreadyStartedError("dup", "ticket-1", "ticketWorkflow"))
+      .mockResolvedValue({ workflowId: "ticket-2" });
+    mockQuery.mockResolvedValue("awaiting_spec_review");
+
+    const result = await startTicketWorkflowsActivity({
+      items: [
+        {
+          itemId: "PVTI_1",
+          ticketId: "1",
+          issueNumber: 1,
+          title: "Fix login",
+          changeName: "fix-login-1",
+          startPhase: "specify",
+        },
+        {
+          itemId: "PVTI_2",
+          ticketId: "2",
+          issueNumber: 2,
+          title: "Add tests",
+          changeName: "add-tests-2",
+          startPhase: "specify",
+        },
+      ],
+      maxStarts: 1,
+      taskQueue: "night-shift",
+    });
+
+    expect(result).toEqual({ started: 0, signaled: 1, skipped: 0 });
+    expect(mockStart).toHaveBeenCalledTimes(1);
   });
 });

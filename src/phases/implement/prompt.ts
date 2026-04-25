@@ -74,7 +74,7 @@ export function renderImplementerMessage(
   }
   parts.push("## Response");
   parts.push(
-    "Return a JSON object with keys: `filesWritten` (array of `{path, content}` for every file you create or modify), `commitMessage`, `summary`, and optional `followUps` (array of strings).",
+    "Return a JSON object with keys: `filesWritten` (array of `{path, content}` for every file you create or modify; use `[]` only when the existing branch already contains the complete implementation and no additional edits are needed), `commitMessage`, `summary`, and `followUps` (array of strings, use `[]` when there are none).",
   );
   parts.push(
     "`path` MUST be a repo-relative POSIX path; absolute paths and `..` segments are rejected.",
