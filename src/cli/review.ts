@@ -81,7 +81,7 @@ export async function main(
     iteration = n;
   }
 
-  const repoRoot = args.values["repo-root"] ?? process.cwd();
+  const repoRoot = path.resolve(args.values["repo-root"] ?? process.cwd());
   const runId = args.values["run-id"] ?? `review-${Date.now()}`;
   const profileId = args.values.profile ?? "default";
 
@@ -184,6 +184,7 @@ export async function main(
         runId,
         profileId,
         reviewerModel: reviewRole.model,
+        workingDirectory: repoRoot,
       },
     );
 

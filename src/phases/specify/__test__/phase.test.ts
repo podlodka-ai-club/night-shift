@@ -311,6 +311,42 @@ describe("runSpecifyPhase", () => {
     expect(capturedPrompt).toContain("old rationale");
   });
 
+  it("passes workingDirectory to the specifier session when provided", async () => {
+    const gh = createInMemoryFakeGitHubClient();
+    gh.seedIssue({ number: 61, title: "t" });
+    gh.seedItem({ itemId: "PVTI_61", issueNumber: 61, status: "Backlog" });
+    const cli = createFakeOpenSpecCli();
+    cli.script([{ ok: true }]);
+    const inner = new InMemoryFakeAdapter({
+      script: [{ events: [], finalText: goodResponseJson(), usage: baseUsage() }],
+    });
+    let capturedWorkingDirectory: string | undefined;
+    const agent = {
+      provider: "fake",
+      openSession(opts: unknown) {
+        capturedWorkingDirectory = (opts as { workingDirectory?: string }).workingDirectory;
+        return inner.openSession(opts);
+      },
+    };
+
+    await runSpecifyPhase(
+      {
+        github: gh,
+        git: createInMemoryFakeGitOps(),
+        fs: fakeFs(),
+        agent,
+        openspecCli: cli,
+        runId: "r",
+        profileId: "p",
+        model: "m",
+        workingDirectory: "/tmp/specify-repo",
+      },
+      { itemId: "PVTI_61", changeName: "x" },
+    );
+
+    expect(capturedWorkingDirectory).toBe("/tmp/specify-repo");
+  });
+
   it("emits PhaseStarted and PhaseCompleted on success", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 7, title: "t" });

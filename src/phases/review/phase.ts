@@ -35,6 +35,7 @@ export interface ReviewDeps {
   runId: string;
   profileId: string;
   reviewerModel: string;
+  workingDirectory?: string;
 }
 
 export interface ReviewPhaseInput {
@@ -151,6 +152,9 @@ export async function runReviewPhase(
     const session = deps.agent.openSession({
       role: "reviewer",
       model: deps.reviewerModel,
+      ...(deps.workingDirectory !== undefined
+        ? { workingDirectory: deps.workingDirectory }
+        : {}),
       runId: deps.runId,
       ticketId: ticket.id,
       profileId: deps.profileId,

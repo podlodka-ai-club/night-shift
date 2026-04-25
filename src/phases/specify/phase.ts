@@ -58,6 +58,7 @@ export interface RunSpecifyPhaseDeps {
   fs: SpecifyFs;
   agent: AgentAdapter;
   openspecCli: OpenSpecCli;
+  workingDirectory?: string;
   /** Base branch the spec review PR targets. Defaults to `main`. */
   baseBranch?: string;
   events?: EventSink;
@@ -324,6 +325,9 @@ export async function runSpecifyPhase(
       role: "specifier",
       model: deps.model,
       systemPrompt: SPECIFIER_SYSTEM_PROMPT,
+      ...(deps.workingDirectory !== undefined
+        ? { workingDirectory: deps.workingDirectory }
+        : {}),
       runId: deps.runId,
       ticketId: ticket.id,
       profileId: deps.profileId,

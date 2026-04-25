@@ -86,7 +86,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
     process.stderr.write(`missing --item or --change\n\n${USAGE}`);
     return 64;
   }
-  const repoRoot = args.values["repo-root"] ?? process.cwd();
+  const repoRoot = path.resolve(args.values["repo-root"] ?? process.cwd());
   const baseBranch = args.values["base-branch"] ?? "main";
   const runId = args.values["run-id"] ?? `specify-${Date.now()}`;
   const profileId = args.values.profile ?? "default";
@@ -124,11 +124,14 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
         git,
         fs: makeFs(repoRoot),
         agent: adapter,
-        openspecCli,
+        openspecCli: {
+          validate: (name, opts) => openspecCli.validate(name, { ...opts, cwd: repoRoot }),
+        },
         baseBranch,
         runId,
         profileId,
         model: roleConfig.model,
+        workingDirectory: repoRoot,
       },
       { itemId, changeName },
     );

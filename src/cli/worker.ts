@@ -22,7 +22,7 @@ import type { ResolvedNightShiftConfig } from "../config/schema.js";
 const USAGE = `night-shift worker
 
 Usage:
-  night-shift worker [--config <path>]
+  night-shift worker [--config <path>] [--repo-root <path>]
 
 Starts the Temporal worker that processes ticket workflows.
 
@@ -115,6 +115,7 @@ function buildDepsFactory(
   repoRoot: string,
 ): ActivityDepsFactory {
   let signalClientPromise: Promise<Client> | undefined;
+  const openspecCli = createOpenSpecCli();
 
   async function getSignalClient(): Promise<Client> {
     if (!signalClientPromise) {
@@ -136,11 +137,14 @@ function buildDepsFactory(
         git: createSimpleGitOps({ repoRoot, git: simpleGit(repoRoot) }),
         fs: makeSpecifyFs(repoRoot),
         agent: makeAdapter(roleConfig.provider),
-        openspecCli: createOpenSpecCli(),
+        openspecCli: {
+          validate: (name, opts) => openspecCli.validate(name, { ...opts, cwd: repoRoot }),
+        },
         baseBranch: "main",
         runId,
         profileId,
         model: roleConfig.model,
+        workingDirectory: repoRoot,
       };
     },
     buildImplementDeps(runId, profileId) {
@@ -175,6 +179,7 @@ function buildDepsFactory(
         runId,
         profileId,
         reviewerModel: roleConfig.model,
+        workingDirectory: repoRoot,
       };
     },
     async signalProgress(workflowId, md) {
@@ -191,6 +196,7 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
       args: argv,
       options: {
         config: { type: "string" },
+        "repo-root": { type: "string" },
         help: { type: "boolean", short: "h" },
       },
       allowPositionals: false,
@@ -206,8 +212,10 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
   }
 
   try {
+    const repoRoot = path.resolve(args.values["repo-root"] ?? process.cwd());
     const config = await loadConfig({
       ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
+      cwd: repoRoot,
     });
 
     // Create GitHub client
@@ -226,7 +234,6 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
       process.stderr.write("Error: GitHub client is required for the worker\n");
       return 1;
     }
-    const repoRoot = process.cwd();
     const depsFactory = buildDepsFactory(config, github, repoRoot);
 
     const worker = await startWorker({ config, depsFactory, ...(github ? { github } : {}) });

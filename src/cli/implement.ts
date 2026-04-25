@@ -115,7 +115,7 @@ export async function main(
     process.stderr.write(`missing --item or --change\n\n${USAGE}`);
     return 64;
   }
-  const repoRoot = args.values["repo-root"] ?? process.cwd();
+  const repoRoot = path.resolve(args.values["repo-root"] ?? process.cwd());
   const runId = args.values["run-id"] ?? `implement-${Date.now()}`;
   const profileId = args.values.profile ?? "default";
   const baseBranch = args.values["base-branch"] ?? "main";

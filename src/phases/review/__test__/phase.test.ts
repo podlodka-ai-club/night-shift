@@ -207,6 +207,30 @@ describe("runReviewPhase", () => {
     expect(summaryComments).toHaveLength(1);
   });
 
+  it("passes workingDirectory to the reviewer session when provided", async () => {
+    let capturedWorkingDirectory: string | undefined;
+    const inner = new InMemoryFakeAdapter({
+      script: [{ events: [], finalText: reviewResponseJson(), usage: usage() }],
+    });
+    const agent = {
+      provider: "fake",
+      openSession(opts: unknown) {
+        capturedWorkingDirectory = (opts as { workingDirectory?: string }).workingDirectory;
+        return inner.openSession(opts);
+      },
+    };
+    const { gh, deps } = buildDeps(agent as unknown as InMemoryFakeAdapter);
+    seedBase(gh);
+
+    await runReviewPhase(phaseInput(), {
+      ...deps,
+      agent,
+      workingDirectory: "/tmp/review-repo",
+    });
+
+    expect(capturedWorkingDirectory).toBe("/tmp/review-repo");
+  });
+
   // 7.4 Ready-to-merge with warnings
   it("ready-to-merge with warnings: line comments upserted for warnings with location", async () => {
     const findings = [

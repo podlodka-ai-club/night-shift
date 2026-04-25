@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { InMemoryFakeAdapter } from "../../../adapters/__test__/fake.js";
 import { createInMemoryFakeGitHubClient } from "../../../github/__test__/fake.js";
@@ -228,6 +229,59 @@ describe("runImplementPhase", () => {
       .filter((e) => e.kind === "setStatus")
       .map((e) => (e.args as { status: string }).status);
     expect(statuses).toEqual(["In review"]);
+  });
+
+  it("opens the implementer session in the created worktree", async () => {
+    const agent = new InMemoryFakeAdapter({
+      script: [
+        { events: [], finalText: implResponseJson(), usage: usage() },
+      ],
+    });
+    const gh = createInMemoryFakeGitHubClient();
+    gh.seedIssue({ number: 16, title: "Add thing" });
+    gh.seedItem({ itemId: "PVTI_16", issueNumber: 16, status: "Ready" });
+
+    let createdWorktreePath: string | undefined;
+    let capturedWorkingDirectory: string | undefined;
+    const worktreeRoot = path.join(process.cwd(), ".tmp-implement-worktrees");
+    const innerWorktree = createInMemoryFakeWorktreeOps({ rootDir: worktreeRoot });
+    const worktree = {
+      ...innerWorktree,
+      async create(input: { ticketId: string; branch: string; fromRef?: string }) {
+        const created = await innerWorktree.create(input);
+        createdWorktreePath = created.path;
+        return created;
+      },
+    };
+    const capturingAgent = {
+      provider: "fake",
+      openSession(opts: unknown) {
+        capturedWorkingDirectory = (opts as { workingDirectory?: string }).workingDirectory;
+        return agent.openSession(opts);
+      },
+    };
+
+    await runImplementPhase(
+      {
+        github: gh,
+        git: createInMemoryFakeGitOps(),
+        fs: makeFs(BUNDLE),
+        worktree,
+        gateRunner: createInMemoryFakeQualityGateRunner(),
+        agent: capturingAgent,
+        runId: "run1",
+        profileId: "default",
+        implementerModel: "gpt-test",
+        qualityGates: [{ name: "typecheck", command: ["true"] }],
+        baseBranch: "main",
+      },
+      {
+        itemId: "PVTI_16",
+        changeName: "c",
+      },
+    );
+
+    expect(capturedWorkingDirectory).toBe(createdWorktreePath);
   });
 
   it("rejects Backlog-entry items with validation error", async () => {

@@ -1,6 +1,5 @@
 import path from "node:path";
-import type { AgentAdapter, AgentStreamEvent, TurnResult } from "../../adapters/events.js";
-import { runTurnWithProgress } from "../../adapters/run-turn.js";
+import type { AgentAdapter, TurnResult } from "../../adapters/events.js";
 import type { EventSink } from "../../contracts/events.js";
 import { branchNameFor } from "../../contracts/helpers.js";
 import type {
@@ -8,10 +7,10 @@ import type {
   QualityGateResult as ContractQualityGateResult,
 } from "../../contracts/implement.js";
 import { ImplementationResultSchema } from "../../contracts/implement.js";
-import type { SpecBundle } from "../../contracts/specify.js";
 import type { Ticket } from "../../contracts/ticket.js";
 import type { GitOps } from "../../git/index.js";
 import type { GitHubClient } from "../../github/client.js";
+import { GitHubPushRejectedError } from "../../github/errors.js";
 import type { Comment } from "../../github/types.js";
 import type {
   QualityGate,
@@ -56,10 +55,6 @@ export interface ImplementResult {
   worktreePath?: string;
   /** Full `ImplementationResult` when `status === "pr_opened"`. */
   result?: ImplementationResult;
-  /** Ticket context needed by downstream review orchestration. */
-  ticket?: Ticket;
-  /** Best-effort spec bundle context for downstream review orchestration. */
-  specBundle?: SpecBundle;
   /** Short summary posted as a ticket comment. */
   summary: string;
 }
@@ -67,14 +62,11 @@ export interface ImplementResult {
 export interface RunImplementPhaseDeps {
   github: GitHubClient;
   git: GitOps;
-  /** Optional factory for repo-scoped git handles, e.g. a ticket worktree. */
-  gitForRepo?: (repoRoot: string) => GitOps;
   fs: ImplementFs;
   worktree: WorktreeOps;
   gateRunner: QualityGateRunner;
   agent: AgentAdapter;
   events?: EventSink;
-  onAgentEvent?: (event: AgentStreamEvent) => Promise<void> | void;
   now?: () => Date;
   runId: string;
   profileId: string;
@@ -206,7 +198,6 @@ interface LoadedImplementContext {
 interface PreparedImplementContext extends LoadedImplementContext {
   branch: string;
   worktreePath: string;
-  worktreeGit: GitOps;
 }
 
 interface ImplementAttemptResult {
@@ -320,7 +311,6 @@ async function prepareImplementContext(
     ...context,
     branch,
     worktreePath: worktree.path,
-    worktreeGit: deps.gitForRepo?.(worktree.path) ?? deps.git,
   };
 }
 
@@ -344,9 +334,9 @@ async function runImplementerTurn(
 
   let turn: TurnResult;
   try {
-    turn = await runTurnWithProgress(session, message, {
+    turn = await session.run(message, {
       outputSchema: ImplementerResponseJsonSchema,
-    }, deps.onAgentEvent);
+    });
   } catch (err) {
     throw new ImplementAgentError(
       "agent",
@@ -370,31 +360,6 @@ async function writeImplementerCommit(
   context: PreparedImplementContext,
   response: ImplementerResponse,
 ): Promise<string> {
-  if (response.filesWritten.length === 0) {
-    try {
-      const [currentHeadSha, remoteHeadSha] = await Promise.all([
-        context.worktreeGit.currentHeadSha(),
-        context.worktreeGit.remoteHeadSha(context.branch),
-      ]);
-
-      if (remoteHeadSha !== null && remoteHeadSha !== currentHeadSha) {
-        return currentHeadSha;
-      }
-
-      throw new ImplementValidationError(
-        "implementer produced no file changes and there is no unpublished branch state to publish",
-      );
-    } catch (err) {
-      if (err instanceof ImplementPhaseError) {
-        throw err;
-      }
-      throw new ImplementGitError(
-        `failed to inspect existing branch state: ${(err as Error).message}`,
-        { ticketId: context.ticket.id, worktreePath: context.worktreePath, cause: err },
-      );
-    }
-  }
-
   try {
     await deps.fs.writeWorktreeFiles(
       context.worktreePath,
@@ -408,7 +373,8 @@ async function writeImplementerCommit(
   }
 
   try {
-    const { sha } = await context.worktreeGit.writeTree(
+    await deps.git.checkoutBranch(context.branch);
+    const { sha } = await deps.git.writeTree(
       response.filesWritten,
       response.commitMessage,
     );
@@ -479,6 +445,7 @@ async function runImplementAttempts(
     role: "implementer",
     model: deps.implementerModel,
     systemPrompt: IMPLEMENTER_SYSTEM_PROMPT,
+    workingDirectory: context.worktreePath,
     runId: deps.runId,
     ticketId: context.ticket.id,
     profileId: deps.profileId,
@@ -541,40 +508,27 @@ async function publishPullRequest(
   summary: string,
 ): Promise<ImplementPullRequest> {
   try {
-    await context.worktreeGit.pushBranch(context.branch);
+    await deps.github.pushBranch(context.branch, commitSha);
+    return await deps.github.upsertPullRequest({
+      head: context.branch,
+      base: deps.baseBranch,
+      title: `${context.ticket.id}: ${context.ticket.title}`,
+      body: `Closes ${context.ticket.url}\n\n${summary}`,
+    });
   } catch (err) {
-    throw new ImplementGitError(
-      `push rejected for ${context.branch}`,
-      {
-        ticketId: context.ticket.id,
-        worktreePath: context.worktreePath,
-        code: "push_rejected",
-        cause: err,
-      },
-    );
+    if (err instanceof GitHubPushRejectedError) {
+      throw new ImplementGitError(
+        `push rejected for ${context.branch}`,
+        {
+          ticketId: context.ticket.id,
+          worktreePath: context.worktreePath,
+          code: "push_rejected",
+          cause: err,
+        },
+      );
+    }
+    throw err;
   }
-
-  return await deps.github.upsertPullRequest({
-    head: context.branch,
-    base: deps.baseBranch,
-    title: `${context.ticket.id}: ${context.ticket.title}`,
-    body: `Closes ${context.ticket.url}\n\n${summary}`,
-  });
-}
-
-function buildSpecBundle(
-  input: RunImplementPhaseInput,
-  context: PreparedImplementContext,
-  commitSha: string,
-): SpecBundle {
-  return {
-    specPath: path.posix.join("openspec", "changes", input.changeName),
-    branch: context.branch,
-    openQuestions: [],
-    assumptions: [],
-    risks: [],
-    commitSha,
-  };
 }
 
 function buildImplementResult(
@@ -584,15 +538,11 @@ function buildImplementResult(
   summary: string,
   gateResults: ContractQualityGateResult[],
   pr: ImplementPullRequest | undefined,
-  ticket: Ticket | undefined,
-  specBundle: SpecBundle | undefined,
 ): ImplementResult {
   const result: ImplementResult = {
     status,
     ticketId,
     ...(worktreePath !== undefined ? { worktreePath } : {}),
-    ...(ticket !== undefined ? { ticket } : {}),
-    ...(specBundle !== undefined ? { specBundle } : {}),
     summary,
   };
 
@@ -661,6 +611,7 @@ export async function runImplementPhase(
 
     const prepared = await prepareImplementContext(deps, input, loaded);
     worktreePath = prepared.worktreePath;
+
     const attemptResult = await runImplementAttempts(
       deps,
       prepared,
@@ -676,9 +627,6 @@ export async function runImplementPhase(
           attemptResult.commitSha,
           attemptResult.response.summary,
         );
-    const specBundle = pr
-      ? buildSpecBundle(input, prepared, pr.headSha)
-      : undefined;
 
     const status: ImplementStatus = needsInput ? "needs_input" : "pr_opened";
     const summary = formatSummary(
@@ -706,8 +654,6 @@ export async function runImplementPhase(
       summary,
       attemptResult.gateResults,
       pr,
-      prepared.ticket,
-      specBundle,
     );
 
     // Success: clean up the worktree. On failure we leave it for triage.
