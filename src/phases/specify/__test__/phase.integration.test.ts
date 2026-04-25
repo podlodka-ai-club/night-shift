@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { InMemoryFakeAdapter } from "../../../adapters/__test__/fake.js";
 import { createInMemoryFakeGitHubClient } from "../../../github/__test__/fake.js";
 import { createInMemoryFakeGitOps } from "../../../git/__test__/fake.js";
+import { worktreePathSegmentsForTicket } from "../../../worktree/index.js";
 import { createOpenSpecCli } from "../openspec-cli.js";
 import { runSpecifyPhase, type SpecifyFs } from "../phase.js";
 
@@ -69,7 +70,11 @@ describe.skipIf(!available)("runSpecifyPhase (integration with real openspec CLI
   function makeWorktree(repoRoot: string) {
     return {
       async create({ ticketId, branch }: { ticketId: string; branch: string }) {
-        const worktreePath = path.join(repoRoot, ".worktrees", ticketId);
+        const worktreePath = path.join(
+          repoRoot,
+          ".worktrees",
+          ...worktreePathSegmentsForTicket(ticketId),
+        );
         await rm(worktreePath, { recursive: true, force: true });
         await mkdir(path.dirname(worktreePath), { recursive: true });
         await cp(path.join(repoRoot, "openspec"), path.join(worktreePath, "openspec"), {

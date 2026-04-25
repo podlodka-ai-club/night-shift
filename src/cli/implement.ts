@@ -36,7 +36,7 @@ Exit codes:
   64 usage error
 `;
 
-function makeFs(): ImplementFs {
+function makeFs(repoRoot: string): ImplementFs {
   return {
     async readSpecBundle(specPath) {
       const out: Array<{ path: string; content: string }> = [];
@@ -59,7 +59,7 @@ function makeFs(): ImplementFs {
             });
         }
       };
-      await walk(specPath, "");
+      await walk(path.join(repoRoot, specPath), "");
       return out;
     },
     async writeWorktreeFiles(worktreePath, files) {
@@ -157,7 +157,7 @@ export async function main(
         git,
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
-        fs: makeFs(),
+        fs: makeFs(repoRoot),
         worktree,
         gateRunner,
         agent: adapter,

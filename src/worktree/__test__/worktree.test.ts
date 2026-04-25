@@ -3,7 +3,10 @@ import { lstat, mkdir, mkdtemp, readdir, realpath, rm, stat } from "node:fs/prom
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInMemoryFakeWorktreeOps } from "./fake.js";
-import { createSimpleGitWorktreeOps } from "../index.js";
+import {
+  createSimpleGitWorktreeOps,
+  worktreePathSegmentsForTicket,
+} from "../index.js";
 import { simpleGit } from "simple-git";
 
 async function makeTempRepo() {
@@ -65,6 +68,30 @@ describe("createSimpleGitWorktreeOps", () => {
       expect(second).toEqual(first);
       expect((await stat(second.path)).isDirectory()).toBe(true);
       await ops.remove(second.path);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("sanitizes ticket-derived filesystem paths without changing branch names", async () => {
+    const { dir, git } = await makeTempRepo();
+    try {
+      const ops = createSimpleGitWorktreeOps({ repoRoot: dir, git });
+      const out = await ops.create({
+        ticketId: "org-55/feature-factory#26",
+        branch: "night-shift/org-55/feature-factory#26",
+      });
+
+      expect(path.relative(path.join(dir, ".worktrees"), out.path)).toBe(
+        path.join("org-55", "feature-factory-26"),
+      );
+      expect(out.branch).toBe("night-shift/org-55/feature-factory#26");
+      expect(worktreePathSegmentsForTicket("org-55/feature-factory#26")).toEqual([
+        "org-55",
+        "feature-factory-26",
+      ]);
+
+      await ops.remove(out.path);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

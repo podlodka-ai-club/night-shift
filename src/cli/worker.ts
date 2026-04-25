@@ -61,7 +61,7 @@ function makeSpecifyFs(repoRoot: string): SpecifyFs {
   };
 }
 
-function makeImplementFs(): ImplementFs {
+function makeImplementFs(repoRoot: string): ImplementFs {
   return {
     async readSpecBundle(specPath) {
       const out: Array<{ path: string; content: string }> = [];
@@ -80,7 +80,7 @@ function makeImplementFs(): ImplementFs {
           else out.push({ path: path.posix.join(specPath, r), content: await readFile(full, "utf8") });
         }
       };
-      await walk(specPath, "");
+      await walk(path.join(repoRoot, specPath), "");
       return out;
     },
     async writeWorktreeFiles(worktreePath, files) {
@@ -156,7 +156,7 @@ function buildDepsFactory(
         git: createSimpleGitOps({ repoRoot, git: gitInstance }),
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
-        fs: makeImplementFs(),
+        fs: makeImplementFs(repoRoot),
         worktree: createSimpleGitWorktreeOps({ repoRoot, git: gitInstance }),
         gateRunner: createNodeQualityGateRunner(),
         agent: makeAdapter(roleConfig.provider),

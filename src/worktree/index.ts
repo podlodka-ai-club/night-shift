@@ -28,6 +28,24 @@ export interface SimpleGitWorktreeOpsDeps {
   worktreesRoot?: string;
 }
 
+function sanitizeWorktreePathSegment(segment: string): string {
+  const sanitized = segment
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!sanitized || sanitized === "." || sanitized === "..") {
+    return "ticket";
+  }
+  return sanitized;
+}
+
+export function worktreePathSegmentsForTicket(ticketId: string): string[] {
+  const segments = ticketId
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .map(sanitizeWorktreePathSegment);
+  return segments.length > 0 ? segments : ["ticket"];
+}
+
 export function createSimpleGitWorktreeOps(
   deps: SimpleGitWorktreeOpsDeps,
 ): WorktreeOps {
@@ -55,7 +73,10 @@ export function createSimpleGitWorktreeOps(
 
   return {
     async create({ ticketId, branch, fromRef }) {
-      const worktreePath = path.join(root, ticketId);
+      const worktreePath = path.join(
+        root,
+        ...worktreePathSegmentsForTicket(ticketId),
+      );
       try {
         await stat(worktreePath);
         await this.remove(worktreePath);

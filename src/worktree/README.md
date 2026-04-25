@@ -20,7 +20,8 @@ interface WorktreeOps {
 
 - `createSimpleGitWorktreeOps({ repoRoot, git, worktreesRoot? })` —
   thin wrapper around `git worktree add` / `git worktree remove`.
-  Worktrees live under `<repoRoot>/.worktrees/<ticketId>` by default.
+  Worktrees live under a deterministic, filesystem-safe path below
+  `<repoRoot>/.worktrees/` derived from `ticketId` by default.
 - `createInMemoryFakeWorktreeOps({ rootDir? })` — materialises a real
   temp directory per ticket so tests that expect a path work without a
   git repo. Records every `create` / `remove` call on `events`.
