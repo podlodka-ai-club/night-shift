@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InMemoryFakeAdapter } from "../../../adapters/__test__/fake.js";
 import { createInMemoryFakeGitHubClient } from "../../../github/__test__/fake.js";
 import { createInMemoryFakeGitOps } from "../../../git/__test__/fake.js";
+import { createInMemoryFakeWorktreeOps } from "../../../worktree/__test__/fake.js";
 import { createFakeOpenSpecCli } from "../openspec-cli.js";
 import { runSpecifyPhase, type SpecifyFs } from "../phase.js";
 import { SpecifyItemMissingError, SpecifyValidationError } from "../errors.js";
@@ -29,7 +30,7 @@ function goodResponseJson(): string {
 
 function fakeFs(files: Record<string, string> = {}): SpecifyFs {
   return {
-    async readPriorDraft(changeDir) {
+    async readPriorDraft(_repoRoot, changeDir) {
       const prefix = `${changeDir}/`;
       return Object.entries(files)
         .filter(([p]) => p.startsWith(prefix))
@@ -42,12 +43,27 @@ function baseUsage() {
   return { input_tokens: 100, cached_input_tokens: 0, output_tokens: 200 };
 }
 
+function makeScopedGitRuntime(scopedGit = createInMemoryFakeGitOps()) {
+  const worktree = createInMemoryFakeWorktreeOps();
+  const repoRoots: string[] = [];
+
+  return {
+    worktree,
+    scopedGit,
+    repoRoots,
+    gitForRepo(repoRoot: string) {
+      repoRoots.push(repoRoot);
+      return scopedGit;
+    },
+  };
+}
+
 describe("runSpecifyPhase", () => {
   it("happy path: refines + transitions Backlog → Refinement → Refined", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 1, title: "Add feature", body: "Need it." });
     gh.seedItem({ itemId: "PVTI_1", issueNumber: 1, status: "Backlog" });
-    const git = createInMemoryFakeGitOps();
+    const scoped = makeScopedGitRuntime();
     const cli = createFakeOpenSpecCli();
     cli.script([{ ok: true }]);
     const agent = new InMemoryFakeAdapter({
@@ -63,7 +79,8 @@ describe("runSpecifyPhase", () => {
     const result = await runSpecifyPhase(
       {
         github: gh,
-        git,
+        worktree: scoped.worktree,
+        gitForRepo: scoped.gitForRepo,
         fs: fakeFs(),
         agent,
         openspecCli: cli,
@@ -80,11 +97,13 @@ describe("runSpecifyPhase", () => {
       .filter((e) => e.kind === "setStatus")
       .map((e) => (e.args as { status: string }).status);
     expect(statuses).toEqual(["Refinement", "Refined"]);
+    expect(scoped.worktree.events.map((event) => event.kind)).toEqual(["create", "remove"]);
+    expect(scoped.repoRoots).toHaveLength(1);
     // Exactly one comment upserted with the specify:summary marker.
     const comments = gh.events.filter((e) => e.kind === "upsertComment");
     expect(comments).toHaveLength(1);
     expect((comments[0]!.args as { markerId: string }).markerId).toBe("specify:summary");
-    expect(git.pushes).toEqual([{ branch: result.bundle!.branch, sha: result.bundle!.commitSha }]);
+    expect(scoped.scopedGit.pushes).toEqual([{ branch: result.bundle!.branch, sha: result.bundle!.commitSha }]);
     const prs = gh.events.filter((e) => e.kind === "upsertPullRequest");
     expect(prs).toHaveLength(1);
     const [summaryComment] = await gh.listComments(1);
@@ -102,13 +121,15 @@ describe("runSpecifyPhase", () => {
   it("throws SpecifyItemMissingError when item has no issue", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedItem({ itemId: "PVTI_X", status: "Backlog" });
+    const scoped = makeScopedGitRuntime();
     const cli = createFakeOpenSpecCli();
     const agent = new InMemoryFakeAdapter({ script: [] });
     await expect(
       runSpecifyPhase(
         {
           github: gh,
-          git: createInMemoryFakeGitOps(),
+          worktree: scoped.worktree,
+          gitForRepo: scoped.gitForRepo,
           fs: fakeFs(),
           agent,
           openspecCli: cli,
@@ -121,19 +142,22 @@ describe("runSpecifyPhase", () => {
     ).rejects.toBeInstanceOf(SpecifyItemMissingError);
     expect(gh.events.some((e) => e.kind === "setStatus")).toBe(false);
     expect(gh.events.some((e) => e.kind === "createBranch")).toBe(false);
+    expect(scoped.worktree.events).toHaveLength(0);
   });
 
   it("rejects Blocked-entry items with validation error", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 2 });
     gh.seedItem({ itemId: "PVTI_B", issueNumber: 2, status: "Blocked" });
+    const scoped = makeScopedGitRuntime();
     const cli = createFakeOpenSpecCli();
     const agent = new InMemoryFakeAdapter({ script: [] });
     await expect(
       runSpecifyPhase(
         {
           github: gh,
-          git: createInMemoryFakeGitOps(),
+          worktree: scoped.worktree,
+          gitForRepo: scoped.gitForRepo,
           fs: fakeFs(),
           agent,
           openspecCli: cli,
@@ -146,12 +170,14 @@ describe("runSpecifyPhase", () => {
     ).rejects.toBeInstanceOf(SpecifyValidationError);
     expect(gh.events.filter((e) => e.kind === "setStatus")).toHaveLength(0);
     expect(gh.events.filter((e) => e.kind === "createBranch")).toHaveLength(0);
+    expect(scoped.worktree.events).toHaveLength(0);
   });
 
   it("already-in-Refinement item: skips pre-transition", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 3, title: "t" });
     gh.seedItem({ itemId: "PVTI_3", issueNumber: 3, status: "Refinement" });
+    const scoped = makeScopedGitRuntime();
     const cli = createFakeOpenSpecCli();
     cli.script([{ ok: true }]);
     const agent = new InMemoryFakeAdapter({
@@ -160,7 +186,8 @@ describe("runSpecifyPhase", () => {
     const result = await runSpecifyPhase(
       {
         github: gh,
-        git: createInMemoryFakeGitOps(),
+        worktree: scoped.worktree,
+        gitForRepo: scoped.gitForRepo,
         fs: fakeFs(),
         agent,
         openspecCli: cli,
@@ -175,13 +202,14 @@ describe("runSpecifyPhase", () => {
       .filter((e) => e.kind === "setStatus")
       .map((e) => (e.args as { status: string }).status);
     expect(statuses).toEqual(["Refined"]); // only terminal, no Refinement pre-transition
+    expect(scoped.worktree.events.map((event) => event.kind)).toEqual(["create", "remove"]);
   });
 
   it("validation failure twice → needs_input + Blocked", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 4 });
     gh.seedItem({ itemId: "PVTI_4", issueNumber: 4, status: "Backlog" });
-    const git = createInMemoryFakeGitOps();
+    const scoped = makeScopedGitRuntime();
     const cli = createFakeOpenSpecCli();
     cli.script([
       { ok: false, error: "missing ## Why" },
@@ -196,7 +224,8 @@ describe("runSpecifyPhase", () => {
     const result = await runSpecifyPhase(
       {
         github: gh,
-        git,
+        worktree: scoped.worktree,
+        gitForRepo: scoped.gitForRepo,
         fs: fakeFs(),
         agent,
         openspecCli: cli,
@@ -210,18 +239,20 @@ describe("runSpecifyPhase", () => {
     expect(result.summary).toContain("still missing ## Why");
     expect(result.summary).toContain("[Change folder](https://github.com/acme/widgets/tree/");
     expect(result.summary).not.toContain("Spec review PR");
-    expect(git.pushes).toHaveLength(0);
+    expect(scoped.scopedGit.pushes).toHaveLength(0);
     expect(gh.events.filter((e) => e.kind === "upsertPullRequest")).toHaveLength(0);
     const statuses = gh.events
       .filter((e) => e.kind === "setStatus")
       .map((e) => (e.args as { status: string }).status);
     expect(statuses).toEqual(["Refinement", "Blocked"]);
+    expect(scoped.worktree.events.map((event) => event.kind)).toEqual(["create", "remove"]);
   });
 
   it("filters Night-Shift marker comments and includes operator reply in prompt", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 5, title: "t" });
     gh.seedItem({ itemId: "PVTI_5", issueNumber: 5, status: "Backlog" });
+    const scoped = makeScopedGitRuntime();
     await gh.upsertComment(5, "specify:summary", "old summary");
     // operator reply (not a marker comment)
     (gh as unknown as { seedIssue: unknown }); // keep types
@@ -255,7 +286,8 @@ describe("runSpecifyPhase", () => {
     await runSpecifyPhase(
       {
         github: gh,
-        git: createInMemoryFakeGitOps(),
+        worktree: scoped.worktree,
+        gitForRepo: scoped.gitForRepo,
         fs: fakeFs(),
         agent: capturingAgent,
         openspecCli: cli,
@@ -273,6 +305,7 @@ describe("runSpecifyPhase", () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 6, title: "t" });
     gh.seedItem({ itemId: "PVTI_6", issueNumber: 6, status: "Backlog" });
+    const scoped = makeScopedGitRuntime();
     let capturedPrompt = "";
     const inner = new InMemoryFakeAdapter({
       script: [{ events: [], finalText: goodResponseJson(), usage: baseUsage() }],
@@ -295,7 +328,8 @@ describe("runSpecifyPhase", () => {
     await runSpecifyPhase(
       {
         github: gh,
-        git: createInMemoryFakeGitOps(),
+        worktree: scoped.worktree,
+        gitForRepo: scoped.gitForRepo,
         fs: fakeFs({
           "openspec/changes/x/proposal.md": "## Why\nold rationale\n",
         }),
@@ -315,6 +349,7 @@ describe("runSpecifyPhase", () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 62, title: "t" });
     gh.seedItem({ itemId: "PVTI_62", issueNumber: 62, status: "Backlog" });
+    const worktree = createInMemoryFakeWorktreeOps();
     const cli = createFakeOpenSpecCli();
     cli.script([{ ok: true }]);
     const agent = new InMemoryFakeAdapter({
@@ -343,7 +378,10 @@ describe("runSpecifyPhase", () => {
     const result = await runSpecifyPhase(
       {
         github: gh,
-        git,
+        worktree,
+        gitForRepo() {
+          return git;
+        },
         fs: fakeFs(),
         agent,
         openspecCli: cli,
@@ -356,11 +394,14 @@ describe("runSpecifyPhase", () => {
     );
 
     expect(result.status).toBe("refined");
+    expect(worktree.events[0]?.args).toMatchObject({
+      branch: result.bundle!.branch,
+      fromRef: "origin/main",
+    });
     expect(checkouts).toEqual([
-      { branch: "main", opts: { preferRemote: true } },
       {
         branch: result.bundle!.branch,
-        opts: { startPoint: "main", preferRemote: true },
+        opts: { startPoint: "origin/main", preferRemote: true },
       },
     ]);
 
@@ -371,7 +412,7 @@ describe("runSpecifyPhase", () => {
     });
   });
 
-  it("passes workingDirectory to the specifier session when provided", async () => {
+  it("uses the worktree path for the specifier session and validation cwd", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 61, title: "t" });
     gh.seedItem({ itemId: "PVTI_61", issueNumber: 61, status: "Backlog" });
@@ -381,6 +422,8 @@ describe("runSpecifyPhase", () => {
       script: [{ events: [], finalText: goodResponseJson(), usage: baseUsage() }],
     });
     let capturedWorkingDirectory: string | undefined;
+    let capturedValidationCwd: string | undefined;
+    const worktreePath = "/tmp/specify-worktree";
     const agent = {
       provider: "fake",
       openSession(opts: unknown) {
@@ -388,29 +431,50 @@ describe("runSpecifyPhase", () => {
         return inner.openSession(opts);
       },
     };
+    const worktree = {
+      async create() {
+        return { path: worktreePath, branch: "night-shift/test" };
+      },
+      async remove() {},
+    };
+    const openspecCli = {
+      async validate() {
+        capturedValidationCwd = worktreePath;
+        return { ok: true as const };
+      },
+    };
 
     await runSpecifyPhase(
       {
         github: gh,
-        git: createInMemoryFakeGitOps(),
+        worktree,
+        gitForRepo() {
+          return createInMemoryFakeGitOps();
+        },
         fs: fakeFs(),
         agent,
-        openspecCli: cli,
+        openspecCli: {
+          async validate(name, opts) {
+            capturedValidationCwd = opts?.cwd;
+            return openspecCli.validate(name, opts);
+          },
+        },
         runId: "r",
         profileId: "p",
         model: "m",
-        workingDirectory: "/tmp/specify-repo",
       },
       { itemId: "PVTI_61", changeName: "x" },
     );
 
-    expect(capturedWorkingDirectory).toBe("/tmp/specify-repo");
+    expect(capturedWorkingDirectory).toBe(worktreePath);
+    expect(capturedValidationCwd).toBe(worktreePath);
   });
 
   it("emits PhaseStarted and PhaseCompleted on success", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 7, title: "t" });
     gh.seedItem({ itemId: "PVTI_7", issueNumber: 7, status: "Backlog" });
+    const scoped = makeScopedGitRuntime();
     const cli = createFakeOpenSpecCli();
     cli.script([{ ok: true }]);
     const agent = new InMemoryFakeAdapter({
@@ -420,7 +484,8 @@ describe("runSpecifyPhase", () => {
     await runSpecifyPhase(
       {
         github: gh,
-        git: createInMemoryFakeGitOps(),
+        worktree: scoped.worktree,
+        gitForRepo: scoped.gitForRepo,
         fs: fakeFs(),
         agent,
         openspecCli: cli,
@@ -438,6 +503,7 @@ describe("runSpecifyPhase", () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedIssue({ number: 11, title: "t" });
     gh.seedItem({ itemId: "PVTI_11", issueNumber: 11, status: "Backlog" });
+    const scoped = makeScopedGitRuntime();
     const cli = createFakeOpenSpecCli();
     cli.script([{ ok: true }, { ok: true }]);
     const agent = new InMemoryFakeAdapter({
@@ -448,7 +514,8 @@ describe("runSpecifyPhase", () => {
     });
     const deps = {
       github: gh,
-      git: createInMemoryFakeGitOps(),
+      worktree: scoped.worktree,
+      gitForRepo: scoped.gitForRepo,
       fs: fakeFs(),
       agent,
       openspecCli: cli,
@@ -466,17 +533,21 @@ describe("runSpecifyPhase", () => {
     expect(branchCalls.length).toBeGreaterThanOrEqual(2);
     const prCalls = gh.events.filter((e) => e.kind === "upsertPullRequest");
     expect(prCalls.length).toBeGreaterThanOrEqual(2);
+    expect(scoped.worktree.events.filter((event) => event.kind === "create")).toHaveLength(2);
+    expect(scoped.worktree.events.filter((event) => event.kind === "remove")).toHaveLength(2);
   });
 
   it("emits PhaseFailed when item missing", async () => {
     const gh = createInMemoryFakeGitHubClient();
     gh.seedItem({ itemId: "PVTI_9", status: "Backlog" });
+    const scoped = makeScopedGitRuntime();
     const events: Array<{ kind: string }> = [];
     await expect(
       runSpecifyPhase(
         {
           github: gh,
-          git: createInMemoryFakeGitOps(),
+          worktree: scoped.worktree,
+          gitForRepo: scoped.gitForRepo,
           fs: fakeFs(),
           agent: new InMemoryFakeAdapter({ script: [] }),
           openspecCli: createFakeOpenSpecCli(),

@@ -38,8 +38,8 @@ function makeAdapter(provider: string): AgentAdapter {
 
 function makeSpecifyFs(repoRoot: string): SpecifyFs {
   return {
-    async readPriorDraft(changeDir) {
-      const base = path.join(repoRoot, changeDir);
+    async readPriorDraft(worktreePath, changeDir) {
+      const base = path.join(worktreePath, changeDir);
       try {
         const out: Array<{ path: string; content: string }> = [];
         const walk = async (dir: string, rel: string): Promise<void> => {
@@ -132,19 +132,19 @@ function buildDepsFactory(
     buildSpecifyDeps(runId, profileId) {
       const roleConfig = config.roles.specifier;
       if (!roleConfig) throw new Error("config.roles.specifier is not defined");
+      const gitInstance = simpleGit(repoRoot);
       return {
         github,
-        git: createSimpleGitOps({ repoRoot, git: simpleGit(repoRoot) }),
+        worktree: createSimpleGitWorktreeOps({ repoRoot, git: gitInstance }),
+        gitForRepo: (scopedRepoRoot: string) =>
+          createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
         fs: makeSpecifyFs(repoRoot),
         agent: makeAdapter(roleConfig.provider),
-        openspecCli: {
-          validate: (name, opts) => openspecCli.validate(name, { ...opts, cwd: repoRoot }),
-        },
+        openspecCli,
         baseBranch: "main",
         runId,
         profileId,
         model: roleConfig.model,
-        workingDirectory: repoRoot,
       };
     },
     buildImplementDeps(runId, profileId) {

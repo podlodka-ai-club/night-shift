@@ -10,6 +10,7 @@ import type { GitHubClient } from "../../github/client.js";
 import type { Comment } from "../../github/types.js";
 import { markerLine } from "../../github/issues.js";
 import type { GitOps } from "../../git/index.js";
+import type { WorktreeOps } from "../../worktree/index.js";
 import {
   SpecifyAgentError,
   SpecifyGitError,
@@ -35,8 +36,8 @@ import {
  * the CLI wrapper.
  */
 export interface SpecifyFs {
-  /** List files under the given relative directory (recursive). Empty when absent. */
-  readPriorDraft(changeDir: string): Promise<PriorDraftFile[]>;
+  /** List files under the given relative directory in `repoRoot` (recursive). Empty when absent. */
+  readPriorDraft(repoRoot: string, changeDir: string): Promise<PriorDraftFile[]>;
 }
 
 export type SpecifyStatus = "refined" | "needs_input";
@@ -54,11 +55,11 @@ export interface SpecifyResult {
 
 export interface RunSpecifyPhaseDeps {
   github: GitHubClient;
-  git: GitOps;
+  worktree: WorktreeOps;
+  gitForRepo: (repoRoot: string) => GitOps;
   fs: SpecifyFs;
   agent: AgentAdapter;
   openspecCli: OpenSpecCli;
-  workingDirectory?: string;
   /** Base branch the spec review PR targets. Defaults to `main`. */
   baseBranch?: string;
   events?: EventSink;
@@ -224,7 +225,8 @@ function filesToTree(
 }
 
 async function publishSpecReviewPullRequest(
-  deps: RunSpecifyPhaseDeps,
+  deps: Pick<RunSpecifyPhaseDeps, "github" | "baseBranch">,
+  git: GitOps,
   ticket: Ticket,
   branch: string,
   commitSha: string,
@@ -232,7 +234,7 @@ async function publishSpecReviewPullRequest(
   changeDir: string,
 ): Promise<Awaited<ReturnType<GitHubClient["upsertPullRequest"]>>> {
   try {
-    await deps.git.pushBranch(branch);
+    await git.pushBranch(branch);
     return await deps.github.upsertPullRequest({
       head: branch,
       base: deps.baseBranch ?? "main",
@@ -252,6 +254,25 @@ async function publishSpecReviewPullRequest(
   }
 }
 
+async function cleanupSpecifierWorktree(
+  deps: Pick<RunSpecifyPhaseDeps, "worktree">,
+  worktreePath: string,
+  ticketId: string,
+  opts: { swallowErrors?: boolean } = {},
+): Promise<void> {
+  try {
+    await deps.worktree.remove(worktreePath);
+  } catch (err) {
+    if (opts.swallowErrors) {
+      return;
+    }
+    throw new SpecifyGitError(
+      `failed to remove specify worktree ${worktreePath}: ${(err as Error).message}`,
+      { ticketId, cause: err },
+    );
+  }
+}
+
 export async function runSpecifyPhase(
   deps: RunSpecifyPhaseDeps,
   input: RunSpecifyPhaseInput,
@@ -259,6 +280,7 @@ export async function runSpecifyPhase(
   const now = deps.now ?? (() => new Date());
   const start = Date.now();
   const maxAttempts = deps.maxAttempts ?? 2;
+  let worktreePath: string | undefined;
 
   // Emit PhaseStarted up front so failure paths (including item-missing)
   // still produce a terminal event pair.
@@ -305,7 +327,7 @@ export async function runSpecifyPhase(
 
     // 3. Ensure the ticket branch exists off the configured base branch.
     const baseBranch = deps.baseBranch ?? "main";
-    await deps.git.checkoutBranch(baseBranch, { preferRemote: true });
+    const worktreeStartPoint = `origin/${baseBranch}`;
 
     const branch = branchNameFor(ticket);
     try {
@@ -318,22 +340,28 @@ export async function runSpecifyPhase(
         throw err;
       }
     }
-    await deps.git.checkoutBranch(branch, {
-      startPoint: baseBranch,
+    const worktree = await deps.worktree.create({
+      ticketId: ticket.id,
+      branch,
+      fromRef: worktreeStartPoint,
+    });
+    worktreePath = worktree.path;
+
+    const git = deps.gitForRepo(worktreePath);
+    await git.checkoutBranch(branch, {
+      startPoint: worktreeStartPoint,
       preferRemote: true,
     });
 
     const changeDir = changeFolderPath(input.changeName);
-    const priorDraft = await deps.fs.readPriorDraft(changeDir);
+    const priorDraft = await deps.fs.readPriorDraft(worktreePath, changeDir);
 
     // 4. Specifier call with single retry on validation failure.
     const session = deps.agent.openSession({
       role: "specifier",
       model: deps.model,
       systemPrompt: SPECIFIER_SYSTEM_PROMPT,
-      ...(deps.workingDirectory !== undefined
-        ? { workingDirectory: deps.workingDirectory }
-        : {}),
+      workingDirectory: worktreePath,
       runId: deps.runId,
       ticketId: ticket.id,
       profileId: deps.profileId,
@@ -371,7 +399,7 @@ export async function runSpecifyPhase(
 
         // Persist files + commit.
         const treeFiles = filesToTree(response, changeDir);
-        const { sha } = await deps.git.writeTree(
+        const { sha } = await git.writeTree(
           treeFiles,
           `specify(${ticket.id}): attempt ${attempt}`,
         );
@@ -379,6 +407,7 @@ export async function runSpecifyPhase(
 
         const validation = await deps.openspecCli.validate(input.changeName, {
           strict: true,
+          cwd: worktreePath,
         });
         if (validation.ok) {
           validatorError = undefined;
@@ -406,6 +435,7 @@ export async function runSpecifyPhase(
       status === "refined"
         ? await publishSpecReviewPullRequest(
             deps,
+            git,
             ticket,
             branch,
             commitSha,
@@ -413,6 +443,9 @@ export async function runSpecifyPhase(
             changeDir,
           )
         : undefined;
+
+    await cleanupSpecifierWorktree(deps, worktreePath, ticket.id);
+    worktreePath = undefined;
 
     const summaryBase = formatSummary({
       response,
@@ -476,10 +509,16 @@ export async function runSpecifyPhase(
     if (status === "refined") result.bundle = bundle;
     return result;
   } catch (err) {
+    const ticketId = "ticketId" in (err as object)
+      ? (err as { ticketId?: string }).ticketId ?? input.itemId
+      : input.itemId;
+    if (typeof worktreePath === "string") {
+      await cleanupSpecifierWorktree(deps, worktreePath, ticketId, { swallowErrors: true });
+    }
     const message = err instanceof Error ? err.message : String(err);
     await emitSafe(deps.events, {
       kind: "PhaseFailed",
-      ticketId: "id" in (err as object) ? (err as { ticketId?: string }).ticketId ?? input.itemId : input.itemId,
+      ticketId,
       phase: "specify",
       profileId: deps.profileId,
       ts: nowIso(now),

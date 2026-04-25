@@ -6,6 +6,7 @@ import { CodexAdapter, ClaudeAgentAdapter } from "../adapters/index.js";
 import type { AgentAdapter } from "../adapters/events.js";
 import { createGitHubClient } from "../github/factory.js";
 import { createSimpleGitOps } from "../git/index.js";
+import { createSimpleGitWorktreeOps } from "../worktree/index.js";
 import { createOpenSpecCli } from "../phases/specify/openspec-cli.js";
 import { runSpecifyPhase, type SpecifyFs } from "../phases/specify/phase.js";
 import { SpecifyPhaseError } from "../phases/specify/errors.js";
@@ -29,9 +30,9 @@ Exit codes:
   64 usage error
 `;
 
-function makeFs(repoRoot: string): SpecifyFs {
+function makeFs(): SpecifyFs {
   return {
-    async readPriorDraft(changeDir) {
+    async readPriorDraft(repoRoot, changeDir) {
       const base = path.join(repoRoot, changeDir);
       try {
         const out: Array<{ path: string; content: string }> = [];
@@ -104,7 +105,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
       projectNodeId: env.GITHUB_PROJECT_NODE_ID,
     };
     const github = await createGitHubClient(githubInput);
-    const git = createSimpleGitOps({ repoRoot, git: simpleGit(repoRoot) });
+    const gitInstance = simpleGit(repoRoot);
     const openspecCli = createOpenSpecCli();
     const roleConfig = config.roles.specifier;
     if (!roleConfig) {
@@ -119,17 +120,16 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
     const result = await runSpecifyPhase(
       {
         github,
-        git,
-        fs: makeFs(repoRoot),
+        worktree: createSimpleGitWorktreeOps({ repoRoot, git: gitInstance }),
+        gitForRepo: (scopedRepoRoot: string) =>
+          createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
+        fs: makeFs(),
         agent: adapter,
-        openspecCli: {
-          validate: (name, opts) => openspecCli.validate(name, { ...opts, cwd: repoRoot }),
-        },
+        openspecCli,
         baseBranch,
         runId,
         profileId,
         model: roleConfig.model,
-        workingDirectory: repoRoot,
       },
       { itemId, changeName },
     );

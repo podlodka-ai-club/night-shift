@@ -107,7 +107,8 @@ describe("night-shift worker CLI", () => {
     const workerArgs = mockStartWorker.mock.calls[0]?.[0] as {
       depsFactory: {
         buildSpecifyDeps(runId: string, profileId: string): {
-          workingDirectory?: string;
+          worktree: unknown;
+          gitForRepo(repoRoot: string): unknown;
           openspecCli: { validate(name: string, opts?: { strict?: boolean; cwd?: string }): Promise<unknown> };
         };
         buildReviewDeps(runId: string, profileId: string): { workingDirectory?: string };
@@ -115,11 +116,17 @@ describe("night-shift worker CLI", () => {
     };
 
     const specifyDeps = workerArgs.depsFactory.buildSpecifyDeps("run-1", "default");
-    expect(specifyDeps.workingDirectory).toBe(repoRoot);
-    await specifyDeps.openspecCli.validate("change-1", { strict: false, cwd: "/tmp/wrong" });
+    expect(specifyDeps.worktree).toEqual({ repoRoot });
+    const worktreePath = path.join(repoRoot, ".worktrees", "ticket-1");
+    specifyDeps.gitForRepo(worktreePath);
+    expect(mockCreateSimpleGitOps).toHaveBeenCalledWith({
+      repoRoot: worktreePath,
+      git: { repoRoot: worktreePath },
+    });
+    await specifyDeps.openspecCli.validate("change-1", { strict: false, cwd: "/tmp/specify-worktree" });
     expect(mockCreateOpenSpecCliValidate).toHaveBeenCalledWith("change-1", {
       strict: false,
-      cwd: repoRoot,
+      cwd: "/tmp/specify-worktree",
     });
 
     const reviewDeps = workerArgs.depsFactory.buildReviewDeps("run-2", "default");

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -40,9 +40,9 @@ describe.skipIf(!available)("runSpecifyPhase (integration with real openspec CLI
 
   function makeFs(repoRoot: string): SpecifyFs {
     return {
-      async readPriorDraft(changeDir) {
+      async readPriorDraft(scopedRepoRoot, changeDir) {
         try {
-          const base = path.join(repoRoot, changeDir);
+          const base = path.join(scopedRepoRoot, changeDir);
           const out: Array<{ path: string; content: string }> = [];
           const { readdirSync, statSync } = await import("node:fs");
           const walk = (dir: string, rel: string) => {
@@ -64,6 +64,51 @@ describe.skipIf(!available)("runSpecifyPhase (integration with real openspec CLI
         }
       },
     };
+  }
+
+  function makeWorktree(repoRoot: string) {
+    return {
+      async create({ ticketId, branch }: { ticketId: string; branch: string }) {
+        const worktreePath = path.join(repoRoot, ".worktrees", ticketId);
+        await rm(worktreePath, { recursive: true, force: true });
+        await mkdir(path.dirname(worktreePath), { recursive: true });
+        await cp(path.join(repoRoot, "openspec"), path.join(worktreePath, "openspec"), {
+          recursive: true,
+        });
+        return { path: worktreePath, branch };
+      },
+      async remove(worktreePath: string) {
+        await rm(worktreePath, { recursive: true, force: true });
+      },
+    };
+  }
+
+  function makeScopedGitFactory(git: ReturnType<typeof createInMemoryFakeGitOps>) {
+    return (scopedRepoRoot: string) => ({
+      async checkoutBranch(branch: string, opts?: { startPoint?: string; preferRemote?: boolean }) {
+        await git.checkoutBranch(branch, opts);
+      },
+      async pushBranch(branch: string) {
+        await git.pushBranch(branch);
+      },
+      async remoteHeadSha(branch: string) {
+        return await git.remoteHeadSha(branch);
+      },
+      async writeTree(files: Array<{ path: string; content: string }>, msg: string) {
+        for (const f of files) {
+          const full = path.join(scopedRepoRoot, f.path);
+          await mkdir(path.dirname(full), { recursive: true });
+          await writeFile(full, f.content, "utf8");
+        }
+        return await git.writeTree(files, msg);
+      },
+      async currentHeadSha() {
+        return await git.currentHeadSha();
+      },
+      async diffAgainstBase(baseBranch: string) {
+        return await git.diffAgainstBase(baseBranch);
+      },
+    });
   }
 
   function goodResponse(changeName: string): string {
@@ -93,19 +138,6 @@ describe.skipIf(!available)("runSpecifyPhase (integration with real openspec CLI
       gh.seedIssue({ number: 1, title: "integration" });
       gh.seedItem({ itemId: "PVTI_I", issueNumber: 1, status: "Backlog" });
       const git = createInMemoryFakeGitOps();
-      // Override writeTree to actually write files to the temp repo so the
-      // real openspec CLI can read them.
-      const realGit = {
-        ...git,
-        async writeTree(files: Array<{ path: string; content: string }>, msg: string) {
-          for (const f of files) {
-            const full = path.join(repoRoot, f.path);
-            await mkdir(path.dirname(full), { recursive: true });
-            await writeFile(full, f.content, "utf8");
-          }
-          return git.writeTree(files, msg);
-        },
-      };
       const agent = new InMemoryFakeAdapter({
         script: [
           {
@@ -116,18 +148,14 @@ describe.skipIf(!available)("runSpecifyPhase (integration with real openspec CLI
         ],
       });
       const cli = createOpenSpecCli();
-      // We must set cwd to repoRoot for the CLI. Wrap it.
-      const scopedCli = {
-        validate: (name: string, opts: { strict?: boolean } = {}) =>
-          cli.validate(name, { ...opts, cwd: repoRoot }),
-      };
       const result = await runSpecifyPhase(
         {
           github: gh,
-          git: realGit,
+          worktree: makeWorktree(repoRoot),
+          gitForRepo: makeScopedGitFactory(git),
           fs: makeFs(repoRoot),
           agent,
-          openspecCli: scopedCli,
+          openspecCli: cli,
           runId: "r",
           profileId: "p",
           model: "m",
@@ -147,17 +175,6 @@ describe.skipIf(!available)("runSpecifyPhase (integration with real openspec CLI
       gh.seedIssue({ number: 2, title: "retry" });
       gh.seedItem({ itemId: "PVTI_R", issueNumber: 2, status: "Backlog" });
       const git = createInMemoryFakeGitOps();
-      const realGit = {
-        ...git,
-        async writeTree(files: Array<{ path: string; content: string }>, msg: string) {
-          for (const f of files) {
-            const full = path.join(repoRoot, f.path);
-            await mkdir(path.dirname(full), { recursive: true });
-            await writeFile(full, f.content, "utf8");
-          }
-          return git.writeTree(files, msg);
-        },
-      };
       const badResponse = JSON.stringify({
         files: [
           { path: "proposal.md", content: "(missing required sections)\n" },
@@ -186,17 +203,14 @@ describe.skipIf(!available)("runSpecifyPhase (integration with real openspec CLI
         ],
       });
       const cli = createOpenSpecCli();
-      const scopedCli = {
-        validate: (name: string, opts: { strict?: boolean } = {}) =>
-          cli.validate(name, { ...opts, cwd: repoRoot }),
-      };
       const result = await runSpecifyPhase(
         {
           github: gh,
-          git: realGit,
+          worktree: makeWorktree(repoRoot),
+          gitForRepo: makeScopedGitFactory(git),
           fs: makeFs(repoRoot),
           agent,
-          openspecCli: scopedCli,
+          openspecCli: cli,
           runId: "r",
           profileId: "p",
           model: "m",
@@ -216,17 +230,6 @@ describe.skipIf(!available)("runSpecifyPhase (integration with real openspec CLI
       gh.seedIssue({ number: 3, title: "bad" });
       gh.seedItem({ itemId: "PVTI_B2", issueNumber: 3, status: "Backlog" });
       const git = createInMemoryFakeGitOps();
-      const realGit = {
-        ...git,
-        async writeTree(files: Array<{ path: string; content: string }>, msg: string) {
-          for (const f of files) {
-            const full = path.join(repoRoot, f.path);
-            await mkdir(path.dirname(full), { recursive: true });
-            await writeFile(full, f.content, "utf8");
-          }
-          return git.writeTree(files, msg);
-        },
-      };
       const badResponse = JSON.stringify({
         files: [
           { path: "proposal.md", content: "(invalid)\n" },
@@ -252,17 +255,14 @@ describe.skipIf(!available)("runSpecifyPhase (integration with real openspec CLI
         ],
       });
       const cli = createOpenSpecCli();
-      const scopedCli = {
-        validate: (name: string, opts: { strict?: boolean } = {}) =>
-          cli.validate(name, { ...opts, cwd: repoRoot }),
-      };
       const result = await runSpecifyPhase(
         {
           github: gh,
-          git: realGit,
+          worktree: makeWorktree(repoRoot),
+          gitForRepo: makeScopedGitFactory(git),
           fs: makeFs(repoRoot),
           agent,
-          openspecCli: scopedCli,
+          openspecCli: cli,
           runId: "r",
           profileId: "p",
           model: "m",
