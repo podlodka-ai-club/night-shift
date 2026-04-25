@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -42,6 +42,20 @@ describe("loadConfig", () => {
     expect(cfg.roles.reviewer?.model).toBe("gpt-5.4-mini");
     // Defaults still present for other roles
     expect(cfg.roles.implementer?.model).toBe("gpt-5.4");
+  });
+
+  it("resolves repoRoot relative to the config file directory", async () => {
+    const configDir = join(tmp, "configs");
+    mkdirSync(configDir, { recursive: true });
+    const p = join(configDir, "night-shift.config.mjs");
+    writeFileSync(
+      p,
+      `export default { repoRoot: "../feature-factory", roles: { reviewer: { provider: "codex", model: "gpt-5.4-mini" } } };`,
+    );
+
+    const cfg = await loadConfig({ explicitPath: p });
+
+    expect(cfg.repoRoot).toBe(join(tmp, "feature-factory"));
   });
 
   it("deep-merges a partial user config", async () => {

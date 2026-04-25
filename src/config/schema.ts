@@ -63,6 +63,7 @@ export type PickupConfig = z.infer<typeof PickupConfigSchema>;
 
 export const NightShiftConfigSchema = z.object({
   roles: z.record(AgentRoleSchema, AgentRoleConfigSchema),
+  repoRoot: z.string().min(1).optional(),
   qualityGates: QualityGatesConfigSchema.optional(),
   adapters: AdaptersConfigSchema.optional(),
   github: GitHubConfigSchema.optional(),

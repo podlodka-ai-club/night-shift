@@ -22,7 +22,7 @@ import type { ResolvedNightShiftConfig } from "../config/schema.js";
 const USAGE = `night-shift worker
 
 Usage:
-  night-shift worker [--config <path>] [--repo-root <path>]
+  night-shift worker [--config <path>]
 
 Starts the Temporal worker that processes ticket workflows.
 
@@ -196,7 +196,6 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
       args: argv,
       options: {
         config: { type: "string" },
-        "repo-root": { type: "string" },
         help: { type: "boolean", short: "h" },
       },
       allowPositionals: false,
@@ -212,11 +211,10 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
   }
 
   try {
-    const repoRoot = path.resolve(args.values["repo-root"] ?? process.cwd());
     const config = await loadConfig({
       ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
-      cwd: repoRoot,
     });
+    const repoRoot = path.resolve(config.repoRoot ?? process.cwd());
 
     // Create GitHub client
     let github: GitHubClient | undefined;

@@ -22,7 +22,7 @@ const USAGE = `night-shift implement
 
 Usage:
   night-shift implement --item <projectItemId> --change <change-name>
-                        [--config <path>] [--repo-root <path>]
+                        [--config <path>]
                         [--run-id <id>] [--profile <id>]
                         [--base-branch <branch>]
 
@@ -92,7 +92,6 @@ export async function main(
         item: { type: "string" },
         change: { type: "string" },
         config: { type: "string" },
-        "repo-root": { type: "string" },
         "run-id": { type: "string" },
         profile: { type: "string" },
         "base-branch": { type: "string" },
@@ -115,7 +114,6 @@ export async function main(
     process.stderr.write(`missing --item or --change\n\n${USAGE}`);
     return 64;
   }
-  const repoRoot = path.resolve(args.values["repo-root"] ?? process.cwd());
   const runId = args.values["run-id"] ?? `implement-${Date.now()}`;
   const profileId = args.values.profile ?? "default";
   const baseBranch = args.values["base-branch"] ?? "main";
@@ -123,8 +121,8 @@ export async function main(
   try {
     const config = await loadConfig({
       ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
-      cwd: repoRoot,
     });
+    const repoRoot = path.resolve(config.repoRoot ?? process.cwd());
     const githubInput = config.github ?? {
       appId: env.GITHUB_APP_ID,
       installationId: env.GITHUB_INSTALLATION_ID,

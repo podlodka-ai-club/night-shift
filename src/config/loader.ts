@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   DEFAULT_CONFIG,
@@ -54,7 +54,22 @@ export async function loadConfig(
   const mod = (await import(pathToFileURL(path).href)) as { default?: unknown };
   const user = (mod.default ?? {}) as Partial<NightShiftConfig>;
   const merged = deepMerge(DEFAULT_CONFIG, user) as NightShiftConfig;
-  return NightShiftConfigSchema.parse(merged);
+  const withResolvedPaths = resolveConfigRelativePaths(merged, dirname(path));
+  return NightShiftConfigSchema.parse(withResolvedPaths);
+}
+
+function resolveConfigRelativePaths(
+  config: NightShiftConfig,
+  configDir: string,
+): NightShiftConfig {
+  if (!config.repoRoot || isAbsolute(config.repoRoot)) {
+    return config;
+  }
+
+  return {
+    ...config,
+    repoRoot: resolve(configDir, config.repoRoot),
+  };
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

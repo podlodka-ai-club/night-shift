@@ -80,7 +80,6 @@ import { main } from "../worker.js";
 describe("night-shift worker CLI", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockLoadConfig.mockResolvedValue(resolvedConfig);
     mockCreateGitHubClient.mockResolvedValue(fakeGitHubClient);
     mockStartWorker.mockResolvedValue({});
     mockRunWorkerUntilShutdown.mockResolvedValue(undefined);
@@ -88,20 +87,21 @@ describe("night-shift worker CLI", () => {
     mockCreateOpenSpecCliValidate.mockResolvedValue({ ok: true });
   });
 
-  it("uses --repo-root for config loading and local phase deps", async () => {
+  it("uses repoRoot from config for local phase deps", async () => {
     const repoRoot = path.resolve("../feature-factory-target");
+    mockLoadConfig.mockResolvedValue({
+      ...resolvedConfig,
+      repoRoot,
+    });
 
     const code = await main([
       "--config",
       "./night-shift.config.ts",
-      "--repo-root",
-      "../feature-factory-target",
     ]);
 
     expect(code).toBe(0);
     expect(mockLoadConfig).toHaveBeenCalledWith({
       explicitPath: "./night-shift.config.ts",
-      cwd: repoRoot,
     });
 
     const workerArgs = mockStartWorker.mock.calls[0]?.[0] as {

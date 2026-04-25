@@ -32,6 +32,7 @@ Key sections in [night-shift.config.example.ts](night-shift.config.example.ts):
 | Section | Purpose |
 |---|---|
 | `roles` | Agent provider + model per role (specifier, implementer, reviewer) |
+| `repoRoot` | Local checkout Night Shift should read, modify, and validate |
 | `qualityGates` | Toggle typecheck / lint / test gates |
 | `github` | GitHub App credentials, repo, and project board ID |
 | `pickup` | Auto-pickup: `enabled`, `intervalMinutes` (divisor of 60), `maxConcurrent` |
@@ -61,7 +62,7 @@ GITHUB_REPO_NAME=your-repo
 
 The config reads these env vars automatically. The project's GraphQL node ID (`PVT_...`) is resolved from the project number at startup — no need to look it up manually.
 
-`GITHUB_REPO_OWNER` and `GITHUB_REPO_NAME` select the GitHub repository Night Shift talks to over the API. They do not select the local checkout used for spec generation, implementation, or review. Local filesystem operations default to the current working directory; pass `--repo-root <path>` to `worker`, `specify`, `implement`, or `review` when you want to target a different checkout.
+`GITHUB_REPO_OWNER` and `GITHUB_REPO_NAME` select the GitHub repository Night Shift talks to over the API. They do not select the local checkout used for spec generation, implementation, or review. Set `repoRoot` in `night-shift.config.ts` to choose that local checkout; if omitted, Night Shift falls back to the current working directory.
 
 > **Tip:** For production, consider using a [GitHub App](https://docs.github.com/en/apps/creating-github-apps) instead of a PAT for bot identity, higher rate limits, and auto-rotating tokens. The config supports `appId` + `installationId` + `privateKeyPath` as an alternative — see [night-shift.config.example.ts](night-shift.config.example.ts).
 
@@ -85,12 +86,12 @@ temporal server start-dev
 Main worker run:
 
 ```bash
-# Run from the Night Shift repo while targeting the application checkout
+# Set repoRoot in night-shift.config.ts to the application checkout
 # Night Shift should read, modify, and validate.
-npm run worker -- --repo-root /abs/path/to/target-repo
+npm run worker
 ```
 
-This is the expected main mode. `--repo-root` selects the local checkout used by `specify`, `implement`, and `review`.
+This is the expected main mode. `repoRoot` in config selects the local checkout used by `specify`, `implement`, and `review`.
 
 Workflow control commands:
 
@@ -110,12 +111,12 @@ When `pickup.enabled` is `true` in your config, the worker automatically starts 
 Manual phase runs:
 
 ```bash
-npm run specify -- --item <projectItemId> --change <change-name> [--repo-root /abs/path/to/target-repo]
-npm run implement -- --item <projectItemId> --change <change-name> [--repo-root /abs/path/to/target-repo]
-npm run review -- <projectItemId> [--iteration <n>] [--repo-root /abs/path/to/target-repo]
+npm run specify -- --item <projectItemId> --change <change-name>
+npm run implement -- --item <projectItemId> --change <change-name>
+npm run review -- <projectItemId> [--iteration <n>]
 ```
 
-`specify` and `review` open agent sessions in the selected repo root. `implement` opens its agent session in the per-ticket worktree created under that repo root.
+`specify` and `review` open agent sessions in the configured `repoRoot`. `implement` opens its agent session in the per-ticket worktree created under that repo root.
 
 `start` and `pickup` are different: they only talk to GitHub and Temporal, so they do not need `--repo-root` and do not care which application checkout you want to modify later. Their only cwd-sensitive behavior is config discovery.
 
@@ -140,10 +141,10 @@ npm run review -- <projectItemId> [--iteration <n>] [--repo-root /abs/path/to/ta
 - `npm test` — run Vitest suites
 - `npm run lint:contracts` — guardrail: `src/contracts/**` imports only `zod` and siblings
 - `npm run lint:boundaries` — guardrail: enforce import boundaries for `contracts`, `adapters`, `config`, `github`, `git`, `phases`, `worktree`, `quality-gates`, `orchestration`, and `cli` modules
-- `npm run specify -- --item <projectItemId> --change <change-name> [--repo-root <path>]` — run the Specify phase against a single project item
-- `npm run implement -- --item <projectItemId> --change <change-name> [--repo-root <path>]` — run the Implement phase against a single project item
-- `npm run review -- <projectItemId> [--iteration <n>] [--repo-root <path>]` — run the Review phase against a single project item
-- `npm run worker -- --repo-root <path>` — start the Temporal worker against a specific local checkout (also runs the pickup cron when `pickup.enabled` is `true`)
+- `npm run specify -- --item <projectItemId> --change <change-name>` — run the Specify phase against a single project item using the configured `repoRoot`
+- `npm run implement -- --item <projectItemId> --change <change-name>` — run the Implement phase against a single project item using the configured `repoRoot`
+- `npm run review -- <projectItemId> [--iteration <n>]` — run the Review phase against a single project item using the configured `repoRoot`
+- `npm run worker` — start the Temporal worker using the configured `repoRoot` (also runs the pickup cron when `pickup.enabled` is `true`)
 - `npm run start -- <projectItemId> --change <change-name>` — trigger a ticket workflow; run from the Night Shift repo root unless you pass `--config`, no target checkout required
 - `npm run pickup` — one-shot scan of Backlog + Ready columns; run from the Night Shift repo root unless you pass `--config`, no target checkout required
 

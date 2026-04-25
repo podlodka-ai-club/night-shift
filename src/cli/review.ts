@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { loadConfig } from "../config/loader.js";
 import { NightShiftConfigSchema } from "../config/schema.js";
 import { CodexAdapter, ClaudeAgentAdapter } from "../adapters/index.js";
@@ -13,7 +14,7 @@ const USAGE = `night-shift review
 
 Usage:
   night-shift review <projectItemId> [--iteration <n>]
-                     [--config <path>] [--repo-root <path>]
+                     [--config <path>]
                      [--run-id <id>] [--profile <id>]
 
 Runs the Review phase against a PR in "In review" status. Produces a
@@ -46,7 +47,6 @@ export async function main(
       options: {
         iteration: { type: "string" },
         config: { type: "string" },
-        "repo-root": { type: "string" },
         "run-id": { type: "string" },
         profile: { type: "string" },
         help: { type: "boolean", short: "h" },
@@ -81,7 +81,6 @@ export async function main(
     iteration = n;
   }
 
-  const repoRoot = path.resolve(args.values["repo-root"] ?? process.cwd());
   const runId = args.values["run-id"] ?? `review-${Date.now()}`;
   const profileId = args.values.profile ?? "default";
 
@@ -90,9 +89,9 @@ export async function main(
       ...(args.values.config !== undefined
         ? { explicitPath: args.values.config }
         : {}),
-      cwd: repoRoot,
     });
     const resolved = NightShiftConfigSchema.parse(config);
+    const repoRoot = path.resolve(resolved.repoRoot ?? process.cwd());
     const githubInput = resolved.github ?? {
       appId: env.GITHUB_APP_ID,
       installationId: env.GITHUB_INSTALLATION_ID,

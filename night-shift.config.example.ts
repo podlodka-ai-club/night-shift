@@ -12,6 +12,9 @@ import type { NightShiftConfig } from "./src/config/schema.js";
  * Any role left unset falls back to `DEFAULT_CONFIG` (Codex + gpt-5.4).
  */
 const config: NightShiftConfig = {
+  // Local checkout Night Shift will read, modify, and validate.
+  // Relative paths are resolved from this config file's directory.
+  repoRoot: process.env.NIGHT_SHIFT_REPO_ROOT ?? "../your-target-repo",
   roles: {
     specifier: {
       provider: "codex",

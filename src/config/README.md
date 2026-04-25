@@ -8,6 +8,7 @@ Loads the user-level Night Shift configuration and provides the
 ```ts
 type NightShiftConfig = {
   roles: Record<AgentRole, AgentRoleConfig>;
+  repoRoot?: string;
   qualityGates?: Record<string, unknown>;
   adapters?: { codex?: Record<string, unknown> };
   github?: GitHubConfig;
@@ -20,6 +21,10 @@ type AgentRoleConfig = {
   providerOptions?: unknown;  // opaque passthrough
 };
 ```
+
+`repoRoot`, when set, selects the local checkout Night Shift should read,
+modify, and validate. Relative `repoRoot` values are resolved from the config
+file's directory.
 
 The role keys are `specifier`, `implementer`, `reviewer`, `subagent`.
 
