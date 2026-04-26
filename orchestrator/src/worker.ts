@@ -1,5 +1,5 @@
 import { NativeConnection, Worker } from '@temporalio/worker';
-import * as activities from './activities';
+import { createActivities, createActivityRuntimes } from './activities';
 import { TASK_QUEUE } from './shared';
 
 async function run(): Promise<void> {
@@ -12,7 +12,7 @@ async function run(): Promise<void> {
       taskQueue: TASK_QUEUE,
       // Workflows are registered using a path as they run in a separate JS context.
       workflowsPath: require.resolve('./workflows'),
-      activities,
+      activities: createActivities(createActivityRuntimes()),
     });
 
     await worker.run();
