@@ -3,6 +3,7 @@ import { loadClientConnectConfig } from '@temporalio/envconfig';
 import { nanoid } from 'nanoid';
 import {
   DEFAULT_BRANCH_PREFIX,
+  DEFAULT_BLOCKED_STATUS,
   DEFAULT_FILE_PATH_PREFIX,
   DEFAULT_IN_REVIEW_STATUS,
   DEFAULT_READY_STATUS,
@@ -51,6 +52,7 @@ function parseGithubWorkflowInput(args: string[]): AutomateReadyIssueInput {
     projectNumber,
     readyStatusName: process.env.GITHUB_READY_STATUS ?? DEFAULT_READY_STATUS,
     inReviewStatusName: process.env.GITHUB_IN_REVIEW_STATUS ?? DEFAULT_IN_REVIEW_STATUS,
+    blockedStatusName: process.env.GITHUB_BLOCKED_STATUS ?? DEFAULT_BLOCKED_STATUS,
     branchPrefix: process.env.GITHUB_BRANCH_PREFIX ?? DEFAULT_BRANCH_PREFIX,
     filePathPrefix: process.env.GITHUB_FILE_PATH_PREFIX ?? DEFAULT_FILE_PATH_PREFIX,
   };

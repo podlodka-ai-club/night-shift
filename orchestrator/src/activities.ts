@@ -1,8 +1,17 @@
 import { access, appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { Context } from '@temporalio/activity';
 import { execa } from 'execa';
+import { buildTaskImplementationPrompt } from './agent-prompts';
+import { getAgentSchema } from './agent-schema-registry';
 import {
+  AGENT_OUTPUT_KEYS,
+  CHANGE_METADATA_OUTPUT_KEY,
+  type AgentOutputKey,
+  type AgentSequenceResult,
+  type AgentStep,
   DEFAULT_BRANCH_PREFIX,
+  DEFAULT_BLOCKED_STATUS,
   DEFAULT_FILE_PATH_PREFIX,
   DEFAULT_IN_PROGRESS_STATUS,
   DEFAULT_IN_REVIEW_STATUS,
@@ -14,7 +23,8 @@ import {
   type IssueCommentInput,
   type MoveProjectItemStatusInput,
   type OpenPullRequestInput,
-  type RunAgentInput,
+  type RunAgentLegacyInput,
+  type RunAgentSequenceInput,
   type SelectedProjectIssue,
   type AutomateReadyIssueInput,
   type WorktreeContext,
@@ -34,7 +44,10 @@ const PROJECT_STATUS_FIELD_NAME = 'Status';
 const PROJECT_ITEMS_FIRST = 100;
 const CODEX_COMMAND = 'codex';
 const CODEX_MODEL = 'gpt-5.3-codex';
-const CODEX_REASONING_EFFORT = 'low';
+const CODEX_REASONING_EFFORT = 'low' as const;
+const AGENT_TURN_HEARTBEAT_INTERVAL_MS = 10_000;
+const MAX_CHECKPOINT_FINAL_RESPONSE_BYTES = 256 * 1024;
+const CHECKPOINT_TRUNCATION_SUFFIX = '\n...[truncated for Temporal heartbeat checkpoint]';
 
 interface GitHubGraphqlEnvelope<T> {
   data?: T;
@@ -52,7 +65,13 @@ interface ProjectOwner {
 interface ProjectData {
   id: string;
   fields: { nodes: ProjectFieldNode[] };
-  items: { nodes: ProjectItemNode[] };
+  items: {
+    nodes: ProjectItemNode[];
+    pageInfo: {
+      hasNextPage: boolean;
+      endCursor: string | null;
+    };
+  };
 }
 
 type ProjectFieldNode =
@@ -99,6 +118,7 @@ interface PullRequestResponse {
 
 interface CommandOptions {
   cwd?: string;
+  signal?: AbortSignal;
 }
 
 interface CommandResult {
@@ -122,7 +142,41 @@ interface ActivityRuntime {
   writeFile: (targetPath: string, data: string, encoding: BufferEncoding) => Promise<void>;
   execFile: (file: string, args: string[], options?: CommandOptions) => Promise<CommandResult>;
   now: () => number;
+  createCodexThread: (worktreePath: string) => AgentThread;
+  resumeCodexThread: (worktreePath: string, threadId: string) => AgentThread;
+  getHeartbeatDetails: () => unknown;
+  heartbeat: (details: unknown) => void;
 }
+
+interface AgentTurnResult {
+  finalResponse: string;
+}
+
+interface AgentThread {
+  readonly id: string | null;
+  run: (prompt: string, options?: { outputSchema?: unknown; signal?: AbortSignal }) => Promise<AgentTurnResult>;
+}
+
+interface AgentCheckpoint {
+  threadId?: string;
+  completedStepIds?: string[];
+  outputs?: AgentSequenceResult['outputs'];
+  finalResponse?: string;
+  pendingStep?: PendingStepCompletion;
+}
+
+interface PendingStepCompletion {
+  stepId: string;
+  finalResponse: string;
+  output?: {
+    resultKey: AgentOutputKey;
+    parsedOutput: unknown;
+  };
+}
+
+type CodexSdkModule = typeof import('@openai/codex-sdk');
+
+const dynamicImport = new Function('specifier', 'return import(specifier);') as (specifier: string) => Promise<unknown>;
 
 export const activityRuntime: ActivityRuntime = {
   fetch: globalThis.fetch.bind(globalThis) as typeof fetch,
@@ -132,6 +186,18 @@ export const activityRuntime: ActivityRuntime = {
   writeFile: (targetPath, data, encoding) => writeFile(targetPath, data, encoding),
   execFile: defaultExecFile,
   now: () => Date.now(),
+  createCodexThread: (worktreePath) =>
+    createLazyCodexThread('startThread', async () => {
+      const { Codex } = await loadCodexSdk();
+      return new Codex().startThread(buildCodexThreadOptions(worktreePath));
+    }),
+  resumeCodexThread: (worktreePath, threadId) =>
+    createLazyCodexThread('resumeThread', async () => {
+      const { Codex } = await loadCodexSdk();
+      return new Codex().resumeThread(threadId, buildCodexThreadOptions(worktreePath));
+    }),
+  getHeartbeatDetails: () => getActivityHeartbeatDetails(),
+  heartbeat: (details) => heartbeatActivity(details),
 };
 
 const PROJECT_FIELDS_FRAGMENT = `
@@ -150,7 +216,11 @@ const PROJECT_FIELDS_FRAGMENT = `
         }
       }
     }
-    items(first: $itemsFirst) {
+    items(first: $itemsFirst, after: $itemsAfter) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       nodes {
         id
         fieldValueByName(name: "${PROJECT_STATUS_FIELD_NAME}") {
@@ -183,7 +253,7 @@ const PROJECT_FIELDS_FRAGMENT = `
 `;
 
 const USER_PROJECT_QUERY = `
-  query UserProjectIssueSelection($login: String!, $number: Int!, $itemsFirst: Int!) {
+  query UserProjectIssueSelection($login: String!, $number: Int!, $itemsFirst: Int!, $itemsAfter: String) {
     owner: user(login: $login) {
       projectV2(number: $number) {
         ...ProjectFields
@@ -195,7 +265,7 @@ const USER_PROJECT_QUERY = `
 `;
 
 const ORGANIZATION_PROJECT_QUERY = `
-  query OrganizationProjectIssueSelection($login: String!, $number: Int!, $itemsFirst: Int!) {
+  query OrganizationProjectIssueSelection($login: String!, $number: Int!, $itemsFirst: Int!, $itemsAfter: String) {
     owner: organization(login: $login) {
       projectV2(number: $number) {
         ...ProjectFields
@@ -253,10 +323,13 @@ export async function getTopReadyIssue(input: AutomateReadyIssueInput): Promise<
   const readyStatusName = input.readyStatusName ?? DEFAULT_READY_STATUS;
   const inProgressStatusName = DEFAULT_IN_PROGRESS_STATUS;
   const inReviewStatusName = input.inReviewStatusName ?? DEFAULT_IN_REVIEW_STATUS;
+  const blockedStatusName = input.blockedStatusName ?? DEFAULT_BLOCKED_STATUS;
   const project = await lookupProject(input.projectOwner, input.projectNumber);
   const statusField = getProjectStatusField(project);
+  const readyOption = getRequiredStatusOption(statusField, readyStatusName);
   const inProgressOption = getRequiredStatusOption(statusField, inProgressStatusName);
   const inReviewOption = getRequiredStatusOption(statusField, inReviewStatusName);
+  const blockedOption = findStatusOption(statusField, blockedStatusName);
   const readyItem = getReadyIssueItem(
     project,
     readyStatusName,
@@ -269,8 +342,10 @@ export async function getTopReadyIssue(input: AutomateReadyIssueInput): Promise<
     projectId: project.id,
     projectItemId: readyItem.id,
     statusFieldId: statusField.id,
+    readyOptionId: readyOption.id,
     inProgressOptionId: inProgressOption.id,
     inReviewOptionId: inReviewOption.id,
+    blockedOptionId: blockedOption?.id,
     issueNumber: readyIssue.number,
     issueTitle: readyIssue.title,
     taskDescription: buildTaskDescription(readyIssue.title, readyIssue.body),
@@ -288,11 +363,12 @@ async function lookupProject(projectOwner: string, projectNumber: number): Promi
     login: projectOwner,
     number: projectNumber,
     itemsFirst: PROJECT_ITEMS_FIRST,
+    itemsAfter: null,
   };
 
   const userOwner = await lookupProjectOwner(USER_PROJECT_QUERY, variables, 'User');
   if (userOwner?.projectV2) {
-    return userOwner.projectV2;
+    return paginateProjectItems(USER_PROJECT_QUERY, variables, 'User', userOwner.projectV2);
   }
   if (userOwner) {
     throw new Error(`Could not find GitHub Project ${projectOwner}/${projectNumber}.`);
@@ -300,10 +376,43 @@ async function lookupProject(projectOwner: string, projectNumber: number): Promi
 
   const organizationOwner = await lookupProjectOwner(ORGANIZATION_PROJECT_QUERY, variables, 'Organization');
   if (organizationOwner?.projectV2) {
-    return organizationOwner.projectV2;
+    return paginateProjectItems(ORGANIZATION_PROJECT_QUERY, variables, 'Organization', organizationOwner.projectV2);
   }
 
   throw new Error(`Could not find GitHub Project ${projectOwner}/${projectNumber}.`);
+}
+
+async function paginateProjectItems(
+  query: string,
+  variables: { login: string; number: number; itemsFirst: number; itemsAfter: string | null },
+  ownerType: 'User' | 'Organization',
+  firstPageProject: ProjectData,
+): Promise<ProjectData> {
+  const project: ProjectData = {
+    ...firstPageProject,
+    fields: {
+      nodes: [...firstPageProject.fields.nodes],
+    },
+    items: {
+      nodes: [...firstPageProject.items.nodes],
+      pageInfo: { ...firstPageProject.items.pageInfo },
+    },
+  };
+
+  while (project.items.pageInfo.hasNextPage) {
+    const nextCursor = project.items.pageInfo.endCursor;
+    const owner = await lookupProjectOwner(query, { ...variables, itemsAfter: nextCursor }, ownerType);
+    const nextPageProject = owner?.projectV2;
+
+    if (!nextPageProject) {
+      throw new Error(`Could not continue loading GitHub Project pages for ${variables.login}/${variables.number}.`);
+    }
+
+    project.items.nodes.push(...nextPageProject.items.nodes);
+    project.items.pageInfo = { ...nextPageProject.items.pageInfo };
+  }
+
+  return project;
 }
 
 async function lookupProjectOwner(
@@ -339,13 +448,20 @@ function getRequiredStatusOption(
   statusField: ProjectSingleSelectField,
   statusName: string,
 ): ProjectStatusOption {
-  const statusOption = statusField.options.find((option) => option.name === statusName);
+  const statusOption = findStatusOption(statusField, statusName);
 
   if (!statusOption) {
     throw new Error(`Could not find the ${statusName} status option on the GitHub Project.`);
   }
 
   return statusOption;
+}
+
+function findStatusOption(
+  statusField: ProjectSingleSelectField,
+  statusName: string,
+): ProjectStatusOption | undefined {
+  return statusField.options.find((option) => option.name === statusName);
 }
 
 function getReadyIssueItem(
@@ -415,12 +531,20 @@ function buildWorktreeContext(
   };
 }
 
-export async function runAgent(input: RunAgentInput): Promise<void> {
+export async function runAgentLegacy(input: RunAgentLegacyInput): Promise<void> {
   const { worktree } = input;
-  await codex(worktree.worktreePath, buildCodexPrompt(worktree));
+  await codex(worktree.worktreePath, buildTaskImplementationPrompt(worktree.taskDescription));
 }
 
-export async function runDummyAgent(input: RunAgentInput): Promise<void> {
+export async function runAgentSequence(input: RunAgentSequenceInput): Promise<AgentSequenceResult> {
+  if (input.steps.length === 0) {
+    throw new Error('Agent step sequences must not be empty.');
+  }
+
+  return runAgentSequenceSteps(input.worktree, input.steps);
+}
+
+export async function runDummyAgent(input: { worktree: WorktreeContext }): Promise<void> {
   const { worktree } = input;
   await writeDummyFile(
     worktree.worktreePath,
@@ -430,26 +554,35 @@ export async function runDummyAgent(input: RunAgentInput): Promise<void> {
 }
 
 export async function commitAndPush(input: CommitAndPushInput): Promise<void> {
-  const { worktree } = input;
+  const { worktree, commitMessage } = input;
   const { branchName, worktreePath } = worktree;
   await git(worktreePath, ['add', '--all']);
-  await commitWorktreeIfNeeded(worktree);
+  await commitWorktreeIfNeeded(worktree, commitMessage);
+
+  if (!(await hasCommitsToPush(worktree))) {
+    throw new Error(`Agent produced no changes to push for branch ${branchName}.`);
+  }
+
   await git(worktreePath, ['push', '-u', 'origin', branchName]);
 }
 
 export async function openPullRequest(input: OpenPullRequestInput): Promise<CreatedPullRequest> {
-  const { worktree } = input;
+  const { worktree, title, body } = input;
   const existingPullRequest = await findOpenPullRequestForBranch(worktree);
   if (existingPullRequest) {
     return buildCreatedPullRequest(worktree, existingPullRequest);
   }
 
-  return buildCreatedPullRequest(worktree, await createPullRequestWithDuplicateRecovery(worktree));
+  return buildCreatedPullRequest(worktree, await createPullRequestWithDuplicateRecovery(worktree, title, body));
 }
 
-async function createPullRequestWithDuplicateRecovery(worktree: WorktreeContext): Promise<PullRequestResponse> {
+async function createPullRequestWithDuplicateRecovery(
+  worktree: WorktreeContext,
+  title?: string,
+  body?: string,
+): Promise<PullRequestResponse> {
   try {
-    return await createPullRequest(worktree);
+    return await createPullRequest(worktree, title, body);
   } catch (error) {
     if (!isPullRequestAlreadyExistsError(error)) {
       throw error;
@@ -481,8 +614,571 @@ function buildTaskDescription(issueTitle: string, issueBody: string): string {
   return description.length > 0 ? description : issueTitle;
 }
 
-function buildCodexPrompt(worktree: WorktreeContext): string {
-  return `Implement the task in this repository.\n\nTask description:\n${worktree.taskDescription}`;
+function buildCodexThreadOptions(worktreePath: string) {
+  return {
+    approvalPolicy: 'never' as const,
+    model: CODEX_MODEL,
+    modelReasoningEffort: CODEX_REASONING_EFFORT,
+    sandboxMode: 'workspace-write' as const,
+    workingDirectory: worktreePath,
+  };
+}
+
+function buildAgentTurnOptions(): { signal?: AbortSignal } {
+  const signal = getActivityCancellationSignal();
+  return signal ? { signal } : {};
+}
+
+function createLazyCodexThread(factoryName: 'startThread' | 'resumeThread', factory: () => Promise<unknown>): AgentThread {
+  let resolvedThread: { id: unknown; run: (prompt: string, options?: unknown) => Promise<unknown> } | undefined;
+  let threadPromise: Promise<{ id: unknown; run: (prompt: string, options?: unknown) => Promise<unknown> }> | undefined;
+
+  const getThread = async () => {
+    if (!threadPromise) {
+      threadPromise = factory()
+        .then((thread) => {
+          const validatedThread = assertCodexThread(thread, factoryName);
+          resolvedThread = validatedThread;
+          return validatedThread;
+        })
+        .catch((error) => {
+          threadPromise = undefined;
+          throw error;
+        });
+    }
+
+    return threadPromise;
+  };
+
+  return {
+    get id() {
+      if (!resolvedThread) {
+        return null;
+      }
+
+      return readCodexThreadId(resolvedThread, factoryName);
+    },
+    async run(prompt, options) {
+      const thread = await getThread();
+      const turn = await thread.run(prompt, options);
+      return {
+        finalResponse: assertCodexTurnResult(turn, factoryName).finalResponse,
+      };
+    },
+  };
+}
+
+function assertCodexThread(
+  value: unknown,
+  factoryName: 'startThread' | 'resumeThread',
+): { id: unknown; run: (prompt: string, options?: unknown) => Promise<unknown> } {
+  if (!value || typeof value !== 'object' || typeof (value as { run?: unknown }).run !== 'function') {
+    throw new Error(`Codex ${factoryName}() did not return a thread with a callable run() method.`);
+  }
+
+  return value as { id: unknown; run: (prompt: string, options?: unknown) => Promise<unknown> };
+}
+
+function readCodexThreadId(value: { id: unknown }, factoryName: 'startThread' | 'resumeThread'): string | null {
+  if (value.id === undefined || value.id === null) {
+    return null;
+  }
+
+  if (typeof value.id !== 'string') {
+    throw new Error(`Codex ${factoryName}() returned a thread with a non-string id.`);
+  }
+
+  return value.id;
+}
+
+function assertCodexTurnResult(value: unknown, factoryName: 'startThread' | 'resumeThread'): AgentTurnResult {
+  if (!value || typeof value !== 'object' || typeof (value as { finalResponse?: unknown }).finalResponse !== 'string') {
+    throw new Error(`Codex ${factoryName}().run() did not return a finalResponse string.`);
+  }
+
+  return {
+    finalResponse: (value as { finalResponse: string }).finalResponse,
+  };
+}
+
+async function loadCodexSdk(): Promise<CodexSdkModule> {
+  return (await dynamicImport('@openai/codex-sdk')) as CodexSdkModule;
+}
+
+async function runAgentSequenceSteps(worktree: WorktreeContext, steps: AgentStep[]): Promise<AgentSequenceResult> {
+  assertUniqueStepIds(steps);
+  const checkpoint = getCheckpoint();
+  assertCheckpointMatchesStepSequence(checkpoint, steps);
+  const completedStepIds = [...(checkpoint.completedStepIds ?? [])];
+  const outputs = cloneAgentOutputs(checkpoint.outputs ?? {});
+  let finalResponse = checkpoint.finalResponse;
+  let threadId = checkpoint.threadId;
+
+  if (checkpoint.pendingStep) {
+    const resumedState = applyPendingStepCompletion(checkpoint.pendingStep, completedStepIds, outputs, finalResponse);
+    finalResponse = resumedState.finalResponse;
+
+    if (!threadId) {
+      throw new Error(`Codex thread id was unavailable while finalizing step ${checkpoint.pendingStep.stepId}.`);
+    }
+
+    activityRuntime.heartbeat(
+      buildCheckpointSnapshot({
+        threadId,
+        completedStepIds,
+        outputs,
+        finalResponse,
+      }),
+    );
+  }
+
+  let thread: AgentThread | undefined;
+
+  function getThread(): AgentThread {
+    thread ??= threadId
+      ? assertActivityThread(
+          activityRuntime.resumeCodexThread(worktree.worktreePath, threadId),
+          'resumeCodexThread',
+        )
+      : assertActivityThread(activityRuntime.createCodexThread(worktree.worktreePath), 'createCodexThread');
+    return thread;
+  }
+
+  for (const step of steps) {
+    if (completedStepIds.includes(step.id)) {
+      continue;
+    }
+
+    const currentThread = getThread();
+    let pendingStep: PendingStepCompletion;
+
+    if (step.kind === 'prompt') {
+      const turn = await runThreadTurnWithHeartbeat(currentThread, step.prompt, buildAgentTurnOptions(), () => ({
+        threadId: currentThread.id ?? threadId,
+        completedStepIds,
+        outputs,
+        finalResponse,
+      }));
+      finalResponse = turn.finalResponse;
+      pendingStep = buildPendingPromptStepCompletion(step, turn.finalResponse);
+    } else {
+      const { finalResponse: structuredResponse, parsedOutput } = await runStructuredStep(currentThread, step, () => ({
+        threadId: currentThread.id ?? threadId,
+        completedStepIds,
+        outputs,
+        finalResponse,
+      }));
+      finalResponse = structuredResponse;
+      pendingStep = buildPendingStructuredStepCompletion(step, structuredResponse, parsedOutput);
+    }
+
+    threadId = currentThread.id ?? threadId;
+    if (!threadId) {
+      throw new Error(`Codex thread id was unavailable after completing step ${step.id}.`);
+    }
+
+    activityRuntime.heartbeat(
+      buildCheckpointSnapshot({
+        threadId,
+        completedStepIds,
+        outputs,
+        finalResponse,
+        pendingStep,
+      }),
+    );
+    finalResponse = applyPendingStepCompletion(pendingStep, completedStepIds, outputs, finalResponse).finalResponse;
+
+    activityRuntime.heartbeat(
+      buildCheckpointSnapshot({
+        threadId,
+        completedStepIds,
+        outputs,
+        finalResponse,
+      }),
+    );
+  }
+
+  if (!threadId) {
+    throw new Error('Codex thread id was not available after running the agent sequence.');
+  }
+
+  return {
+    threadId,
+    completedStepIds: [...completedStepIds],
+    outputs: { ...outputs },
+    finalResponse,
+  };
+}
+
+async function runStructuredStep(
+  thread: AgentThread,
+  step: Extract<AgentStep, { kind: 'structured' }>,
+  getCheckpointDetails: () => AgentCheckpoint,
+): Promise<{ finalResponse: string; parsedOutput?: unknown }> {
+  const schemaDefinition = getAgentSchema(step.schemaId);
+  const firstTurn = await runThreadTurnWithHeartbeat(
+    thread,
+    step.prompt,
+    {
+      ...buildAgentTurnOptions(),
+      outputSchema: schemaDefinition.jsonSchema,
+    },
+    getCheckpointDetails,
+  );
+  const firstParsed = parseStructuredOutput(firstTurn.finalResponse, schemaDefinition.schema);
+  if (firstParsed.success) {
+    return { finalResponse: firstTurn.finalResponse, parsedOutput: firstParsed.parsedOutput };
+  }
+
+  const repairTurn = await runThreadTurnWithHeartbeat(
+    thread,
+    buildStructuredOutputRepairPrompt(step, firstTurn.finalResponse, firstParsed.errorMessage),
+    {
+      ...buildAgentTurnOptions(),
+      outputSchema: schemaDefinition.jsonSchema,
+    },
+    getCheckpointDetails,
+  );
+  const repairParsed = parseStructuredOutput(repairTurn.finalResponse, schemaDefinition.schema);
+  if (!repairParsed.success) {
+    throw new Error(
+      [
+        `Structured output step ${step.id} did not satisfy schema ${step.schemaId}.`,
+        `Initial parse failed: ${firstParsed.errorMessage}`,
+        `Repair parse failed: ${repairParsed.errorMessage}`,
+      ].join(' '),
+    );
+  }
+
+  return {
+    finalResponse: repairTurn.finalResponse,
+    parsedOutput: repairParsed.parsedOutput,
+  };
+}
+
+async function runThreadTurnWithHeartbeat(
+  thread: AgentThread,
+  prompt: string,
+  options: { outputSchema?: unknown; signal?: AbortSignal } | undefined,
+  getCheckpointDetails: () => AgentCheckpoint,
+): Promise<AgentTurnResult> {
+  let intervalError: unknown;
+  activityRuntime.heartbeat(buildCheckpointSnapshot(getCheckpointDetails()));
+  const interval = setInterval(() => {
+    try {
+      activityRuntime.heartbeat(buildCheckpointSnapshot(getCheckpointDetails()));
+    } catch (error) {
+      intervalError = error;
+      clearInterval(interval);
+    }
+  }, AGENT_TURN_HEARTBEAT_INTERVAL_MS);
+
+  interval.unref?.();
+
+  try {
+    const turn = await thread.run(prompt, options);
+    if (intervalError) {
+      throw intervalError;
+    }
+
+    return turn;
+  } catch (runError) {
+    if (intervalError) {
+      throw intervalError;
+    }
+
+    activityRuntime.heartbeat(buildCheckpointSnapshot(getCheckpointDetails()));
+    throw runError;
+  } finally {
+    clearInterval(interval);
+  }
+}
+
+function parseStructuredOutput(
+  finalResponse: string,
+  schema: { parse: (value: unknown) => unknown },
+): { success: true; parsedOutput: unknown } | { success: false; errorMessage: string } {
+  let parsedJson: unknown;
+
+  try {
+    parsedJson = JSON.parse(finalResponse);
+  } catch (error) {
+    return {
+      success: false,
+      errorMessage: `Response was not valid JSON: ${toErrorMessage(error)}`,
+    };
+  }
+
+  try {
+    return {
+      success: true,
+      parsedOutput: schema.parse(parsedJson),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      errorMessage: `Response did not match the expected schema: ${toErrorMessage(error)}`,
+    };
+  }
+}
+
+function buildStructuredOutputRepairPrompt(
+  step: Extract<AgentStep, { kind: 'structured' }>,
+  invalidOutput: string,
+  parseError: string,
+): string {
+  return [
+    step.prompt,
+    '',
+    'The previous response did not satisfy the required structured output schema.',
+    parseError,
+    'Reply again using only data that conforms to the required schema.',
+    '',
+    'Previous invalid response:',
+    invalidOutput,
+  ].join('\n');
+}
+
+function getCheckpoint(): AgentCheckpoint {
+  const heartbeatDetails = activityRuntime.getHeartbeatDetails();
+  if (!heartbeatDetails || typeof heartbeatDetails !== 'object') {
+    return {};
+  }
+
+  const checkpoint = heartbeatDetails as AgentCheckpoint & { pendingStructuredStep?: unknown };
+  return {
+    threadId: typeof checkpoint.threadId === 'string' ? checkpoint.threadId : undefined,
+    completedStepIds: parseCompletedStepIds(checkpoint.completedStepIds),
+    outputs: checkpoint.outputs && typeof checkpoint.outputs === 'object' ? cloneAgentOutputs(checkpoint.outputs) : {},
+    finalResponse: typeof checkpoint.finalResponse === 'string' ? checkpoint.finalResponse : undefined,
+    pendingStep:
+      parsePendingStepCompletion(checkpoint.pendingStep) ??
+      parseLegacyPendingStructuredStepCompletion(checkpoint.pendingStructuredStep),
+  };
+}
+
+function buildCheckpointSnapshot(checkpoint: AgentCheckpoint): AgentCheckpoint {
+  const snapshot: AgentCheckpoint = {
+    completedStepIds: [...(checkpoint.completedStepIds ?? [])],
+    outputs: cloneAgentOutputs(checkpoint.outputs ?? {}),
+  };
+
+  if (checkpoint.threadId) {
+    snapshot.threadId = checkpoint.threadId;
+  }
+
+  if (checkpoint.finalResponse !== undefined) {
+    snapshot.finalResponse = truncateCheckpointFinalResponse(checkpoint.finalResponse);
+  }
+
+  if (checkpoint.pendingStep) {
+    snapshot.pendingStep = clonePendingStepCompletion(checkpoint.pendingStep);
+  }
+
+  return snapshot;
+}
+
+function buildPendingStructuredStepCompletion(
+  step: Extract<AgentStep, { kind: 'structured' }>,
+  finalResponse: string,
+  parsedOutput: unknown,
+): PendingStepCompletion {
+  return {
+    stepId: step.id,
+    finalResponse,
+    output: {
+      resultKey: step.resultKey,
+      parsedOutput: structuredClone(parsedOutput),
+    },
+  };
+}
+
+function buildPendingPromptStepCompletion(
+  step: Extract<AgentStep, { kind: 'prompt' }>,
+  finalResponse: string,
+): PendingStepCompletion {
+  return {
+    stepId: step.id,
+    finalResponse,
+  };
+}
+
+function applyPendingStepCompletion(
+  pendingStep: PendingStepCompletion,
+  completedStepIds: string[],
+  outputs: AgentSequenceResult['outputs'],
+  fallbackFinalResponse: string | undefined,
+): { finalResponse: string } {
+  if (pendingStep.output) {
+    outputs[pendingStep.output.resultKey] = structuredClone(pendingStep.output.parsedOutput);
+  }
+
+  if (!completedStepIds.includes(pendingStep.stepId)) {
+    completedStepIds.push(pendingStep.stepId);
+  }
+
+  return {
+    finalResponse: pendingStep.finalResponse ?? fallbackFinalResponse ?? '',
+  };
+}
+
+function parsePendingStepCompletion(value: unknown): PendingStepCompletion | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const pendingStep = value as Partial<PendingStepCompletion>;
+  if (typeof pendingStep.stepId !== 'string' || typeof pendingStep.finalResponse !== 'string') {
+    return undefined;
+  }
+
+  const output = parsePendingStepOutput(pendingStep.output);
+  if (pendingStep.output && !output) {
+    return undefined;
+  }
+
+  return clonePendingStepCompletion({
+    stepId: pendingStep.stepId,
+    finalResponse: pendingStep.finalResponse,
+    output,
+  });
+}
+
+function parseLegacyPendingStructuredStepCompletion(value: unknown): PendingStepCompletion | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const pendingStructuredStep = value as {
+    stepId?: unknown;
+    resultKey?: unknown;
+    parsedOutput?: unknown;
+    finalResponse?: unknown;
+  };
+  if (
+    typeof pendingStructuredStep.stepId !== 'string' ||
+    !isAgentOutputKey(pendingStructuredStep.resultKey) ||
+    typeof pendingStructuredStep.finalResponse !== 'string'
+  ) {
+    return undefined;
+  }
+
+  return {
+    stepId: pendingStructuredStep.stepId,
+    finalResponse: pendingStructuredStep.finalResponse,
+    output: {
+      resultKey: pendingStructuredStep.resultKey,
+      parsedOutput: structuredClone(pendingStructuredStep.parsedOutput),
+    },
+  };
+}
+
+function parsePendingStepOutput(value: unknown): PendingStepCompletion['output'] | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const output = value as { resultKey?: unknown; parsedOutput?: unknown };
+  if (!isAgentOutputKey(output.resultKey)) {
+    return undefined;
+  }
+
+  return {
+    resultKey: output.resultKey,
+    parsedOutput: structuredClone(output.parsedOutput),
+  };
+}
+
+function clonePendingStepCompletion(pendingStep: PendingStepCompletion): PendingStepCompletion {
+  return {
+    stepId: pendingStep.stepId,
+    finalResponse: truncateCheckpointFinalResponse(pendingStep.finalResponse),
+    ...(pendingStep.output
+      ? {
+          output: {
+            resultKey: pendingStep.output.resultKey,
+            parsedOutput: structuredClone(pendingStep.output.parsedOutput),
+          },
+        }
+      : {}),
+  };
+}
+
+function parseCompletedStepIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((stepId): stepId is string => typeof stepId === 'string');
+}
+
+function assertCheckpointMatchesStepSequence(checkpoint: AgentCheckpoint, steps: AgentStep[]): void {
+  const validStepIds = new Set(steps.map((step) => step.id));
+  const staleCompletedStepIds = (checkpoint.completedStepIds ?? []).filter((stepId) => !validStepIds.has(stepId));
+  if (staleCompletedStepIds.length > 0) {
+    throw new Error(
+      `Heartbeat checkpoint contains stale completed step ids that do not exist in the current agent sequence: ${staleCompletedStepIds.join(', ')}`,
+    );
+  }
+
+  if (checkpoint.pendingStep && !validStepIds.has(checkpoint.pendingStep.stepId)) {
+    throw new Error(
+      `Heartbeat checkpoint contains a stale pending step id that does not exist in the current agent sequence: ${checkpoint.pendingStep.stepId}`,
+    );
+  }
+}
+
+function truncateCheckpointFinalResponse(finalResponse: string): string {
+  if (Buffer.byteLength(finalResponse, 'utf8') <= MAX_CHECKPOINT_FINAL_RESPONSE_BYTES) {
+    return finalResponse;
+  }
+
+  const suffixBytes = Buffer.byteLength(CHECKPOINT_TRUNCATION_SUFFIX, 'utf8');
+  const contentBudget = MAX_CHECKPOINT_FINAL_RESPONSE_BYTES - suffixBytes;
+  if (contentBudget <= 0) {
+    return CHECKPOINT_TRUNCATION_SUFFIX;
+  }
+
+  let low = 0;
+  let high = finalResponse.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(finalResponse.slice(0, mid), 'utf8') <= contentBudget) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return `${finalResponse.slice(0, low)}${CHECKPOINT_TRUNCATION_SUFFIX}`;
+}
+
+function assertUniqueStepIds(steps: AgentStep[]): void {
+  const seen = new Set<string>();
+  for (const step of steps) {
+    if (seen.has(step.id)) {
+      throw new Error(`Agent step sequences must use unique step ids. Duplicate id: ${step.id}`);
+    }
+
+    seen.add(step.id);
+  }
+}
+
+function assertActivityThread(value: unknown, methodName: 'createCodexThread' | 'resumeCodexThread'): AgentThread {
+  if (!value || typeof value !== 'object' || typeof (value as { run?: unknown }).run !== 'function') {
+    throw new Error(`Activity runtime ${methodName}() did not return an agent thread with a callable run() method.`);
+  }
+
+  const threadId = (value as { id?: unknown }).id;
+  if (!(threadId === undefined || threadId === null || typeof threadId === 'string')) {
+    throw new Error(`Activity runtime ${methodName}() returned an agent thread with a non-string id.`);
+  }
+
+  return value as AgentThread;
+}
+
+function isAgentOutputKey(value: unknown): value is AgentOutputKey {
+  return typeof value === 'string' && (AGENT_OUTPUT_KEYS as readonly string[]).includes(value);
 }
 
 function buildRepoApiPath(repoOwner: string, repoName: string): string {
@@ -502,7 +1198,46 @@ function buildCodexArgs(prompt: string): string[] {
 }
 
 async function codex(cwd: string, prompt: string): Promise<CommandResult> {
-  return execCommand(CODEX_COMMAND, buildCodexArgs(prompt), { cwd });
+  return execCommand(CODEX_COMMAND, buildCodexArgs(prompt), { cwd, ...buildAgentTurnOptions() });
+}
+
+function cloneAgentOutputs(outputs: AgentSequenceResult['outputs']): AgentSequenceResult['outputs'] {
+  return structuredClone(outputs);
+}
+
+function getActivityHeartbeatDetails(): unknown {
+  const context = getCurrentActivityContextOrUndefined();
+  return context?.info.heartbeatDetails;
+}
+
+function heartbeatActivity(details: unknown): void {
+  const context = getCurrentActivityContextOrUndefined();
+  if (!context) {
+    return;
+  }
+
+  context.heartbeat(details);
+}
+
+function getActivityCancellationSignal(): AbortSignal | undefined {
+  const context = getCurrentActivityContextOrUndefined();
+  return context?.cancellationSignal;
+}
+
+function getCurrentActivityContextOrUndefined(): ReturnType<typeof Context.current> | undefined {
+  try {
+    return Context.current();
+  } catch (error) {
+    if (isMissingActivityContextError(error)) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function isMissingActivityContextError(error: unknown): boolean {
+  return error instanceof Error && error.message === 'Activity context not initialized';
 }
 
 async function ensureBaseClone(paths: LocalRepoPaths): Promise<void> {
@@ -540,12 +1275,31 @@ async function hasStagedChanges(worktreePath: string): Promise<boolean> {
   return result.exitCode === 1;
 }
 
-async function commitWorktreeIfNeeded(worktree: WorktreeContext): Promise<void> {
+async function commitWorktreeIfNeeded(worktree: WorktreeContext, commitMessage?: string): Promise<void> {
   if (!(await hasStagedChanges(worktree.worktreePath))) {
     return;
   }
 
-  await git(worktree.worktreePath, ['commit', '-m', `Add dummy change for issue #${worktree.issueNumber}`]);
+  await git(worktree.worktreePath, ['commit', '-m', buildCommitMessage(worktree, commitMessage)]);
+}
+
+async function hasCommitsToPush(worktree: WorktreeContext): Promise<boolean> {
+  const baseRef = (await hasRemoteBranch(worktree.repoRoot, worktree.branchName))
+    ? `origin/${worktree.branchName}`
+    : `origin/${worktree.defaultBranch}`;
+
+  return hasAheadCommits(worktree.worktreePath, baseRef);
+}
+
+async function hasAheadCommits(worktreePath: string, baseRef: string): Promise<boolean> {
+  const result = await git(worktreePath, ['rev-list', '--count', `${baseRef}..HEAD`]);
+  const commitCount = Number.parseInt(result.stdout.trim(), 10);
+
+  if (Number.isNaN(commitCount)) {
+    throw new Error(`Could not determine whether HEAD is ahead of ${baseRef}.`);
+  }
+
+  return commitCount > 0;
 }
 
 async function findOpenPullRequestForBranch(worktree: WorktreeContext): Promise<PullRequestResponse | undefined> {
@@ -569,18 +1323,30 @@ function buildCreatedPullRequest(worktree: WorktreeContext, pullRequest: PullReq
   };
 }
 
-async function createPullRequest(worktree: WorktreeContext): Promise<PullRequestResponse> {
+async function createPullRequest(worktree: WorktreeContext, title?: string, body?: string): Promise<PullRequestResponse> {
   const repoPath = buildRepoApiPath(worktree.repoOwner, worktree.repoName);
 
   return githubRest<PullRequestResponse>(`${repoPath}/pulls`, {
     method: 'POST',
     body: JSON.stringify({
-      title: `chore: dummy change for #${worktree.issueNumber}`,
+      title: buildPullRequestTitle(worktree, title),
       head: worktree.branchName,
       base: worktree.defaultBranch,
-      body: `Automated dummy change for ${worktree.issueUrl}`,
+      body: buildPullRequestBody(worktree, body),
     }),
   });
+}
+
+function buildCommitMessage(worktree: WorktreeContext, commitMessage?: string): string {
+  return commitMessage?.trim() || `Add dummy change for issue #${worktree.issueNumber}`;
+}
+
+function buildPullRequestTitle(worktree: WorktreeContext, title?: string): string {
+  return title?.trim() || `chore: dummy change for #${worktree.issueNumber}`;
+}
+
+function buildPullRequestBody(worktree: WorktreeContext, body?: string): string {
+  return body?.trim() || `Automated dummy change for ${worktree.issueUrl}`;
 }
 
 async function ensureIssueWorktree(
@@ -706,7 +1472,12 @@ async function parseGitHubResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     throw new Error(`GitHub request failed (${response.status} ${response.statusText}): ${text}`);
   }
-  return text ? (JSON.parse(text) as T) : (undefined as T);
+
+  if (!text) {
+    throw new Error('GitHub request succeeded but returned an empty response body.');
+  }
+
+  return JSON.parse(text) as T;
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -755,6 +1526,7 @@ async function defaultExecFile(
   const result = await execa(file, args, {
     cwd: options.cwd,
     reject: false,
+    signal: options.signal,
     stdin: 'ignore',
   });
 

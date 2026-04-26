@@ -1,1 +1,1 @@
-{"root":["./src/activities.ts","./src/client.ts","./src/shared.ts","./src/worker.ts","./src/workflows.ts","./src/mocha/activities.test.ts","./src/mocha/workflows.test.ts"],"version":"5.9.3"}
+{"root":["./src/activities.ts","./src/agent-prompts.ts","./src/agent-schema-registry.ts","./src/change-metadata.ts","./src/client.ts","./src/shared.ts","./src/worker.ts","./src/workflows.ts","./src/mocha/activities.test.ts","./src/mocha/change-metadata.test.ts","./src/mocha/workflows.test.ts"],"version":"5.9.3"}
