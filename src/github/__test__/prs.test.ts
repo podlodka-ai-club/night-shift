@@ -149,6 +149,33 @@ describe("pushBranch", () => {
     ).rejects.toBeInstanceOf(GitHubPushRejectedError);
   });
 
+  it("throws GitHubPushRejectedError on 422 lease conflicts", async () => {
+    const { rest } = makeRest([
+      {
+        throw: new GitHubApiError(
+          422,
+          "Reference update failed: refs/heads/b is at 0123456789abcdef but expected fedcba9876543210",
+        ),
+      },
+    ]);
+    await expect(
+      pushBranch(rest, { owner: "o", repo: "r", branch: "b", sha: "s" }),
+    ).rejects.toBeInstanceOf(GitHubPushRejectedError);
+  });
+
+  it("rethrows non-push 422 responses as GitHubApiError", async () => {
+    const { rest } = makeRest([
+      { throw: new GitHubApiError(422, "Validation failed: sha is malformed") },
+    ]);
+    await expect(
+      pushBranch(rest, { owner: "o", repo: "r", branch: "b", sha: "s" }),
+    ).rejects.toMatchObject({
+      constructor: GitHubApiError,
+      status: 422,
+      message: "Validation failed: sha is malformed",
+    });
+  });
+
   it("falls back to creating the ref when it doesn't exist (404)", async () => {
     const { rest, calls } = makeRest([
       { throw: new GitHubApiError(404, "Not Found") },

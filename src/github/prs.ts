@@ -14,6 +14,17 @@ import {
 import { PRRefSchema } from "./types.js";
 import type { GraphQLClient } from "./projects.js";
 
+const PUSH_REJECTED_422_PATTERNS = [
+  /non-fast-forward/i,
+  /fast[ -]forward/i,
+  /\bis at [0-9a-f]{7,40}\b.*\bexpected [0-9a-f]{7,40}\b/i,
+  /\bexpected [0-9a-f]{7,40}\b.*\bfound [0-9a-f]{7,40}\b/i,
+];
+
+function isPushRejected422(err: GitHubApiError): boolean {
+  return PUSH_REJECTED_422_PATTERNS.some((pattern) => pattern.test(err.message));
+}
+
 async function getDefaultBranch(
   rest: RestClient,
   owner: string,
@@ -149,7 +160,11 @@ export async function pushBranch(
       }),
     );
   } catch (err) {
-    if (err instanceof GitHubApiError && err.status === 422) {
+    if (
+      err instanceof GitHubApiError &&
+      err.status === 422 &&
+      isPushRejected422(err)
+    ) {
       throw new GitHubPushRejectedError(args.branch, undefined, err);
     }
     if (err instanceof GitHubApiError && err.status === 404) {
