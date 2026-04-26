@@ -116,3 +116,9 @@ When using the packaged CLI, Night Shift treats the current working directory
 as the selected repo root by default. Pass `--repo-root <path>` to any CLI
 command when you want config discovery and repo-relative behavior to target a
 different checkout.
+For repo-local CLI commands, Night Shift also derives a repo-scoped Temporal
+task queue from `temporal.taskQueue` and the selected repo root. This keeps
+workers and workflow starters from different local checkouts from polling the
+same queue by accident. The worker CLI also acquires a lock under
+`.night-shift/locks/` inside the selected repo root so only one worker process
+can poll a given repo-scoped queue at a time.

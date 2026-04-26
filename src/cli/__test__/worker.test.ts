@@ -1,11 +1,12 @@
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mockLoadConfig = vi.fn();
+const mockLoadRepoLocalConfig = vi.fn();
+const mockCreateRoleAdapter = vi.fn(() => ({ openSession: vi.fn() }));
 const mockCreateGitHubClient = vi.fn();
 const mockStartWorker = vi.fn();
 const mockRunWorkerUntilShutdown = vi.fn();
 const mockStartPickupCronWorkflow = vi.fn();
+const mockAcquireWorkerLock = vi.fn();
 const mockCreateSimpleGitOps = vi.fn(({ repoRoot }) => ({ repoRoot }));
 const mockCreateSimpleGitWorktreeOps = vi.fn(({ repoRoot }) => ({ repoRoot }));
 const mockCreateNodeQualityGateRunner = vi.fn(() => ({ run: vi.fn() }));
@@ -14,12 +15,17 @@ const mockCreateOpenSpecCli = vi.fn(() => ({
   validate: mockCreateOpenSpecCliValidate,
 }));
 
-vi.mock("../../config/loader.js", () => ({
-  loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
+vi.mock("../shared.js", () => ({
+  loadRepoLocalConfig: (...args: unknown[]) => mockLoadRepoLocalConfig(...args),
+  createRoleAdapter: (...args: unknown[]) => mockCreateRoleAdapter(...args),
 }));
 
 vi.mock("../../github/factory.js", () => ({
   createGitHubClient: (...args: unknown[]) => mockCreateGitHubClient(...args),
+}));
+
+vi.mock("../worker-lock.js", () => ({
+  acquireWorkerLock: (...args: unknown[]) => mockAcquireWorkerLock(...args),
 }));
 
 vi.mock("../../orchestration/worker.js", () => ({
@@ -87,6 +93,10 @@ describe("night-shift worker CLI", () => {
     mockStartWorker.mockResolvedValue({});
     mockRunWorkerUntilShutdown.mockResolvedValue(undefined);
     mockStartPickupCronWorkflow.mockResolvedValue(undefined);
+    mockAcquireWorkerLock.mockResolvedValue({
+      lockPath: "/tmp/repo/.night-shift/locks/worker.json",
+      release: vi.fn().mockResolvedValue(undefined),
+    });
     mockCreateOpenSpecCliValidate.mockResolvedValue({ ok: true });
     vi.spyOn(process.stdout, "write").mockImplementation((s) => {
       stdout += String(s);
@@ -96,8 +106,15 @@ describe("night-shift worker CLI", () => {
 
   it("uses repoRoot from config for local phase deps", async () => {
     const repoRoot = path.resolve("../feature-factory-target");
-    mockLoadConfig.mockResolvedValue({
-      ...resolvedConfig,
+    mockLoadRepoLocalConfig.mockResolvedValue({
+      config: {
+        ...resolvedConfig,
+        temporal: {
+          ...resolvedConfig.temporal,
+          taskQueue: "night-shift-abc123",
+        },
+      },
+      repoRoot,
     });
 
     const code = await main([
@@ -108,10 +125,11 @@ describe("night-shift worker CLI", () => {
     ]);
 
     expect(code).toBe(0);
-    expect(mockLoadConfig).toHaveBeenCalledWith({
+    expect(mockLoadRepoLocalConfig).toHaveBeenCalledWith({
       explicitPath: "./night-shift.config.ts",
-      cwd: repoRoot,
+      repoRoot,
     });
+    expect(mockAcquireWorkerLock).toHaveBeenCalledWith(repoRoot, "night-shift-abc123");
 
     const workerArgs = mockStartWorker.mock.calls[0]?.[0] as {
       depsFactory: {
@@ -143,8 +161,11 @@ describe("night-shift worker CLI", () => {
   });
 
   it("reports when pickup cron is disabled in config", async () => {
-    mockLoadConfig.mockResolvedValue({
-      ...resolvedConfig,
+    mockLoadRepoLocalConfig.mockResolvedValue({
+      config: {
+        ...resolvedConfig,
+      },
+      repoRoot: "/tmp/repo",
     });
 
     const code = await main([]);
@@ -152,5 +173,25 @@ describe("night-shift worker CLI", () => {
     expect(code).toBe(0);
     expect(mockStartPickupCronWorkflow).not.toHaveBeenCalled();
     expect(stdout).toContain("Pickup cron disabled");
+  });
+
+  it("releases the worker lock when startup fails", async () => {
+    const release = vi.fn().mockResolvedValue(undefined);
+    mockAcquireWorkerLock.mockResolvedValue({
+      lockPath: "/tmp/repo/.night-shift/locks/worker.json",
+      release,
+    });
+    mockLoadRepoLocalConfig.mockResolvedValue({
+      config: {
+        ...resolvedConfig,
+      },
+      repoRoot: "/tmp/repo",
+    });
+    mockStartWorker.mockRejectedValue(new Error("boom"));
+
+    const code = await main([]);
+
+    expect(code).toBe(1);
+    expect(release).toHaveBeenCalledOnce();
   });
 });

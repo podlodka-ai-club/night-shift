@@ -23,7 +23,6 @@
     "implement": "node --env-file-if-exists=.env --import tsx src/cli/implement.ts",
     "review": "node --env-file-if-exists=.env --import tsx src/cli/review.ts",
     "worker": "node --env-file-if-exists=.env --import tsx src/cli/worker.ts",
-    "worker:restart-clean": "node scripts/restart-worker-clean.mjs",
     "temporal:restart-clean": "node scripts/restart-temporal-clean.mjs",
     "start": "node --env-file-if-exists=.env --import tsx src/cli/start.ts",
     "pickup": "node --env-file=.env --import tsx src/cli/pickup.ts",

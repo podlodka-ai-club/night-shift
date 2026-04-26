@@ -78,7 +78,7 @@ export default defineNightShiftConfig({
   temporal: {
     serverUrl: "localhost:7233",
     namespace: "default",
-    taskQueue: "night-shift",
+    taskQueue: "night-shift", // repo-local CLI derives a repo-scoped queue from this base name
   },
   // Example custom adapter registration:
   // adapterFactories: {

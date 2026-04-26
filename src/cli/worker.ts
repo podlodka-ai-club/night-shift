@@ -17,6 +17,7 @@ import type { ReviewFs } from "../phases/review/phase.js";
 import type { ActivityDepsFactory } from "../orchestration/activities.js";
 import type { ResolvedNightShiftConfig } from "../config/schema.js";
 import { createRoleAdapter, loadRepoLocalConfig } from "./shared.js";
+import { acquireWorkerLock } from "./worker-lock.js";
 
 const USAGE = `night-shift worker
 
@@ -223,41 +224,48 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
       ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
       ...(args.values["repo-root"] !== undefined ? { repoRoot: args.values["repo-root"] } : {}),
     });
+    const workerLock = await acquireWorkerLock(repoRoot, config.temporal.taskQueue);
+    process.stdout.write(`Worker lock acquired: ${workerLock.lockPath}\n`);
+    process.stdout.write(`Using task queue: ${config.temporal.taskQueue}\n`);
 
-    // Create GitHub client
-    let github: GitHubClient | undefined;
-    if (config.github) {
-      try {
-        github = await createGitHubClient(config.github);
-        process.stdout.write("GitHub client connected\n");
-      } catch (err) {
-        process.stderr.write(`Warning: GitHub client failed: ${(err as Error).message}\n`);
+    try {
+      // Create GitHub client
+      let github: GitHubClient | undefined;
+      if (config.github) {
+        try {
+          github = await createGitHubClient(config.github);
+          process.stdout.write("GitHub client connected\n");
+        } catch (err) {
+          process.stderr.write(`Warning: GitHub client failed: ${(err as Error).message}\n`);
+        }
       }
-    }
 
-    // Build a deps factory that creates phase deps from config + env.
-    if (!github) {
-      process.stderr.write("Error: GitHub client is required for the worker\n");
-      return 1;
-    }
-    const depsFactory = buildDepsFactory(config, github, repoRoot);
+      // Build a deps factory that creates phase deps from config + env.
+      if (!github) {
+        process.stderr.write("Error: GitHub client is required for the worker\n");
+        return 1;
+      }
+      const depsFactory = buildDepsFactory(config, github, repoRoot);
 
-    const worker = await startWorker({ config, depsFactory, ...(github ? { github } : {}) });
-    process.stdout.write("Worker started\n");
+      const worker = await startWorker({ config, depsFactory, ...(github ? { github } : {}) });
+      process.stdout.write("Worker started\n");
 
-    if (config.pickup?.enabled) {
-      if (github) {
-        await startPickupCronWorkflow({ config });
-        process.stdout.write(`Pickup cron started (every ${config.pickup.intervalMinutes}m, max ${config.pickup.maxConcurrent} concurrent)\n`);
+      if (config.pickup?.enabled) {
+        if (github) {
+          await startPickupCronWorkflow({ config });
+          process.stdout.write(`Pickup cron started (every ${config.pickup.intervalMinutes}m, max ${config.pickup.maxConcurrent} concurrent)\n`);
+        } else {
+          process.stderr.write("Warning: pickup.enabled is true but no GitHub client available — pickup cron not started\n");
+        }
       } else {
-        process.stderr.write("Warning: pickup.enabled is true but no GitHub client available — pickup cron not started\n");
+        process.stdout.write("Pickup cron disabled (set pickup.enabled=true in night-shift.config.* to register it)\n");
       }
-    } else {
-      process.stdout.write("Pickup cron disabled (set pickup.enabled=true in night-shift.config.* to register it)\n");
-    }
 
-    await runWorkerUntilShutdown(worker);
-    return 0;
+      await runWorkerUntilShutdown(worker);
+      return 0;
+    } finally {
+      await workerLock.release();
+    }
   } catch (err) {
     process.stderr.write(`Error: ${(err as Error).message}\n`);
     return 1;

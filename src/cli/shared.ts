@@ -1,4 +1,5 @@
 import path from "node:path";
+import crypto from "node:crypto";
 import { createConfiguredAdapter } from "../adapters/index.js";
 import type { AgentAdapter } from "../adapters/events.js";
 import type { AgentRole } from "../adapters/types.js";
@@ -15,7 +16,25 @@ export function resolveSelectedRepoRoot(
   repoRoot?: string,
   cwd: string = process.cwd(),
 ): string {
-  return path.resolve(repoRoot ?? cwd);
+  return path.resolve(cwd, repoRoot ?? ".");
+}
+
+export function buildRepoScopedTaskQueue(baseTaskQueue: string, repoRoot: string): string {
+  const digest = crypto.createHash("sha1").update(repoRoot).digest("hex").slice(0, 12);
+  return `${baseTaskQueue}-${digest}`;
+}
+
+export function applyRepoLocalConfigIsolation(
+  config: ResolvedNightShiftConfig,
+  repoRoot: string,
+): ResolvedNightShiftConfig {
+  return {
+    ...config,
+    temporal: {
+      ...config.temporal,
+      taskQueue: buildRepoScopedTaskQueue(config.temporal.taskQueue, repoRoot),
+    },
+  };
 }
 
 export async function loadRepoLocalConfig(
@@ -27,7 +46,7 @@ export async function loadRepoLocalConfig(
     cwd: repoRoot,
   });
 
-  return { config, repoRoot };
+  return { config: applyRepoLocalConfigIsolation(config, repoRoot), repoRoot };
 }
 
 export function createRoleAdapter(
