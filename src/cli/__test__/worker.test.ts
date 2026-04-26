@@ -78,13 +78,20 @@ const fakeGitHubClient = {
 import { main } from "../worker.js";
 
 describe("night-shift worker CLI", () => {
+  let stdout = "";
+
   beforeEach(() => {
     vi.clearAllMocks();
+    stdout = "";
     mockCreateGitHubClient.mockResolvedValue(fakeGitHubClient);
     mockStartWorker.mockResolvedValue({});
     mockRunWorkerUntilShutdown.mockResolvedValue(undefined);
     mockStartPickupCronWorkflow.mockResolvedValue(undefined);
     mockCreateOpenSpecCliValidate.mockResolvedValue({ ok: true });
+    vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      stdout += String(s);
+      return true;
+    });
   });
 
   it("uses repoRoot from config for local phase deps", async () => {
@@ -133,5 +140,17 @@ describe("night-shift worker CLI", () => {
 
     const reviewDeps = workerArgs.depsFactory.buildReviewDeps("run-2", "default");
     expect(reviewDeps.workingDirectory).toBe(repoRoot);
+  });
+
+  it("reports when pickup cron is disabled in config", async () => {
+    mockLoadConfig.mockResolvedValue({
+      ...resolvedConfig,
+    });
+
+    const code = await main([]);
+
+    expect(code).toBe(0);
+    expect(mockStartPickupCronWorkflow).not.toHaveBeenCalled();
+    expect(stdout).toContain("Pickup cron disabled");
   });
 });

@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
 import { resolveSelectedRepoRoot } from "./shared.js";
 
 const DEFAULT_ROLE_SETUP = [
@@ -41,6 +42,11 @@ Exit codes:
   64 usage error
 `;
 
+const EXAMPLE_CONFIG_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../night-shift.config.example.ts",
+);
+
 export async function main(argv: string[]): Promise<number> {
   let args;
   try {
@@ -77,7 +83,7 @@ export async function main(argv: string[]): Promise<number> {
       return 1;
     }
 
-    await writeFile(configPath, renderInitTemplate(), "utf8");
+    await writeFile(configPath, await renderInitTemplate(), "utf8");
     process.stdout.write(`Created ${configPath}\n`);
     process.stdout.write(`\n${renderOpenSpecSetupInstructions(repoRoot)}\n`);
     return 0;
@@ -87,70 +93,12 @@ export async function main(argv: string[]): Promise<number> {
   }
 }
 
-function renderInitTemplate(): string {
-  return `${renderConfigImportLine()}
+async function renderInitTemplate(): Promise<string> {
+  const exampleTemplate = await readFile(EXAMPLE_CONFIG_PATH, "utf8");
 
-const env = (
-  globalThis as typeof globalThis & {
-    process?: { env?: Record<string, string | undefined> };
-  }
-).process?.env ?? {};
-
-export default defineNightShiftConfig({
-  roles: {
-    specifier: {
-      provider: "${DEFAULT_ROLE_SETUP[0].provider}",
-      model: "${DEFAULT_ROLE_SETUP[0].model}",
-    },
-    implementer: {
-      provider: "${DEFAULT_ROLE_SETUP[1].provider}",
-      model: "${DEFAULT_ROLE_SETUP[1].model}",
-    },
-    reviewer: {
-      provider: "${DEFAULT_ROLE_SETUP[2].provider}",
-      model: "${DEFAULT_ROLE_SETUP[2].model}",
-    },
-    subagent: {
-      provider: "${DEFAULT_ROLE_SETUP[3].provider}",
-      model: "${DEFAULT_ROLE_SETUP[3].model}",
-    },
-  },
-
-  // Local setup: put these values in .env next to this config file.
-  github: {
-    token: env.GITHUB_TOKEN,
-    owner: env.GITHUB_REPO_OWNER ?? "your-username",
-    repo: env.GITHUB_REPO_NAME ?? "your-repo",
-    projectOwner: env.GITHUB_PROJECT_OWNER ?? "your-username-or-org",
-    projectOwnerType: (env.GITHUB_PROJECT_OWNER_TYPE as "user" | "org") ?? "user",
-    projectNumber: Number(env.GITHUB_PROJECT_NUMBER ?? "1"),
-    // Or use GitHub App auth instead of a PAT:
-    // appId: Number(env.GITHUB_APP_ID),
-    // installationId: Number(env.GITHUB_INSTALLATION_ID),
-    // privateKeyPath: env.GITHUB_PRIVATE_KEY_PATH,
-  },
-
-  qualityGates: {
-    typecheck: true,
-    lint: true,
-    test: true,
-  },
-
-  temporal: {
-    serverUrl: "localhost:7233",
-    namespace: "default",
-    taskQueue: "night-shift",
-  },
-
-  // Example custom adapter registration:
-  // adapterFactories: {
-  //   copilot: ({ adapterConfig }) => createCopilotAdapter(adapterConfig),
-  // },
-  // adapters: {
-  //   copilot: { mode: "workspace-write" },
-  // },
-});
-`;
+  return exampleTemplate
+    .replace(/^\s+systemPromptFile: .*\n/gm, "")
+    .replace(/^\/\*\*[\s\S]*?\*\/\n/, "");
 }
 
 function renderOpenSpecSetupInstructions(repoRoot: string): string {
@@ -171,10 +119,6 @@ function renderOpenSpecSetupInstructions(repoRoot: string): string {
     "",
     "Agent-specific repo instructions should come from what is configured in the repository itself, not from Night Shift config.",
   ].join("\n");
-}
-
-function renderConfigImportLine(): string {
-  return ['import { defineNightShiftConfig } from "', 'night-shift/config', '";'].join("");
 }
 
 const entry = process.argv[1] ?? "";

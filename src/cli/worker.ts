@@ -252,6 +252,8 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
       } else {
         process.stderr.write("Warning: pickup.enabled is true but no GitHub client available — pickup cron not started\n");
       }
+    } else {
+      process.stdout.write("Pickup cron disabled (set pickup.enabled=true in night-shift.config.* to register it)\n");
     }
 
     await runWorkerUntilShutdown(worker);
