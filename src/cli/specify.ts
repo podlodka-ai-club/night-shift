@@ -5,6 +5,7 @@ import { loadConfig } from "../config/loader.js";
 import { CodexAdapter, ClaudeAgentAdapter } from "../adapters/index.js";
 import type { AgentAdapter } from "../adapters/events.js";
 import { createGitHubClient } from "../github/factory.js";
+import { createAutomationWriteContext, withAutomationWriteContext } from "../github/provenance.js";
 import { createSimpleGitOps } from "../git/index.js";
 import { createSimpleGitWorktreeOps } from "../worktree/index.js";
 import { createOpenSpecCli } from "../phases/specify/openspec-cli.js";
@@ -104,7 +105,10 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
       repo: env.GITHUB_REPO,
       projectNodeId: env.GITHUB_PROJECT_NODE_ID,
     };
-    const github = await createGitHubClient(githubInput);
+    const github = withAutomationWriteContext(
+      await createGitHubClient(githubInput),
+      createAutomationWriteContext("specify-cli", "specify", runId, profileId),
+    );
     const gitInstance = simpleGit(repoRoot);
     const openspecCli = createOpenSpecCli();
     const roleConfig = config.roles.specifier;

@@ -6,6 +6,7 @@ import { NightShiftConfigSchema } from "../config/schema.js";
 import { CodexAdapter, ClaudeAgentAdapter } from "../adapters/index.js";
 import type { AgentAdapter } from "../adapters/events.js";
 import { createGitHubClient } from "../github/factory.js";
+import { createAutomationWriteContext, withAutomationWriteContext } from "../github/provenance.js";
 import { runReviewPhase, type ReviewFs } from "../phases/review/phase.js";
 import { ReviewPhaseError } from "../phases/review/errors.js";
 import type { ReviewInput } from "../contracts/review.js";
@@ -102,7 +103,10 @@ export async function main(
       repo: env.GITHUB_REPO,
       projectNodeId: env.GITHUB_PROJECT_NODE_ID,
     };
-    const github = await createGitHubClient(githubInput);
+    const github = withAutomationWriteContext(
+      await createGitHubClient(githubInput),
+      createAutomationWriteContext("review-cli", "review", runId, profileId),
+    );
 
     const reviewRole = resolved.roles.reviewer;
     if (!reviewRole) {

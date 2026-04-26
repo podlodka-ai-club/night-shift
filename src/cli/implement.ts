@@ -6,6 +6,7 @@ import { loadConfig } from "../config/loader.js";
 import { CodexAdapter, ClaudeAgentAdapter } from "../adapters/index.js";
 import type { AgentAdapter } from "../adapters/events.js";
 import { createGitHubClient } from "../github/factory.js";
+import { createAutomationWriteContext, withAutomationWriteContext } from "../github/provenance.js";
 import { createSimpleGitOps } from "../git/index.js";
 import { createSimpleGitWorktreeOps } from "../worktree/index.js";
 import {
@@ -132,7 +133,10 @@ export async function main(
       repo: env.GITHUB_REPO,
       projectNodeId: env.GITHUB_PROJECT_NODE_ID,
     };
-    const github = await createGitHubClient(githubInput);
+    const github = withAutomationWriteContext(
+      await createGitHubClient(githubInput),
+      createAutomationWriteContext("implement-cli", "implement", runId, profileId),
+    );
     const gitInstance = simpleGit(repoRoot);
     const git = createSimpleGitOps({ repoRoot, git: gitInstance });
     const worktree = createSimpleGitWorktreeOps({

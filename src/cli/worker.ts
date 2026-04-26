@@ -7,6 +7,7 @@ import { loadConfig } from "../config/loader.js";
 import { startWorker, startPickupCronWorkflow, runWorkerUntilShutdown } from "../orchestration/worker.js";
 import { createGitHubClient } from "../github/factory.js";
 import type { GitHubClient } from "../github/client.js";
+import { createAutomationWriteContext, withAutomationWriteContext } from "../github/provenance.js";
 import { createSimpleGitOps } from "../git/index.js";
 import { createSimpleGitWorktreeOps } from "../worktree/index.js";
 import { createNodeQualityGateRunner, type QualityGate } from "../quality-gates/index.js";
@@ -135,7 +136,10 @@ function buildDepsFactory(
       if (!roleConfig) throw new Error("config.roles.specifier is not defined");
       const gitInstance = simpleGit(repoRoot);
       return {
-        github,
+        github: withAutomationWriteContext(
+          github,
+          createAutomationWriteContext("worker", "specify", runId, profileId),
+        ),
         worktree: createSimpleGitWorktreeOps({ repoRoot, git: gitInstance }),
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
@@ -153,7 +157,10 @@ function buildDepsFactory(
       if (!roleConfig) throw new Error("config.roles.implementer is not defined");
       const gitInstance = simpleGit(repoRoot);
       return {
-        github,
+        github: withAutomationWriteContext(
+          github,
+          createAutomationWriteContext("worker", "implement", runId, profileId),
+        ),
         git: createSimpleGitOps({ repoRoot, git: gitInstance }),
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
@@ -173,7 +180,10 @@ function buildDepsFactory(
       const roleConfig = config.roles.reviewer;
       if (!roleConfig) throw new Error("config.roles.reviewer is not defined");
       return {
-        github,
+        github: withAutomationWriteContext(
+          github,
+          createAutomationWriteContext("worker", "review", runId, profileId),
+        ),
         agent: makeAdapter(roleConfig.provider),
         fs: makeReviewFs(repoRoot),
         clock: { now: () => new Date() },
