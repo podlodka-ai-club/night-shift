@@ -138,13 +138,29 @@ export async function startPickupSchedule(opts: {
 
 export async function runWorkerUntilShutdown(worker: Worker): Promise<void> {
   const shutdown = () => worker.shutdown();
+  let failedStateInterval: NodeJS.Timeout | undefined;
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
   try {
-    await worker.run();
+    await Promise.race([
+      worker.run(),
+      new Promise<never>((_, reject) => {
+        failedStateInterval = setInterval(() => {
+          if (worker.getState() !== "FAILED") {
+            return;
+          }
+
+          worker.shutdown();
+          reject(new Error("Temporal worker entered FAILED state"));
+        }, 250);
+      }),
+    ]);
   } finally {
+    if (failedStateInterval) {
+      clearInterval(failedStateInterval);
+    }
     process.off("SIGINT", shutdown);
     process.off("SIGTERM", shutdown);
   }

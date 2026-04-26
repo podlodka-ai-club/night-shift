@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { startPickupSchedule, startWorker, runWorkerUntilShutdown } from "../worker.js";
 import type { ResolvedNightShiftConfig } from "../../config/schema.js";
 
@@ -177,13 +177,37 @@ describe("startPickupSchedule", () => {
 });
 
 describe("runWorkerUntilShutdown", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("calls worker.run and resolves", async () => {
     const worker = {
       run: vi.fn().mockResolvedValue(undefined),
       shutdown: vi.fn(),
+      getState: vi.fn().mockReturnValue("RUNNING"),
     };
 
     await runWorkerUntilShutdown(worker as any);
     expect(worker.run).toHaveBeenCalledOnce();
+  });
+
+  it("rejects and shuts down when the worker enters FAILED state but run hangs", async () => {
+    vi.useFakeTimers();
+
+    const worker = {
+      run: vi.fn(() => new Promise<void>(() => {})),
+      shutdown: vi.fn(),
+      getState: vi.fn()
+        .mockReturnValueOnce("RUNNING")
+        .mockReturnValue("FAILED"),
+    };
+
+    const runPromise = runWorkerUntilShutdown(worker as any);
+    const rejection = expect(runPromise).rejects.toThrow("Temporal worker entered FAILED state");
+    await vi.advanceTimersByTimeAsync(500);
+
+    await rejection;
+    expect(worker.shutdown).toHaveBeenCalledOnce();
   });
 });
