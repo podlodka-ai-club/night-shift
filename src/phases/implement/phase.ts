@@ -67,6 +67,7 @@ export interface RunImplementPhaseDeps {
   git: GitOps;
   gitForRepo?: (repoRoot: string) => GitOps;
   fs: ImplementFs;
+  fsForRepo?: (repoRoot: string) => ImplementFs;
   worktree: WorktreeOps;
   gateRunner: QualityGateRunner;
   agent: AgentAdapter;
@@ -197,12 +198,13 @@ interface LoadedImplementContext {
   operatorComments: Comment[];
   ticket: Ticket;
   specPath: string;
-  bundleFiles: SpecBundleFile[];
 }
 
 interface PreparedImplementContext extends LoadedImplementContext {
   branch: string;
   git: GitOps;
+  fs: ImplementFs;
+  bundleFiles: SpecBundleFile[];
   worktreePath: string;
 }
 
@@ -285,19 +287,12 @@ async function loadImplementContext(
 
   const specPath = path.posix.join("openspec", "changes", input.changeName);
 
-  const bundleFiles = await readRequiredSpecBundle(
-    deps.fs,
-    input.changeName,
-    ticket.id,
-  );
-
   return {
     itemStatus,
     issue,
     operatorComments: filterOperatorComments(allComments),
     ticket,
     specPath,
-    bundleFiles,
   };
 }
 
@@ -316,14 +311,27 @@ async function prepareImplementContext(
     branch,
   });
 
-  const git = deps.gitForRepo?.(worktree.path) ?? deps.git;
+  try {
+    const git = deps.gitForRepo?.(worktree.path) ?? deps.git;
+    const fs = deps.fsForRepo?.(worktree.path) ?? deps.fs;
+    const bundleFiles = await readRequiredSpecBundle(
+      fs,
+      input.changeName,
+      context.ticket.id,
+    );
 
-  return {
-    ...context,
-    branch,
-    git,
-    worktreePath: worktree.path,
-  };
+    return {
+      ...context,
+      branch,
+      fs,
+      git,
+      bundleFiles,
+      worktreePath: worktree.path,
+    };
+  } catch (err) {
+    await deps.worktree.remove(worktree.path);
+    throw err;
+  }
 }
 
 async function runImplementerTurn(

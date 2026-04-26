@@ -146,6 +146,49 @@ describe("runImplementPhase", () => {
     expect(worktreeGit.pushes).toHaveLength(1);
   });
 
+  it("reads the spec bundle from the prepared worktree when fsForRepo is provided", async () => {
+    const agent = new InMemoryFakeAdapter({
+      script: [
+        { events: [], finalText: implResponseJson(), usage: usage() },
+      ],
+    });
+    const gh = createInMemoryFakeGitHubClient();
+    const worktree = createInMemoryFakeWorktreeOps();
+    const gates = createInMemoryFakeQualityGateRunner();
+    const scopedRepoRoots: string[] = [];
+    gh.seedIssue({ number: 17, title: "Read branch bundle" });
+    gh.seedItem({ itemId: "PVTI_17", issueNumber: 17, status: "Ready" });
+
+    const result = await runImplementPhase(
+      {
+        github: gh,
+        git: createInMemoryFakeGitOps(),
+        fs: makeFs([]),
+        fsForRepo(repoRoot) {
+          scopedRepoRoots.push(repoRoot);
+          return makeFs(BUNDLE);
+        },
+        worktree,
+        gateRunner: gates,
+        agent,
+        runId: "run1",
+        profileId: "default",
+        implementerModel: "gpt-test",
+        qualityGates: [{ name: "typecheck", command: ["true"] }],
+        baseBranch: "main",
+      },
+      {
+        itemId: "PVTI_17",
+        changeName: "c",
+      },
+    );
+
+    expect(result.status).toBe("pr_opened");
+    expect(scopedRepoRoots).toHaveLength(1);
+    expect(scopedRepoRoots[0]).toContain("PVTI_17".replace("PVTI_", ""));
+    expect(worktree.events.map((e) => e.kind)).toEqual(["create", "remove"]);
+  });
+
   it("reuses unpublished branch state when a retry returns no new file changes", async () => {
     const agent = new InMemoryFakeAdapter({
       script: [
@@ -304,7 +347,7 @@ describe("runImplementPhase", () => {
     await expect(
       runImplementPhase(deps2, { itemId: "PVTI_4", changeName: "c" }),
     ).rejects.toBeInstanceOf(ImplementIoError);
-    expect(worktree.events).toHaveLength(0);
+    expect(worktree.events.map((e) => e.kind)).toEqual(["create", "remove"]);
   });
 
   it("retries once when implementer returns schema-invalid path, then succeeds", async () => {

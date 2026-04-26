@@ -7,6 +7,7 @@ import { ReviewAgentError, ReviewIoError, ReviewPhaseError, ReviewValidationErro
 import type { ReviewInput } from "../../../contracts/review.js";
 import type { EventSink, PhaseEvent } from "../../../contracts/events.js";
 import type { ResolvedNightShiftConfig } from "../../../config/schema.js";
+import { GitHubApiError } from "../../../github/errors.js";
 
 function reviewResponseJson(
   overrides: Partial<{ summary: string; findings: unknown[] }> = {},
@@ -281,6 +282,73 @@ describe("runReviewPhase", () => {
     });
 
     expect(capturedWorkingDirectory).toBe("/tmp/review-repo");
+  });
+
+  it("normalizes absolute finding paths to repo-relative paths before posting comments", async () => {
+    const findings = [
+      {
+        severity: "warning",
+        message: "use repo-relative path",
+        location: { file: "/tmp/review-repo/src/a.ts", line: 10 },
+      },
+    ];
+    const agent = new InMemoryFakeAdapter({
+      script: [
+        {
+          events: [],
+          finalText: reviewResponseJson({ findings }),
+          usage: usage(),
+        },
+      ],
+    });
+    const { gh, deps } = buildDeps(agent);
+    seedBase(gh);
+
+    await runReviewPhase(phaseInput(), {
+      ...deps,
+      workingDirectory: "/tmp/review-repo",
+    });
+
+    const lineComments = getEvents(gh, "upsertReviewComment");
+    expect(lineComments).toHaveLength(1);
+    expect((lineComments[0]!.args as { path: string }).path).toBe("src/a.ts");
+  });
+
+  it("keeps the review phase moving when GitHub rejects a line comment location", async () => {
+    const findings = [
+      {
+        severity: "error",
+        message: "line is outside the rendered diff",
+        location: { file: "src/a.ts", line: 999 },
+      },
+    ];
+    const agent = new InMemoryFakeAdapter({
+      script: [
+        {
+          events: [],
+          finalText: reviewResponseJson({ findings }),
+          usage: usage(),
+        },
+      ],
+    });
+    const { gh, deps } = buildDeps(agent);
+    seedBase(gh);
+
+    gh.upsertReviewComment = async () => {
+      throw new GitHubApiError(
+        422,
+        'Validation Failed: {"resource":"PullRequestReviewComment","code":"custom","field":"pull_request_review_thread.line","message":"could not be resolved"}',
+      );
+    };
+
+    const result = await runReviewPhase(phaseInput({ iteration: 0 }), deps);
+
+    expect(result.status).toBe("needs_fix");
+    const statuses = getEvents(gh, "setStatus").map(
+      (e) => (e.args as { status: string }).status,
+    );
+    expect(statuses).toContain("Ready");
+    expect(getEvents(gh, "createReview")).toHaveLength(1);
   });
 
   // 7.4 Ready-to-merge with warnings

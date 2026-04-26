@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { AgentAdapter, AgentStreamEvent, TurnResult } from "../../adapters/events.js";
 import { runTurnWithProgress } from "../../adapters/run-turn.js";
 import type { EventSink } from "../../contracts/events.js";
@@ -9,6 +10,7 @@ import {
   type Verdict,
 } from "../../contracts/review.js";
 import type { GitHubClient } from "../../github/client.js";
+import { GitHubApiError } from "../../github/errors.js";
 import type { ResolvedNightShiftConfig } from "../../config/schema.js";
 import { ReviewerResponseJsonSchema, parseReviewerResponse, renderReviewerMessage } from "./prompt.js";
 import type { SpecBundleFile, RetryContext } from "./prompt.js";
@@ -63,6 +65,14 @@ function isOwnPullRequestApprovalError(err: unknown): boolean {
   return err instanceof Error && /approve your own pull request/i.test(err.message);
 }
 
+function isUnresolvableReviewCommentError(err: unknown): boolean {
+  return (
+    err instanceof GitHubApiError
+    && err.status === 422
+    && /pull_request_review_thread\.(path|line).+could not be resolved/i.test(err.message)
+  );
+}
+
 function nowIso(clock: { now(): Date }): string {
   return clock.now().toISOString();
 }
@@ -96,6 +106,79 @@ function getMaxDiffBytes(config: ResolvedNightShiftConfig): number {
 
 function getEscalationLabel(config: ResolvedNightShiftConfig): string {
   return config.reviewPhase?.escalationLabel ?? "night-shift:escalation";
+}
+
+function normalizeFindingLocations(
+  findings: Finding[],
+  changedFiles: Array<{ path: string }>,
+  workingDirectory: string | undefined,
+): Finding[] {
+  const knownPaths = new Set(changedFiles.map((file) => file.path));
+
+  return findings.map((finding) => {
+    if (!finding.location) {
+      return finding;
+    }
+
+    const rawPath = finding.location.file;
+    let normalizedPath = rawPath;
+
+    if (!knownPaths.has(rawPath)) {
+      const rawPosix = rawPath.split(path.sep).join("/");
+      if (workingDirectory && path.isAbsolute(rawPath)) {
+        const relative = path.relative(workingDirectory, rawPath).split(path.sep).join("/");
+        if (!relative.startsWith("../") && relative !== ".." && knownPaths.has(relative)) {
+          normalizedPath = relative;
+        }
+      }
+
+      if (!knownPaths.has(normalizedPath)) {
+        const suffixMatch = changedFiles.find(
+          (file) => rawPosix === file.path || rawPosix.endsWith(`/${file.path}`),
+        );
+        if (suffixMatch) {
+          normalizedPath = suffixMatch.path;
+        }
+      }
+    }
+
+    if (normalizedPath === rawPath) {
+      return finding;
+    }
+
+    return {
+      ...finding,
+      location: {
+        ...finding.location,
+        file: normalizedPath,
+      },
+    };
+  });
+}
+
+async function upsertFindingComments(
+  github: GitHubClient,
+  prNumber: number,
+  findings: Finding[],
+): Promise<void> {
+  for (const finding of findings) {
+    if (!finding.location?.line) {
+      continue;
+    }
+
+    try {
+      await github.upsertReviewComment(prNumber, "review:finding", {
+        path: finding.location.file,
+        line: finding.location.line,
+        body: renderLineCommentBody(finding),
+      });
+    } catch (err) {
+      if (isUnresolvableReviewCommentError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 export async function runReviewPhase(
@@ -196,7 +279,11 @@ export async function runReviewPhase(
         prNumber: pr.number,
         iteration,
       });
-      findings = parsed.findings;
+      findings = normalizeFindingLocations(
+        parsed.findings,
+        changedFiles,
+        deps.workingDirectory,
+      );
       summary = parsed.summary;
     } catch (err) {
       if (
@@ -225,7 +312,11 @@ export async function runReviewPhase(
           prNumber: pr.number,
           iteration,
         });
-        findings = retryParsed.findings;
+        findings = normalizeFindingLocations(
+          retryParsed.findings,
+          changedFiles,
+          deps.workingDirectory,
+        );
         summary = retryParsed.summary;
       } else {
         throw err;
@@ -278,16 +369,7 @@ export async function runReviewPhase(
         }
       }
 
-      // Upsert line comments for findings with location
-      for (const finding of findings) {
-        if (finding.location?.line) {
-          await deps.github.upsertReviewComment(pr.number, "review:finding", {
-            path: finding.location.file,
-            line: finding.location.line,
-            body: renderLineCommentBody(finding),
-          });
-        }
-      }
+      await upsertFindingComments(deps.github, pr.number, findings);
 
       // Upsert PR-level summary comment
       await deps.github.upsertComment(
@@ -316,16 +398,7 @@ export async function runReviewPhase(
         });
       }
 
-      // Upsert line comments
-      for (const finding of findings) {
-        if (finding.location?.line) {
-          await deps.github.upsertReviewComment(pr.number, "review:finding", {
-            path: finding.location.file,
-            line: finding.location.line,
-            body: renderLineCommentBody(finding),
-          });
-        }
-      }
+      await upsertFindingComments(deps.github, pr.number, findings);
 
       // Upsert PR-level summary
       await deps.github.upsertComment(
@@ -357,16 +430,7 @@ export async function runReviewPhase(
         });
       }
 
-      // Upsert line comments
-      for (const finding of findings) {
-        if (finding.location?.line) {
-          await deps.github.upsertReviewComment(pr.number, "review:finding", {
-            path: finding.location.file,
-            line: finding.location.line,
-            body: renderLineCommentBody(finding),
-          });
-        }
-      }
+      await upsertFindingComments(deps.github, pr.number, findings);
 
       // Upsert escalation marker comment
       await deps.github.upsertComment(

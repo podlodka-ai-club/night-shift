@@ -11,8 +11,45 @@ export const ReviewerResponseSchema = z.object({
 });
 export type ReviewerResponse = z.infer<typeof ReviewerResponseSchema>;
 
+const ReviewerFindingInputSchema = z.object({
+  severity: FindingSchema.shape.severity,
+  message: FindingSchema.shape.message,
+  location: z
+    .object({
+      file: z.string().min(1),
+      line: z.number().int().positive().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  specRef: z.string().nullable().optional(),
+});
+
+const ReviewerResponseInputSchema = z.object({
+  summary: z.string().min(1),
+  findings: z.array(ReviewerFindingInputSchema),
+});
+
+// Codex requires object schemas to list every property in `required`, so the
+// provider-facing schema uses explicit nulls where the app contract is optional.
+const ReviewerOutputSchema = z.object({
+  summary: z.string().min(1),
+  findings: z.array(
+    z.object({
+      severity: FindingSchema.shape.severity,
+      message: FindingSchema.shape.message,
+      location: z
+        .object({
+          file: z.string().min(1),
+          line: z.number().int().positive().nullable(),
+        })
+        .nullable(),
+      specRef: z.string().nullable(),
+    }),
+  ),
+});
+
 export const ReviewerResponseJsonSchema = zodToJsonSchema(
-  ReviewerResponseSchema,
+  ReviewerOutputSchema,
   { $refStrategy: "none" },
 );
 
@@ -27,6 +64,26 @@ export interface RetryContext {
 }
 
 const NIGHT_SHIFT_MARKER_PREFIX = "<!-- night-shift:marker=";
+
+function normalizeFinding(input: z.infer<typeof ReviewerFindingInputSchema>): Finding {
+  return {
+    severity: input.severity,
+    message: input.message,
+    ...(input.location
+      ? {
+          location: {
+            file: input.location.file,
+            ...(input.location.line === null || input.location.line === undefined
+              ? {}
+              : { line: input.location.line }),
+          },
+        }
+      : {}),
+    ...(input.specRef === null || input.specRef === undefined
+      ? {}
+      : { specRef: input.specRef }),
+  };
+}
 
 function renderTicket(ticket: Ticket): string {
   const parts: string[] = [];
@@ -149,7 +206,7 @@ export function parseReviewerResponse(
       { ...ctx, cause: err },
     );
   }
-  const parsed = ReviewerResponseSchema.safeParse(raw);
+  const parsed = ReviewerResponseInputSchema.safeParse(raw);
   if (!parsed.success) {
     throw new ReviewAgentError(
       "schema",
@@ -157,5 +214,8 @@ export function parseReviewerResponse(
       { ...ctx, cause: parsed.error },
     );
   }
-  return parsed.data;
+  return {
+    summary: parsed.data.summary,
+    findings: parsed.data.findings.map(normalizeFinding),
+  };
 }

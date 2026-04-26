@@ -158,6 +158,7 @@ function buildDepsFactory(
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
         fs: makeImplementFs(repoRoot),
+        fsForRepo: makeImplementFs,
         worktree: createSimpleGitWorktreeOps({ repoRoot, git: gitInstance }),
         gateRunner: createNodeQualityGateRunner(),
         agent: makeAdapter(roleConfig.provider),
