@@ -90,6 +90,12 @@ export async function main(argv: string[]): Promise<number> {
 function renderInitTemplate(): string {
   return `${renderConfigImportLine()}
 
+const env = (
+  globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }
+).process?.env ?? {};
+
 export default defineNightShiftConfig({
   roles: {
     specifier: {
@@ -112,16 +118,16 @@ export default defineNightShiftConfig({
 
   // Local setup: put these values in .env next to this config file.
   github: {
-    token: process.env.GITHUB_TOKEN,
-    owner: process.env.GITHUB_REPO_OWNER ?? "your-username",
-    repo: process.env.GITHUB_REPO_NAME ?? "your-repo",
-    projectOwner: process.env.GITHUB_PROJECT_OWNER ?? "your-username-or-org",
-    projectOwnerType: (process.env.GITHUB_PROJECT_OWNER_TYPE as "user" | "org") ?? "user",
-    projectNumber: Number(process.env.GITHUB_PROJECT_NUMBER ?? "1"),
+    token: env.GITHUB_TOKEN,
+    owner: env.GITHUB_REPO_OWNER ?? "your-username",
+    repo: env.GITHUB_REPO_NAME ?? "your-repo",
+    projectOwner: env.GITHUB_PROJECT_OWNER ?? "your-username-or-org",
+    projectOwnerType: (env.GITHUB_PROJECT_OWNER_TYPE as "user" | "org") ?? "user",
+    projectNumber: Number(env.GITHUB_PROJECT_NUMBER ?? "1"),
     // Or use GitHub App auth instead of a PAT:
-    // appId: Number(process.env.GITHUB_APP_ID),
-    // installationId: Number(process.env.GITHUB_INSTALLATION_ID),
-    // privateKeyPath: process.env.GITHUB_PRIVATE_KEY_PATH,
+    // appId: Number(env.GITHUB_APP_ID),
+    // installationId: Number(env.GITHUB_INSTALLATION_ID),
+    // privateKeyPath: env.GITHUB_PRIVATE_KEY_PATH,
   },
 
   qualityGates: {

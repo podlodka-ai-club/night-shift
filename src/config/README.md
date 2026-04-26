@@ -64,6 +64,12 @@ Minimal pattern:
 ```ts
 import { defineNightShiftConfig } from "night-shift/config";
 
+const env = (
+  globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }
+).process?.env ?? {};
+
 export default defineNightShiftConfig({
   roles: {
     implementer: {
@@ -72,15 +78,18 @@ export default defineNightShiftConfig({
     },
   },
   github: {
-    token: process.env.GITHUB_TOKEN,
-    owner: process.env.GITHUB_REPO_OWNER ?? "your-username",
-    repo: process.env.GITHUB_REPO_NAME ?? "your-repo",
-    projectOwner: process.env.GITHUB_PROJECT_OWNER ?? "your-org",
+    token: env.GITHUB_TOKEN,
+    owner: env.GITHUB_REPO_OWNER ?? "your-username",
+    repo: env.GITHUB_REPO_NAME ?? "your-repo",
+    projectOwner: env.GITHUB_PROJECT_OWNER ?? "your-org",
     projectOwnerType: "org",
     projectNumber: 1,
   },
 });
 ```
+
+Using a local `env` binding like this keeps `night-shift.config.ts` type-safe
+in repositories that do not include Node global typings.
 
 Repo-local agent behavior should come from what the provider automatically
 discovers in the repository, such as project instructions or OpenSpec setup,

@@ -45,7 +45,8 @@ describe("night-shift init CLI", () => {
 
     const content = readFileSync(configPath, "utf8");
     expect(content).toContain('defineNightShiftConfig');
-    expect(content).toContain('process.env.GITHUB_TOKEN');
+    expect(content).toContain('const env = (');
+    expect(content).toContain('token: env.GITHUB_TOKEN');
     expect(content).toContain('.env');
     expect(content).toContain('adapterFactories');
     expect(content).not.toContain('skills');

@@ -1,5 +1,11 @@
 import { defineNightShiftConfig } from "night-shift/config";
 
+const env = (
+  globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }
+).process?.env ?? {};
+
 /**
  * Example Night Shift configuration for a target repository that installs
  * Night Shift as a private dependency.
@@ -10,7 +16,8 @@ import { defineNightShiftConfig } from "night-shift/config";
  *   3. First matching `night-shift.config.{ts,mts,mjs,js}` under the cwd
  *
  * Night Shift auto-loads `.env` next to this file before importing it, so
- * `process.env.*` lookups are available during config evaluation.
+ * `env.*` lookups are available during config evaluation without requiring
+ * Node typings in the consumer repository.
  *
  * Any role left unset falls back to `DEFAULT_CONFIG` (Codex + gpt-5.4).
  */
@@ -51,12 +58,12 @@ export default defineNightShiftConfig({
   //
   // Tests use an in-memory fake automatically (see `src/github/__test__/fake.ts`).
   github: {
-    token: process.env.GITHUB_TOKEN,
-    owner: process.env.GITHUB_REPO_OWNER ?? "your-username",
-    repo: process.env.GITHUB_REPO_NAME ?? "your-repo",
-    projectOwner: process.env.GITHUB_PROJECT_OWNER ?? "your-username-or-org",
-    projectOwnerType: (process.env.GITHUB_PROJECT_OWNER_TYPE as "user" | "org") ?? "user",
-    projectNumber: Number(process.env.GITHUB_PROJECT_NUMBER ?? "1"),
+    token: env.GITHUB_TOKEN,
+    owner: env.GITHUB_REPO_OWNER ?? "your-username",
+    repo: env.GITHUB_REPO_NAME ?? "your-repo",
+    projectOwner: env.GITHUB_PROJECT_OWNER ?? "your-username-or-org",
+    projectOwnerType: (env.GITHUB_PROJECT_OWNER_TYPE as "user" | "org") ?? "user",
+    projectNumber: Number(env.GITHUB_PROJECT_NUMBER ?? "1"),
     // Or provide projectNodeId directly (skips the lookup):
     // projectNodeId: "PVT_kwDOABC123",
   },
