@@ -35,6 +35,7 @@ export const AdaptersConfigSchema = z.object({
 }).catchall(z.unknown());
 
 export const ReviewPhaseConfigSchema = z.object({
+  maxIterations: z.number().int().positive().default(3),
   maxDiffBytes: z.number().int().positive().default(65536),
   escalationLabel: z.string().min(1).default("night-shift:escalation"),
 });

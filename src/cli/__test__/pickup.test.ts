@@ -74,6 +74,9 @@ describe("night-shift pickup CLI", () => {
     const code = await main([], {});
     expect(code).toBe(0);
     expect(mockStart).toHaveBeenCalledTimes(2);
+    expect(mockStart).toHaveBeenNthCalledWith(1, "ticketWorkflow", expect.objectContaining({
+      args: [expect.objectContaining({ maxReviewIterations: 3 })],
+    }));
     expect(stdout).toContain("Started: ticket-1");
     expect(stdout).toContain("Started: ticket-2");
     expect(stdout).toContain("2 started, 0 signaled, 0 skipped");

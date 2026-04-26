@@ -11,6 +11,7 @@ import type { SpecBundle } from "../../contracts/specify.js";
 import type { Ticket } from "../../contracts/ticket.js";
 import type { GitOps } from "../../git/index.js";
 import type { GitHubClient } from "../../github/client.js";
+import { renderNightShiftCallout } from "../../github/comment-style.js";
 import type { Comment } from "../../github/types.js";
 import type {
   QualityGate,
@@ -185,6 +186,28 @@ function formatSummary(
     for (const f of impl.followUps) parts.push(`- ${f}`);
   }
   return parts.join("\n");
+}
+
+function formatPullRequestBody(
+  context: PreparedImplementContext,
+  summary: string,
+): string {
+  return [
+    `Closes ${context.ticket.url}`,
+    "",
+    renderNightShiftCallout({
+      label: "Night Shift Implementer",
+      title: "Automated implementation update",
+      tone: "TIP",
+      details: [
+        `Ticket: ${context.ticket.id}`,
+        `Branch: ${context.branch}`,
+      ],
+    }),
+    "",
+    "### Implementation summary",
+    summary,
+  ].join("\n");
 }
 
 type ImplementIssue = Awaited<ReturnType<GitHubClient["getIssue"]>>;
@@ -540,7 +563,7 @@ async function publishPullRequest(
       head: context.branch,
       base: deps.baseBranch,
       title: `${context.ticket.id}: ${context.ticket.title}`,
-      body: `Closes ${context.ticket.url}\n\n${summary}`,
+      body: formatPullRequestBody(context, summary),
     });
     return {
       ...pr,

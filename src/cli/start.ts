@@ -79,6 +79,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
       itemId: projectItemId,
       ticketId: item.ticketId,
       changeName,
+      maxReviewIterations: config.reviewPhase?.maxIterations ?? 3,
       ...(args.values.profile !== undefined ? { profileId: args.values.profile } : {}),
     };
 

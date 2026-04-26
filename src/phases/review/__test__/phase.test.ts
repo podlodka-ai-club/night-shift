@@ -229,6 +229,8 @@ describe("runReviewPhase", () => {
     expect(getEvents(gh, "setPullRequestReady")).toHaveLength(1);
     expect(getEvents(gh, "createReview")).toHaveLength(1);
     expect((getEvents(gh, "createReview")[0]!.args as { event: string }).event).toBe("APPROVE");
+    const storedReviews = await gh.listReviews(1);
+    expect(storedReviews[0]?.body).toContain("Night Shift Reviewer");
 
     const statuses = getEvents(gh, "setStatus").map(
       (e) => (e.args as { status: string }).status,
@@ -489,6 +491,12 @@ describe("runReviewPhase", () => {
     const reviews = getEvents(gh, "createReview");
     expect(reviews).toHaveLength(1);
     expect((reviews[0]!.args as { event: string }).event).toBe("COMMENT");
+
+    const storedComments = await gh.listComments(1);
+    const escalationBody = storedComments.find((comment) => comment.body.includes("review:escalation"))?.body;
+    expect(escalationBody).toContain("Night Shift Escalation");
+    expect(escalationBody).toContain("moved this ticket to **Blocked**");
+    expect(escalationBody).toContain("Move the ticket back to **Ready**");
   });
 
   it("honors maxIterations from the review input", async () => {

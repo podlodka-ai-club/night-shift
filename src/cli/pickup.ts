@@ -75,6 +75,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
     }
 
     const temporalConfig = config.temporal;
+    const maxReviewIterations = config.reviewPhase?.maxIterations ?? 3;
     const connection = await Connection.connect({
       address: temporalConfig.serverUrl,
     });
@@ -97,6 +98,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
         },
         client,
         temporalConfig.taskQueue,
+        maxReviewIterations,
       );
 
       if (result.action === "started") {

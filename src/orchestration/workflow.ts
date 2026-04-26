@@ -177,7 +177,7 @@ const { markPhaseFailureActivity: markPhaseFailure } = proxyActivities<{
 export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> {
   const runId = workflowInfo().runId;
   const profileId = input.profileId ?? "default";
-  const maxIterations = input.maxReviewIterations ?? 2;
+  const maxIterations = input.maxReviewIterations ?? 3;
 
   // State
   let blockedReason: BlockedReason = null;

@@ -26,14 +26,15 @@ export async function handleWorkflowTrigger(
   event: WebhookEvent,
   client: Client,
   taskQueue: string,
+  maxReviewIterations: number = 3,
 ): Promise<HandleResult> {
   const workflowId = `ticket-${event.ticketId}`;
 
   if (event.currentStatus === "Backlog") {
-    return handleBacklog(event, client, taskQueue, workflowId);
+    return handleBacklog(event, client, taskQueue, workflowId, maxReviewIterations);
   }
   if (event.currentStatus === "Ready") {
-    return handleReady(event, client, taskQueue, workflowId);
+    return handleReady(event, client, taskQueue, workflowId, maxReviewIterations);
   }
   if (event.currentStatus === "In review") {
     return handleInReview(client, workflowId);
@@ -47,12 +48,14 @@ async function handleBacklog(
   client: Client,
   taskQueue: string,
   workflowId: string,
+  maxReviewIterations: number,
 ): Promise<HandleResult> {
   // Try to start a new workflow
   const input: TicketWorkflowInput = {
     itemId: event.itemId,
     ticketId: event.ticketId,
     changeName: event.changeName,
+    maxReviewIterations,
   };
 
   try {
@@ -82,13 +85,14 @@ async function handleReady(
   client: Client,
   taskQueue: string,
   workflowId: string,
+  maxReviewIterations: number,
 ): Promise<HandleResult> {
   let reason: BlockedReason;
   try {
     reason = await queryBlockedReason(client, workflowId);
   } catch (err) {
     if (err instanceof WorkflowNotFoundError) {
-      return startReadyWorkflow(event, client, taskQueue, workflowId);
+      return startReadyWorkflow(event, client, taskQueue, workflowId, maxReviewIterations);
     }
     throw err;
   }
@@ -108,7 +112,7 @@ async function handleReady(
 
   // Closed runs can still answer queries, so fall back to a fresh implement start
   // unless the current workflow is at a resumable human gate handled above.
-  return startReadyWorkflow(event, client, taskQueue, workflowId);
+  return startReadyWorkflow(event, client, taskQueue, workflowId, maxReviewIterations);
 }
 
 async function startReadyWorkflow(
@@ -116,11 +120,13 @@ async function startReadyWorkflow(
   client: Client,
   taskQueue: string,
   workflowId: string,
+  maxReviewIterations: number,
 ): Promise<HandleResult> {
   const input: TicketWorkflowInput = {
     itemId: event.itemId,
     ticketId: event.ticketId,
     changeName: event.changeName,
+    maxReviewIterations,
     startPhase: "implement",
   };
 

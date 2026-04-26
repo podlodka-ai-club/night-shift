@@ -55,7 +55,11 @@ export async function startWorker(opts: StartWorkerOpts): Promise<Worker> {
 
   if (config.pickup?.enabled && opts.github) {
     pickupActivities.setPickupGitHubClient(opts.github);
-    pickupActivities.setPickupTemporalConfig(temporalConfig.serverUrl, temporalConfig.namespace);
+    pickupActivities.setPickupTemporalConfig(
+      temporalConfig.serverUrl,
+      temporalConfig.namespace,
+      config.reviewPhase?.maxIterations ?? 3,
+    );
     Object.assign(allActivities, pickupActivities);
   }
 

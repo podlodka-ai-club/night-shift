@@ -68,6 +68,9 @@ describe("night-shift start CLI", () => {
     expect(code).toBe(0);
     expect(stdout).toContain("ticket-42");
     expect(stdout).toContain("run-abc");
+    expect(mockStart).toHaveBeenCalledWith("ticketWorkflow", expect.objectContaining({
+      args: [expect.objectContaining({ maxReviewIterations: 3 })],
+    }));
   });
 
   it("duplicate is idempotent (exit 0)", async () => {

@@ -205,6 +205,28 @@ describe("TemporalConfigSchema", () => {
     expect(parsed.temporal.serverUrl).toBe("localhost:7233");
     expect(parsed.temporal.taskQueue).toBe("night-shift");
   });
+
+  it("applies review phase defaults when the section is present", () => {
+    const parsed = NightShiftConfigSchema.parse({
+      ...DEFAULT_CONFIG,
+      reviewPhase: {},
+    });
+
+    expect(parsed.reviewPhase).toEqual({
+      maxIterations: 3,
+      maxDiffBytes: 65536,
+      escalationLabel: "night-shift:escalation",
+    });
+  });
+
+  it("allows configuring review maxIterations", () => {
+    const parsed = NightShiftConfigSchema.parse({
+      ...DEFAULT_CONFIG,
+      reviewPhase: { maxIterations: 4 },
+    });
+
+    expect(parsed.reviewPhase?.maxIterations).toBe(4);
+  });
 });
 
 describe("PickupConfigSchema", () => {

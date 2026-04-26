@@ -30,14 +30,16 @@ export interface StartTicketWorkflowsResult {
 let _github: GitHubClient | undefined;
 let _temporalAddress: string = "localhost:7233";
 let _temporalNamespace: string = "default";
+let _maxReviewIterations: number = 3;
 
 export function setPickupGitHubClient(github: GitHubClient): void {
   _github = github;
 }
 
-export function setPickupTemporalConfig(address: string, namespace: string): void {
+export function setPickupTemporalConfig(address: string, namespace: string, maxReviewIterations: number = 3): void {
   _temporalAddress = address;
   _temporalNamespace = namespace;
+  _maxReviewIterations = maxReviewIterations;
 }
 
 function getGitHubClient(): GitHubClient {
@@ -100,6 +102,7 @@ export async function startTicketWorkflowsActivity(
       },
       client,
       input.taskQueue,
+      _maxReviewIterations,
     );
 
     if (result.action === "started") {

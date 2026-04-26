@@ -14,7 +14,7 @@ import { GitHubApiError } from "../../github/errors.js";
 import type { ResolvedNightShiftConfig } from "../../config/schema.js";
 import { ReviewerResponseJsonSchema, parseReviewerResponse, renderReviewerMessage } from "./prompt.js";
 import type { SpecBundleFile, RetryContext } from "./prompt.js";
-import { renderLineCommentBody, renderSummaryBody } from "./rendering.js";
+import { renderEscalationCommentBody, renderLineCommentBody, renderSummaryBody } from "./rendering.js";
 import {
   ReviewAgentError,
   ReviewIoError,
@@ -342,6 +342,9 @@ export async function runReviewPhase(
     const issueNumber = item.issueNumber!;
 
     if (verdict === "ready-to-merge") {
+      const renderedSummary = renderSummaryBody(verdict, result, pr, {
+        maxIterations: input.maxIterations,
+      });
       await deps.github.setPullRequestReady(pr.number, true);
 
       // Check for existing Night-Shift review to update
@@ -349,7 +352,7 @@ export async function runReviewPhase(
       const existingReview = existingReviews.find(
         (r) => r.body.includes(NIGHT_SHIFT_MARKER_PREFIX + "review:summary"),
       );
-      const summaryBody = `${NIGHT_SHIFT_MARKER_PREFIX}review:summary -->\n${renderSummaryBody(verdict, result, pr)}`;
+      const summaryBody = `${NIGHT_SHIFT_MARKER_PREFIX}review:summary -->\n${renderedSummary}`;
 
       if (existingReview) {
         await deps.github.updateReview(pr.number, existingReview.id, {
@@ -378,17 +381,20 @@ export async function runReviewPhase(
       await deps.github.upsertComment(
         issueNumber,
         "review:summary",
-        renderSummaryBody(verdict, result, pr),
+        renderedSummary,
       );
 
       await deps.github.setStatus(itemId, "Ready to merge");
     } else if (verdict === "needs-fix") {
+      const renderedSummary = renderSummaryBody(verdict, result, pr, {
+        maxIterations: input.maxIterations,
+      });
       // Check for existing Night-Shift review to update
       const existingReviews = await deps.github.listReviews(pr.number);
       const existingReview = existingReviews.find(
         (r) => r.body.includes(NIGHT_SHIFT_MARKER_PREFIX + "review:summary"),
       );
-      const summaryBody = `${NIGHT_SHIFT_MARKER_PREFIX}review:summary -->\n${renderSummaryBody(verdict, result, pr)}`;
+      const summaryBody = `${NIGHT_SHIFT_MARKER_PREFIX}review:summary -->\n${renderedSummary}`;
 
       if (existingReview) {
         await deps.github.updateReview(pr.number, existingReview.id, {
@@ -417,20 +423,28 @@ export async function runReviewPhase(
       await deps.github.upsertComment(
         issueNumber,
         "review:summary",
-        renderSummaryBody(verdict, result, pr),
+        renderedSummary,
       );
 
       await deps.github.setStatus(itemId, "Ready");
     } else {
       // escalate
       const escalationLabel = getEscalationLabel(deps.config);
+      const renderedSummary = renderSummaryBody(verdict, result, pr, {
+        maxIterations: input.maxIterations,
+      });
+      const escalationTicketBody = renderEscalationCommentBody(
+        result,
+        pr,
+        input.maxIterations ?? 3,
+      );
       await deps.github.addLabels(issueNumber, [escalationLabel]);
 
       const existingReviews = await deps.github.listReviews(pr.number);
       const existingReview = existingReviews.find(
         (r) => r.body.includes(NIGHT_SHIFT_MARKER_PREFIX + "review:escalation"),
       );
-      const escalationBody = `${NIGHT_SHIFT_MARKER_PREFIX}review:escalation -->\n${renderSummaryBody(verdict, result, pr)}`;
+      const escalationBody = `${NIGHT_SHIFT_MARKER_PREFIX}review:escalation -->\n${renderedSummary}`;
 
       if (existingReview) {
         await deps.github.updateReview(pr.number, existingReview.id, {
@@ -449,7 +463,7 @@ export async function runReviewPhase(
       await deps.github.upsertComment(
         issueNumber,
         "review:escalation",
-        renderSummaryBody(verdict, result, pr),
+        escalationTicketBody,
       );
 
       await deps.github.setStatus(itemId, "Blocked");

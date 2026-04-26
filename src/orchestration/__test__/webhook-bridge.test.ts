@@ -36,6 +36,9 @@ describe("handleWorkflowTrigger", () => {
     const result = await handleWorkflowTrigger(baseEvent, fakeClient, "q");
     expect(result).toEqual({ action: "started", workflowId: "ticket-42" });
     expect(mockStart).toHaveBeenCalledOnce();
+    expect(mockStart).toHaveBeenCalledWith("ticketWorkflow", expect.objectContaining({
+      args: [expect.objectContaining({ maxReviewIterations: 3 })],
+    }));
   });
 
   it("Backlog event signals specifyRetry on blocked workflow", async () => {
@@ -93,7 +96,7 @@ describe("handleWorkflowTrigger", () => {
       taskQueue: "q",
       workflowId: "ticket-42",
       workflowIdReusePolicy: "ALLOW_DUPLICATE",
-      args: [expect.objectContaining({ startPhase: "implement" })],
+      args: [expect.objectContaining({ startPhase: "implement", maxReviewIterations: 3 })],
     }));
   });
 
@@ -109,7 +112,7 @@ describe("handleWorkflowTrigger", () => {
       taskQueue: "q",
       workflowId: "ticket-42",
       workflowIdReusePolicy: "ALLOW_DUPLICATE",
-      args: [expect.objectContaining({ startPhase: "implement" })],
+      args: [expect.objectContaining({ startPhase: "implement", maxReviewIterations: 3 })],
     }));
   });
 

@@ -67,12 +67,15 @@ export default defineNightShiftConfig({
     // Or provide projectNodeId directly (skips the lookup):
     // projectNodeId: "PVT_kwDOABC123",
   },
-  // Optional: Auto-pickup from the board. When enabled, a cron workflow
-  // periodically scans Backlog + Ready columns and starts ticket workflows.
+  // Optional: Auto-pickup from the board. When enabled, a schedule-driven
+  // workflow periodically scans Backlog + Ready columns and starts ticket workflows.
   pickup: {
     enabled: true,
     intervalSeconds: 10,
     maxConcurrent: 5,
+  },
+  reviewPhase: {
+    maxIterations: 3,
   },
   // Optional: Temporal server connection. Defaults shown below.
   temporal: {
