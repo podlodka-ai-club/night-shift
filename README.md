@@ -2,105 +2,91 @@
 
 Turn tickets into reviewable PRs with measurable quality, cost, and latency — so human engineers spend their time on the work that actually needs them.
 
-See [`openspec/project.md`](openspec/project.md) for the project context and [`openspec/changes/`](openspec/changes/) for active changes.
+See [`openspec/specs/`](openspec/specs/) for the current specs and [`openspec/changes/`](openspec/changes/) for active changes.
 
 ## Setup
 
-### Prerequisites
+### 1. Developing Night Shift
 
-- **Node.js ≥ 22.9**
-- **Temporal server** — install via [Temporal CLI](https://docs.temporal.io/cli) or run `temporal server start-dev`
-- **GitHub App** — required for board integration, PR creation, and webhooks (see [GitHub App Setup](#github-app-setup) below)
+Use this mode when you are editing this repository and want to run workers and
+commands from the Night Shift checkout against a separate target repository.
 
-### Install
+#### Prerequisites
 
-For normal use in a target repository, install a pinned private Git revision:
+- **Node.js >= 22.9**
+- **Temporal CLI** so you can run `temporal server start-dev`
+- **A target repository** that Night Shift should automate
+
+#### Fast path
+
+1. Install dependencies in this repository.
 
 ```bash
-# from the repository Night Shift should automate
-npm install --save-dev 'git+ssh://git@github.com/your-org/night-shift.git#main'
+cd /abs/path/to/night-shift
+npm install
 ```
 
-For local development against a checkout of Night Shift itself, install a local
-path dependency instead:
+2. Install the local Night Shift checkout into the target repository.
 
 ```bash
-# absolute path
+cd /abs/path/to/target-repo
 npm install --save-dev /abs/path/to/night-shift
-
-# or a relative path if the repos are side by side
-npm install --save-dev file:../night-shift
 ```
 
-Night Shift is currently intended to stay private and be installed into each
-target repository as a repo-local dependency. The private Git install is the
-recommended stable mode for teams and CI because it pins the version per repo.
-The local-path install is useful for dogfooding and development when you want a
-consumer repo to follow your working tree directly.
-
-Current local-path behavior: npm links both `node_modules/night-shift` and the
-local `night-shift` bin back to the source checkout. There is no separate build
-step today; the bin registers the bundled `tsx` runtime from the Night Shift
-package itself, so source edits are picked up on the next command run. Reinstall
-only when package metadata changes, such as `package.json` dependencies, `bin`,
-or `exports`.
-
-### Configure
-
-Initialize a repo-local config file. `init` writes `night-shift.config.ts` and
-prints the follow-up OpenSpec setup commands you need to run explicitly:
+3. Initialize the target repository.
 
 ```bash
+cd /abs/path/to/target-repo
 npm exec night-shift -- init
 ```
 
-Key sections in [night-shift.config.example.ts](night-shift.config.example.ts):
+`init` writes `night-shift.config.ts` and prints the OpenSpec setup commands you
+still need to run in the target repository.
 
-| Section | Purpose |
-|---|---|
-| `roles` | Agent provider and model per role |
-| `adapterFactories` | Optional custom adapter registry for repo-local providers |
-| `qualityGates` | Toggle typecheck / lint / test gates |
-| `github` | GitHub App credentials, repo, and project board ID |
-| `pickup` | Auto-pickup: `enabled`, `intervalMinutes` (divisor of 60), `maxConcurrent` |
-| `temporal` | Temporal server URL, namespace, task queue |
+4. Configure the target repository.
 
-Config is discovered in order: explicit path → `NIGHT_SHIFT_CONFIG` env var → `night-shift.config.{ts,mts,mjs,js}` in cwd. Night Shift auto-loads `.env` next to the resolved config file before importing it.
-
-Agent-specific repo guidance should come from what is set up in the repository
-itself, not from Night Shift config.
-
-If you start from a repo that has no OpenSpec setup yet, run `npm exec night-shift -- init` first, then follow the printed setup steps to install OpenSpec globally and run `openspec init .` in that repository before using the specifier.
-
-### GitHub Setup
-
-1. Create a **fine-grained PAT** at *Settings → Developer settings → Personal access tokens → Fine-grained tokens* with these repository permissions: **Contents**, **Issues**, **Pull requests**, **Projects** — all Read & write
-
-2. Copy `.env.example` to `.env` and fill in your values:
-
-```bash
-cp .env.example .env
-```
+- Update `night-shift.config.ts` with the role models, quality gates, and GitHub project settings you want.
+- Create `.env` in the target repository and set the GitHub token plus the project and repo values Night Shift should use. `init` does not create this file for you.
 
 ```env
-# GitHub
 GITHUB_TOKEN=ghp_...
 GITHUB_PROJECT_OWNER=your-username-or-org
-GITHUB_PROJECT_OWNER_TYPE=user          # user | org
+GITHUB_PROJECT_OWNER_TYPE=user
 GITHUB_PROJECT_NUMBER=1
 GITHUB_REPO_OWNER=your-username
 GITHUB_REPO_NAME=your-repo
 ```
 
-The config reads these env vars automatically, and Night Shift auto-loads `.env` before evaluating `night-shift.config.ts`. The project's GraphQL node ID (`PVT_...`) is resolved from the project number at startup — no need to look it up manually.
+5. Start Temporal in one terminal.
 
-`GITHUB_REPO_OWNER` and `GITHUB_REPO_NAME` select the GitHub repository Night Shift talks to over the API. The local checkout Night Shift reads and modifies is the repository where you run the CLI, unless you pass `--repo-root <path>`.
+```bash
+temporal server start-dev
+```
 
-> **Tip:** For production, consider using a [GitHub App](https://docs.github.com/en/apps/creating-github-apps) instead of a PAT for bot identity, higher rate limits, and auto-rotating tokens. The config supports `appId` + `installationId` + `privateKeyPath` as an alternative — see [night-shift.config.example.ts](night-shift.config.example.ts).
+6. Run Night Shift from this repository and point it at the target repository.
 
-> **Note:** Tests use an in-memory fake client automatically — no GitHub credentials needed for `npm test`.
+```bash
+cd /abs/path/to/night-shift
+npm run worker -- --repo-root /abs/path/to/target-repo
+```
 
-### Verify
+Useful commands during local development:
+
+```bash
+cd /abs/path/to/night-shift
+
+npm run start -- <projectItemId> --change <change-name> --repo-root /abs/path/to/target-repo
+npm run pickup -- --repo-root /abs/path/to/target-repo
+npm run specify -- --item <projectItemId> --change <change-name> --repo-root /abs/path/to/target-repo
+npm run implement -- --item <projectItemId> --change <change-name> --repo-root /abs/path/to/target-repo
+npm run review -- <projectItemId> --repo-root /abs/path/to/target-repo
+```
+
+Source edits in this repository are picked up on the next run. Reinstall the
+local dependency in the target repository only when package metadata changes,
+such as `package.json`, `bin`, or `exports`.
+
+#### Verify changes in Night Shift
 
 ```bash
 npm run typecheck
@@ -108,47 +94,60 @@ npm test
 npm run lint:boundaries
 ```
 
-### Run
+### 2. Using Night Shift
+
+Use this mode when you want to run Night Shift from inside the repository it is
+automating.
+
+#### Install
 
 ```bash
-# Start the Temporal dev server (separate terminal)
+cd /abs/path/to/target-repo
+npm install --save-dev /abs/path/to/night-shift
+```
+
+#### Initialize and configure
+
+```bash
+npm exec night-shift -- init
+```
+
+Then:
+
+- Fill in `night-shift.config.ts` for your models, quality gates, pickup settings, and Temporal connection.
+- Create `.env` next to `night-shift.config.ts` and fill it in with the same GitHub token and project/repo values shown above.
+- If the repository does not already use OpenSpec, run the setup commands printed by `init`.
+
+Config is discovered in order: explicit path, `NIGHT_SHIFT_CONFIG`, then
+`night-shift.config.{ts,mts,mjs,js}` in the current repository. Night Shift
+auto-loads `.env` next to the resolved config file.
+
+#### Run
+
+Start Temporal separately:
+
+```bash
 temporal server start-dev
 ```
 
-Main worker run:
+Then run Night Shift inside the target repository:
 
 ```bash
-# Run inside the target repository
 npm exec night-shift -- worker
 ```
 
-This is the expected main mode. The current working directory is the selected repo root by default. To invoke Night Shift from another directory, use `npm exec --prefix /abs/path/to/target-repo night-shift -- <command> ...` or pass `--repo-root /abs/path/to/target-repo`.
-
-Workflow control commands:
+Common commands:
 
 ```bash
-# Run inside the target repository, or use --repo-root when invoking elsewhere.
-
-# Trigger a workflow for a project item
 npm exec night-shift -- start <projectItemId> --change <change-name>
-
-# One-shot: scan Backlog + Ready and start workflows
 npm exec night-shift -- pickup
-```
-
-When `pickup.enabled` is `true` in your config, the worker automatically starts a cron workflow that scans the board every `intervalMinutes` — no separate command needed.
-
-Manual phase runs:
-
-```bash
 npm exec night-shift -- specify --item <projectItemId> --change <change-name>
 npm exec night-shift -- implement --item <projectItemId> --change <change-name>
-npm exec night-shift -- review <projectItemId> [--iteration <n>]
+npm exec night-shift -- review <projectItemId>
 ```
 
-`specify` and `review` open agent sessions in the selected repo root. `implement` opens its agent session in the per-ticket worktree created under that repo root.
-
-`start` and `pickup` are different: they only talk to GitHub and Temporal, so they use the selected repo root only for config discovery and `.env` loading.
+When `pickup.enabled` is `true`, the worker also starts the cron workflow that
+scans the board on the configured interval.
 
 ## Modules
 
