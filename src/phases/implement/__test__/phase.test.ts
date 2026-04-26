@@ -96,7 +96,7 @@ describe("runImplementPhase", () => {
     expect(statuses).toEqual(["In progress", "In review"]);
     const comments = gh.events.filter((e) => e.kind === "upsertComment");
     expect(comments).toHaveLength(1);
-    expect(worktree.events.map((e) => e.kind)).toEqual(["create", "remove"]);
+    expect(worktree.events.map((e) => e.kind)).toEqual(["create"]);
   });
 
   it("commits and pushes through worktree-scoped git when provided", async () => {
@@ -143,9 +143,9 @@ describe("runImplementPhase", () => {
     expect(mainGit.commits).toHaveLength(0);
     expect(mainGit.pushes).toHaveLength(0);
     expect(worktreeGit.commits).toHaveLength(1);
-    expect(worktreeGit.pushes).toHaveLength(0);
+    expect(worktreeGit.pushes).toHaveLength(1);
     const pushed = gh.events.filter((e) => e.kind === "pushBranch");
-    expect(pushed).toHaveLength(1);
+    expect(pushed).toHaveLength(0);
   });
 
   it("reads the spec bundle from the prepared worktree when fsForRepo is provided", async () => {
@@ -188,7 +188,7 @@ describe("runImplementPhase", () => {
     expect(result.status).toBe("pr_opened");
     expect(scopedRepoRoots).toHaveLength(1);
     expect(scopedRepoRoots[0]).toContain("PVTI_17".replace("PVTI_", ""));
-    expect(worktree.events.map((e) => e.kind)).toEqual(["create", "remove"]);
+    expect(worktree.events.map((e) => e.kind)).toEqual(["create"]);
   });
 
   it("reuses unpublished branch state when a retry returns no new file changes", async () => {
@@ -250,9 +250,10 @@ describe("runImplementPhase", () => {
     expect(result.status).toBe("pr_opened");
     expect(result.result?.pr.branch).toBe("night-shift/acme/widgets#15-already-fixed");
     expect(worktreeGit.commits).toHaveLength(2);
-    expect(worktreeGit.pushes).toHaveLength(1);
+    expect(worktreeGit.pushes).toHaveLength(2);
     const pushed = gh.events.filter((e) => e.kind === "pushBranch");
-    expect(pushed.at(-1)?.args).toEqual({
+    expect(pushed).toHaveLength(0);
+    expect(worktreeGit.pushes.at(-1)).toEqual({
       branch: "night-shift/acme/widgets#15-already-fixed",
       sha: implementSha,
     });

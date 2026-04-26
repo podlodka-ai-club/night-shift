@@ -11,7 +11,6 @@ import type { SpecBundle } from "../../contracts/specify.js";
 import type { Ticket } from "../../contracts/ticket.js";
 import type { GitOps } from "../../git/index.js";
 import type { GitHubClient } from "../../github/client.js";
-import { GitHubPushRejectedError } from "../../github/errors.js";
 import type { Comment } from "../../github/types.js";
 import type {
   QualityGate,
@@ -536,7 +535,7 @@ async function publishPullRequest(
   summary: string,
 ): Promise<ImplementPullRequest> {
   try {
-    await deps.github.pushBranch(context.branch, commitSha);
+    await context.git.pushBranch(context.branch);
     const pr = await deps.github.upsertPullRequest({
       head: context.branch,
       base: deps.baseBranch,
@@ -549,10 +548,7 @@ async function publishPullRequest(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (
-      err instanceof GitHubPushRejectedError ||
-      /force-with-lease|stale info|fetch first|non-fast-forward|lease/i.test(message)
-    ) {
+    if (/force-with-lease|stale info|fetch first|non-fast-forward|lease/i.test(message)) {
       throw new ImplementGitError(
         `push rejected for ${context.branch}`,
         {
@@ -675,7 +671,7 @@ export async function runImplementPhase(
       attemptResult.response,
     );
     const specBundle: SpecBundle = {
-      specPath: path.resolve(deps.repoRoot ?? process.cwd(), prepared.specPath),
+      specPath: prepared.specPath,
       branch: prepared.branch,
       openQuestions: [],
       assumptions: [],
@@ -704,9 +700,13 @@ export async function runImplementPhase(
       pr,
     );
 
-    // Success: clean up the worktree. On failure we leave it for triage.
-    await deps.worktree.remove(prepared.worktreePath);
-    worktreePath = undefined;
+    // Keep the successful implement worktree alive for the immediate review phase
+    // when the workflow started directly in implement and review needs the spec bundle
+    // from the ticket branch rather than the main checkout.
+    if (status !== "pr_opened") {
+      await deps.worktree.remove(prepared.worktreePath);
+      worktreePath = undefined;
+    }
 
     await emitSafe(deps.events, {
       kind: "PhaseCompleted",

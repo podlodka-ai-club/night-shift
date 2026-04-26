@@ -161,6 +161,35 @@ describe("ticketWorkflow", () => {
     expect(mockReview).toHaveBeenCalledOnce();
   });
 
+  it("passes a worktree-backed spec path to review when starting in implement", async () => {
+    mockImplement.mockResolvedValue({
+      ...BASE_IMPLEMENT_RESULT,
+      worktreePath: "/tmp/ns/ticket-42",
+      specBundle: {
+        ...BASE_SPEC_BUNDLE,
+        specPath: "openspec/changes/my-change",
+      },
+    });
+    mockReview.mockResolvedValue({
+      status: "ready_to_merge",
+      result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" },
+    });
+
+    await ticketWorkflow({ ...BASE_INPUT, startPhase: "implement" });
+
+    expect(mockReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reviewInput: expect.objectContaining({
+          specBundle: expect.objectContaining({
+            specPath: "/tmp/ns/ticket-42/openspec/changes/my-change",
+          }),
+        }),
+      }),
+      "run-1",
+      "default",
+    );
+  });
+
   it("specify needs_input → blocks → specifyRetry → re-runs specify", async () => {
     mockSpecify
       .mockResolvedValueOnce({ status: "needs_input", openQuestions: [], assumptions: [], risks: [], summary: "need help" })

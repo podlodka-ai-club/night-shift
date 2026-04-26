@@ -224,9 +224,18 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
       throw new Error("Implement phase completed without PR result");
     }
 
+    const persistedBundle = latestSpecBundle ?? implResult.specBundle;
+    const reviewBundle =
+      latestSpecBundle || !implResult.worktreePath
+        ? persistedBundle
+        : {
+            ...persistedBundle,
+            specPath: `${implResult.worktreePath.replace(/[\\/]+$/, "")}/${persistedBundle.specPath.replace(/^[/\\]+/, "")}`,
+          };
+
     return {
       ticket: implResult.ticket,
-      specBundle: latestSpecBundle ?? implResult.specBundle,
+      specBundle: reviewBundle,
       pr: implResult.result.pr,
     };
   }
