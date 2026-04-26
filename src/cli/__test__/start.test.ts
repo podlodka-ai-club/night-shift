@@ -90,4 +90,12 @@ describe("night-shift start CLI", () => {
     expect(code).toBe(64);
     expect(stderr).toContain("missing");
   });
+
+  it("uses --repo-root for repo-local config discovery", async () => {
+    const code = await main(["PVTI_abc", "--change", "my-change", "--repo-root", "/tmp/app"], {});
+
+    expect(code).toBe(0);
+    const { loadConfig } = await import("../../config/loader.js");
+    expect(loadConfig).toHaveBeenCalledWith({ cwd: "/tmp/app" });
+  });
 });

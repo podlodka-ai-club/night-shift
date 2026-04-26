@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AgentAdapter } from "./events.js";
 
 /**
  * Closed set of agent roles. New roles require a code change, not config.
@@ -11,6 +12,13 @@ export const AgentRoleSchema = z.enum([
   "subagent",
 ]);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
+
+export const BUILTIN_ADAPTER_IDS = ["codex", "claude-agent"] as const;
+export type BuiltInAdapterId = (typeof BUILTIN_ADAPTER_IDS)[number];
+
+export function isBuiltInAdapterId(value: string): value is BuiltInAdapterId {
+  return (BUILTIN_ADAPTER_IDS as readonly string[]).includes(value);
+}
 
 /**
  * Token usage as reported by a provider turn.
@@ -34,6 +42,14 @@ export const ModelPricingSchema = z.object({
 });
 export type ModelPricing = z.infer<typeof ModelPricingSchema>;
 
+export interface AgentAdapterFactoryContext {
+  adapterConfig?: unknown;
+  pricingOverrides?: Readonly<Record<string, ModelPricing>>;
+}
+
+export type AgentAdapterFactory = (context: AgentAdapterFactoryContext) => AgentAdapter;
+export type AgentAdapterRegistry = Readonly<Record<string, AgentAdapterFactory>>;
+
 /**
  * Options for opening a session. The observability fields (runId, ticketId,
  * profileId) are required so every AgentInvoked event is correlatable.
@@ -46,6 +62,7 @@ export const OpenSessionOptionsSchema = z.object({
   role: AgentRoleSchema,
   model: z.string().min(1),
   systemPrompt: z.string().optional(),
+  skills: z.array(z.string().min(1)).optional(),
   workingDirectory: z.string().optional(),
   runId: z.string().min(1),
   ticketId: z.string().min(1),

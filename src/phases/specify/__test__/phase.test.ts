@@ -456,7 +456,7 @@ describe("runSpecifyPhase", () => {
         openspecCli: {
           async validate(name, opts) {
             capturedValidationCwd = opts?.cwd;
-            return openspecCli.validate(name, opts);
+            return { ok: true as const };
           },
         },
         runId: "r",

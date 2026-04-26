@@ -1,20 +1,17 @@
 import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { loadConfig } from "../config/loader.js";
-import { NightShiftConfigSchema } from "../config/schema.js";
-import { CodexAdapter, ClaudeAgentAdapter } from "../adapters/index.js";
-import type { AgentAdapter } from "../adapters/events.js";
 import { createGitHubClient } from "../github/factory.js";
 import { runReviewPhase, type ReviewFs } from "../phases/review/phase.js";
 import { ReviewPhaseError } from "../phases/review/errors.js";
 import type { ReviewInput } from "../contracts/review.js";
+import { createRoleAdapter, loadRepoLocalConfig } from "./shared.js";
 
 const USAGE = `night-shift review
 
 Usage:
   night-shift review <projectItemId> [--iteration <n>]
-                     [--config <path>]
+                     [--config <path>] [--repo-root <path>]
                      [--run-id <id>] [--profile <id>]
 
 Runs the Review phase against a PR in "In review" status. Produces a
@@ -47,6 +44,7 @@ export async function main(
       options: {
         iteration: { type: "string" },
         config: { type: "string" },
+        "repo-root": { type: "string" },
         "run-id": { type: "string" },
         profile: { type: "string" },
         help: { type: "boolean", short: "h" },
@@ -85,14 +83,11 @@ export async function main(
   const profileId = args.values.profile ?? "default";
 
   try {
-    const config = await loadConfig({
-      ...(args.values.config !== undefined
-        ? { explicitPath: args.values.config }
-        : {}),
+    const { config, repoRoot } = await loadRepoLocalConfig({
+      ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
+      ...(args.values["repo-root"] !== undefined ? { repoRoot: args.values["repo-root"] } : {}),
     });
-    const resolved = NightShiftConfigSchema.parse(config);
-    const repoRoot = path.resolve(resolved.repoRoot ?? process.cwd());
-    const githubInput = resolved.github ?? {
+    const githubInput = config.github ?? {
       appId: env.GITHUB_APP_ID,
       installationId: env.GITHUB_INSTALLATION_ID,
       privateKey: env.GITHUB_PRIVATE_KEY,
@@ -103,16 +98,8 @@ export async function main(
     };
     const github = await createGitHubClient(githubInput);
 
-    const reviewRole = resolved.roles.reviewer;
-    if (!reviewRole) {
-      process.stderr.write("config.roles.reviewer must be defined\n");
-      return 2;
-    }
-    const makeAdapter = (provider: string): AgentAdapter =>
-      provider === "claude-agent"
-        ? new ClaudeAgentAdapter()
-        : new CodexAdapter();
-    const adapter = makeAdapter(reviewRole.provider);
+    const reviewRole = config.roles.reviewer;
+    const adapter = createRoleAdapter(config, "reviewer");
 
     // Resolve iteration if not provided
     if (iteration === undefined) {
@@ -179,10 +166,10 @@ export async function main(
         agent: adapter,
         fs: makeFs(),
         clock: { now: () => new Date() },
-        config: resolved,
+        config,
         runId,
         profileId,
-        reviewerModel: reviewRole.model,
+        reviewerModel: reviewRole?.model ?? "gpt-5.4",
         workingDirectory: repoRoot,
       },
     );

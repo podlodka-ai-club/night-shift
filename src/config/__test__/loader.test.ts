@@ -2,22 +2,28 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { defineNightShiftConfig } from "../index.js";
 import { loadConfig } from "../loader.js";
 import { DEFAULT_CONFIG, NightShiftConfigSchema } from "../schema.js";
 
 let tmp: string;
 let originalEnv: string | undefined;
+let originalGithubToken: string | undefined;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "nightshift-cfg-"));
   originalEnv = process.env.NIGHT_SHIFT_CONFIG;
+  originalGithubToken = process.env.GITHUB_TOKEN;
   delete process.env.NIGHT_SHIFT_CONFIG;
+  delete process.env.GITHUB_TOKEN;
 });
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
   if (originalEnv === undefined) delete process.env.NIGHT_SHIFT_CONFIG;
   else process.env.NIGHT_SHIFT_CONFIG = originalEnv;
+  if (originalGithubToken === undefined) delete process.env.GITHUB_TOKEN;
+  else process.env.GITHUB_TOKEN = originalGithubToken;
 });
 
 describe("loadConfig", () => {
@@ -69,13 +75,85 @@ describe("loadConfig", () => {
     expect(cfg.roles.specifier?.model).toBe("gpt-5.4");
   });
 
-  it("rejects an invalid provider", async () => {
+  it("loads an adjacent .env file before importing the config", async () => {
+    const p = join(tmp, "night-shift.config.mjs");
+    writeFileSync(join(tmp, ".env"), "GITHUB_TOKEN=from-file\n");
+    writeFileSync(
+      p,
+      `export default {
+        github: {
+          token: process.env.GITHUB_TOKEN,
+          owner: "octo-org",
+          repo: "octo-repo",
+          projectNodeId: "PVT_123"
+        }
+      };`,
+    );
+
+    const cfg = await loadConfig({ cwd: tmp });
+
+    expect(cfg.github?.token).toBe("from-file");
+  });
+
+  it("preserves process env values over an adjacent .env file", async () => {
+    const p = join(tmp, "night-shift.config.mjs");
+    process.env.GITHUB_TOKEN = "from-shell";
+    writeFileSync(join(tmp, ".env"), "GITHUB_TOKEN=from-file\n");
+    writeFileSync(
+      p,
+      `export default {
+        github: {
+          token: process.env.GITHUB_TOKEN,
+          owner: "octo-org",
+          repo: "octo-repo",
+          projectNodeId: "PVT_123"
+        }
+      };`,
+    );
+
+    const cfg = await loadConfig({ cwd: tmp });
+
+    expect(cfg.github?.token).toBe("from-shell");
+  });
+
+  it("accepts custom adapter registration when the role references it", async () => {
+    const p = join(tmp, "night-shift.config.mjs");
+    writeFileSync(
+      p,
+      `export default {
+        adapterFactories: {
+          custom: () => ({ provider: "custom", openSession() { throw new Error("unused"); } })
+        },
+        roles: { implementer: { provider: "custom", model: "gpt-5.4" } }
+      };`,
+    );
+
+    const cfg = await loadConfig({ cwd: tmp });
+
+    expect(cfg.roles.implementer?.provider).toBe("custom");
+    expect(cfg.adapterFactories?.custom).toBeTypeOf("function");
+  });
+
+  it("rejects a reserved built-in adapter id in adapterFactories", async () => {
+    const p = join(tmp, "night-shift.config.mjs");
+    writeFileSync(
+      p,
+      `export default {
+        adapterFactories: {
+          codex: () => ({ provider: "codex", openSession() { throw new Error("unused"); } })
+        }
+      };`,
+    );
+    await expect(loadConfig({ cwd: tmp })).rejects.toThrow(/reserved built-in adapter id/);
+  });
+
+  it("rejects an invalid provider after registry validation", async () => {
     const p = join(tmp, "night-shift.config.mjs");
     writeFileSync(
       p,
       `export default { roles: { implementer: { provider: "bogus", model: "m" } } };`,
     );
-    await expect(loadConfig({ cwd: tmp })).rejects.toThrow();
+    await expect(loadConfig({ cwd: tmp })).rejects.toThrow(/not a built-in or registered adapter/);
   });
 
   it("honours NIGHT_SHIFT_CONFIG env var when no explicit path", async () => {
@@ -97,6 +175,18 @@ describe("loadConfig", () => {
 });
 
 describe("TemporalConfigSchema", () => {
+  it("defineNightShiftConfig returns its input unchanged", () => {
+    const factory = () => ({ provider: "custom", openSession() { throw new Error("unused"); } });
+    const cfg = defineNightShiftConfig({
+      ...DEFAULT_CONFIG,
+      adapterFactories: {
+        custom: factory,
+      },
+    });
+
+    expect(cfg.adapterFactories?.custom).toBe(factory);
+  });
+
   it("applies defaults when temporal key is omitted", () => {
     const parsed = NightShiftConfigSchema.parse(DEFAULT_CONFIG);
     expect(parsed.temporal).toEqual({

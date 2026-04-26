@@ -48,8 +48,30 @@ out of the stream early or the call throws. This is enforced by a
 2. Validate `OpenSessionOptions` with `OpenSessionOptionsSchema.parse(opts)` at the top of `openSession`.
 3. Translate provider events into `AgentStreamEvent` values and `AgentStreamEventSchema.parse` them before yielding to catch bugs.
 4. Compute cost via `computeCost(model, usage, pricingOverrides)`.
-5. Register the new provider in the `buildAdapter` switch in `index.ts`.
+5. Register the adapter in the target repository's `night-shift.config.ts` via `adapterFactories`.
 6. Add unit tests using a handcrafted mock of the SDK (see `codex.test.ts`).
+
+Example registration in a target repository:
+
+```ts
+import { defineNightShiftConfig } from "night-shift/config";
+import { createCopilotAdapter } from "./.night-shift/adapters/copilot";
+
+export default defineNightShiftConfig({
+  adapterFactories: {
+    copilot: ({ adapterConfig }) => createCopilotAdapter(adapterConfig),
+  },
+  adapters: {
+    copilot: { mode: "workspace-write" },
+  },
+  roles: {
+    implementer: { provider: "copilot", model: "gpt-5.4" },
+  },
+});
+```
+
+Built-in adapter ids (`codex`, `claude-agent`) are reserved and cannot be
+shadowed by custom factories.
 
 ## Module boundary
 

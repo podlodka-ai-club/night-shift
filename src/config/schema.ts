@@ -1,14 +1,16 @@
 import { z } from "zod";
+import type { AgentAdapterFactory } from "../adapters/types.js";
 import { AgentRoleSchema } from "../adapters/types.js";
 import { GitHubConfigSchema } from "../github/types.js";
 
-export const ProviderSchema = z.enum(["codex", "claude-agent"]);
+export const ProviderSchema = z.string().min(1);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 export const AgentRoleConfigSchema = z.object({
   provider: ProviderSchema,
   model: z.string().min(1),
   systemPromptFile: z.string().min(1).optional(),
+  skills: z.array(z.string().min(1)).optional(),
   providerOptions: z.unknown().optional(),
 });
 export type AgentRoleConfig = z.infer<typeof AgentRoleConfigSchema>;
@@ -31,7 +33,7 @@ export const CodexAdapterConfigSchema = z
 
 export const AdaptersConfigSchema = z.object({
   codex: CodexAdapterConfigSchema.optional(),
-});
+}).catchall(z.unknown());
 
 export const ReviewPhaseConfigSchema = z.object({
   maxDiffBytes: z.number().int().positive().default(65536),
@@ -71,8 +73,16 @@ export const NightShiftConfigSchema = z.object({
   temporal: TemporalConfigSchema.default({}),
   pickup: PickupConfigSchema.optional(),
 });
-export type NightShiftConfig = z.input<typeof NightShiftConfigSchema>;
-export type ResolvedNightShiftConfig = z.infer<typeof NightShiftConfigSchema>;
+export type NightShiftConfig = z.input<typeof NightShiftConfigSchema> & {
+  adapterFactories?: Readonly<Record<string, AgentAdapterFactory>>;
+};
+export type ResolvedNightShiftConfig = z.infer<typeof NightShiftConfigSchema> & {
+  adapterFactories?: Readonly<Record<string, AgentAdapterFactory>>;
+};
+
+export function defineNightShiftConfig<T extends NightShiftConfig>(config: T): T {
+  return config;
+}
 
 /**
  * Default configuration used when no `night-shift.config.*` file is found.

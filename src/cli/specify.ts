@@ -1,9 +1,6 @@
 import { parseArgs } from "node:util";
 import path from "node:path";
 import { simpleGit } from "simple-git";
-import { loadConfig } from "../config/loader.js";
-import { CodexAdapter, ClaudeAgentAdapter } from "../adapters/index.js";
-import type { AgentAdapter } from "../adapters/events.js";
 import { createGitHubClient } from "../github/factory.js";
 import { createSimpleGitOps } from "../git/index.js";
 import { createSimpleGitWorktreeOps } from "../worktree/index.js";
@@ -11,12 +8,13 @@ import { createOpenSpecCli } from "../phases/specify/openspec-cli.js";
 import { runSpecifyPhase, type SpecifyFs } from "../phases/specify/phase.js";
 import { SpecifyPhaseError } from "../phases/specify/errors.js";
 import { readdir, readFile, stat } from "node:fs/promises";
+import { createRoleAdapter, loadRepoLocalConfig } from "./shared.js";
 
 const USAGE = `night-shift specify
 
 Usage:
   night-shift specify --item <projectItemId> --change <change-name>
-                      [--config <path>]
+                      [--config <path>] [--repo-root <path>]
                       [--base-branch <branch>]
                       [--run-id <id>] [--profile <id>]
 
@@ -64,6 +62,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
         item: { type: "string" },
         change: { type: "string" },
         config: { type: "string" },
+        "repo-root": { type: "string" },
         "base-branch": { type: "string" },
         "run-id": { type: "string" },
         profile: { type: "string" },
@@ -91,10 +90,10 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const profileId = args.values.profile ?? "default";
 
   try {
-    const config = await loadConfig({
+    const { config, repoRoot } = await loadRepoLocalConfig({
       ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
+      ...(args.values["repo-root"] !== undefined ? { repoRoot: args.values["repo-root"] } : {}),
     });
-    const repoRoot = path.resolve(config.repoRoot ?? process.cwd());
     const githubInput = config.github ?? {
       appId: env.GITHUB_APP_ID,
       installationId: env.GITHUB_INSTALLATION_ID,
@@ -108,14 +107,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
     const gitInstance = simpleGit(repoRoot);
     const openspecCli = createOpenSpecCli();
     const roleConfig = config.roles.specifier;
-    if (!roleConfig) {
-      process.stderr.write("config.roles.specifier is not defined\n");
-      return 1;
-    }
-    const adapter: AgentAdapter =
-      roleConfig.provider === "claude-agent"
-        ? new ClaudeAgentAdapter()
-        : new CodexAdapter();
+    const adapter = createRoleAdapter(config, "specifier");
 
     const result = await runSpecifyPhase(
       {
@@ -129,7 +121,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
         baseBranch,
         runId,
         profileId,
-        model: roleConfig.model,
+        model: roleConfig?.model ?? "gpt-5.4",
       },
       { itemId, changeName },
     );

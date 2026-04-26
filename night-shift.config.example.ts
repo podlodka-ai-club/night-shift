@@ -1,30 +1,32 @@
-import type { NightShiftConfig } from "./src/config/schema.js";
+import { defineNightShiftConfig } from "night-shift/config";
 
 /**
- * Example Night Shift configuration. Copy to `night-shift.config.ts` (or
- * `.mjs`/`.mts`/`.js`) at the repo root and adjust to your needs.
+ * Example Night Shift configuration for a target repository that installs
+ * Night Shift as a private dependency.
  *
  * Discovery order:
  *   1. Explicit path passed to `loadConfig({ explicitPath })`
  *   2. `NIGHT_SHIFT_CONFIG` environment variable
  *   3. First matching `night-shift.config.{ts,mts,mjs,js}` under the cwd
  *
+ * Night Shift auto-loads `.env` next to this file before importing it, so
+ * `process.env.*` lookups are available during config evaluation.
+ *
  * Any role left unset falls back to `DEFAULT_CONFIG` (Codex + gpt-5.4).
  */
-const config: NightShiftConfig = {
-  // Local checkout Night Shift will read, modify, and validate.
-  // Relative paths are resolved from this config file's directory.
-  repoRoot: process.env.NIGHT_SHIFT_REPO_ROOT ?? "../your-target-repo",
+export default defineNightShiftConfig({
   roles: {
     specifier: {
       provider: "codex",
       model: "gpt-5.4",
       systemPromptFile: "prompts/specifier.md",
+      skills: ["openspec-propose", "openspec-explore"],
     },
     implementer: {
       provider: "codex",
       model: "gpt-5.4",
       systemPromptFile: "prompts/implementer.md",
+      skills: ["openspec-apply-change", "openspec-explore"],
     },
     // The reviewer runs often and gets a lot of context; prefer a cheaper
     // model here and rely on the quality-gate findings for correctness.
@@ -32,10 +34,12 @@ const config: NightShiftConfig = {
       provider: "codex",
       model: "gpt-5.4-mini",
       systemPromptFile: "prompts/reviewer.md",
+      skills: ["openspec-explore"],
     },
     subagent: {
       provider: "codex",
       model: "gpt-5.4-mini",
+      skills: ["openspec-explore"],
     },
   },
   qualityGates: {
@@ -43,7 +47,7 @@ const config: NightShiftConfig = {
     lint: true,
     test: true,
   },
-  // GitHub connection. Uses env vars from .env (see README).
+  // Local setup: put these values in `.env` next to this config file.
   //
   // Auth: provide `token` (PAT, simplest) or App credentials (appId + installationId + privateKeyPath).
   // Project: provide `projectNodeId` directly, or `projectNumber` + `projectOwner` + `projectOwnerType`
@@ -73,6 +77,11 @@ const config: NightShiftConfig = {
     namespace: "default",
     taskQueue: "night-shift",
   },
-};
-
-export default config;
+  // Example custom adapter registration:
+  // adapterFactories: {
+  //   copilot: ({ adapterConfig }) => createCopilotAdapter(adapterConfig),
+  // },
+  // adapters: {
+  //   copilot: { mode: "workspace-write" },
+  // },
+});

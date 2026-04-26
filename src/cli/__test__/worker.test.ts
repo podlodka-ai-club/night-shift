@@ -29,19 +29,19 @@ vi.mock("../../orchestration/worker.js", () => ({
 }));
 
 vi.mock("../../git/index.js", () => ({
-  createSimpleGitOps: (...args: unknown[]) => mockCreateSimpleGitOps(...args),
+  createSimpleGitOps: (arg: unknown) => mockCreateSimpleGitOps(arg),
 }));
 
 vi.mock("../../worktree/index.js", () => ({
-  createSimpleGitWorktreeOps: (...args: unknown[]) => mockCreateSimpleGitWorktreeOps(...args),
+  createSimpleGitWorktreeOps: (arg: unknown) => mockCreateSimpleGitWorktreeOps(arg),
 }));
 
 vi.mock("../../quality-gates/index.js", () => ({
-  createNodeQualityGateRunner: (...args: unknown[]) => mockCreateNodeQualityGateRunner(...args),
+  createNodeQualityGateRunner: () => mockCreateNodeQualityGateRunner(),
 }));
 
 vi.mock("../../phases/specify/openspec-cli.js", () => ({
-  createOpenSpecCli: (...args: unknown[]) => mockCreateOpenSpecCli(...args),
+  createOpenSpecCli: () => mockCreateOpenSpecCli(),
 }));
 
 vi.mock("simple-git", () => ({
@@ -91,17 +91,19 @@ describe("night-shift worker CLI", () => {
     const repoRoot = path.resolve("../feature-factory-target");
     mockLoadConfig.mockResolvedValue({
       ...resolvedConfig,
-      repoRoot,
     });
 
     const code = await main([
       "--config",
       "./night-shift.config.ts",
+      "--repo-root",
+      repoRoot,
     ]);
 
     expect(code).toBe(0);
     expect(mockLoadConfig).toHaveBeenCalledWith({
       explicitPath: "./night-shift.config.ts",
+      cwd: repoRoot,
     });
 
     const workerArgs = mockStartWorker.mock.calls[0]?.[0] as {

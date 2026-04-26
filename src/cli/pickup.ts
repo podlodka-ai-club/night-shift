@@ -1,14 +1,14 @@
 import { parseArgs } from "node:util";
 import { Connection, Client } from "@temporalio/client";
-import { loadConfig } from "../config/loader.js";
 import { createGitHubClient } from "../github/factory.js";
 import { deriveChangeName } from "../contracts/helpers.js";
 import { handleWorkflowTrigger } from "../orchestration/webhook-bridge.js";
+import { loadRepoLocalConfig } from "./shared.js";
 
 const USAGE = `night-shift pickup
 
 Usage:
-  night-shift pickup [--config <path>]
+  night-shift pickup [--config <path>] [--repo-root <path>]
 
 Scans the project board for Backlog and Ready items and starts
 a ticket workflow for each. Runs once (one-shot, no cron).
@@ -26,6 +26,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
       args: argv,
       options: {
         config: { type: "string" },
+        "repo-root": { type: "string" },
         help: { type: "boolean", short: "h" },
       },
       allowPositionals: false,
@@ -41,8 +42,9 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
   }
 
   try {
-    const config = await loadConfig({
+    const { config } = await loadRepoLocalConfig({
       ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
+      ...(args.values["repo-root"] !== undefined ? { repoRoot: args.values["repo-root"] } : {}),
     });
 
     const githubInput = config.github ?? {

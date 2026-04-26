@@ -66,7 +66,7 @@ describe("night-shift create-ticket CLI", () => {
     expect(stdout).toContain("PVTI_42");
     expect(stdout).toContain("improve-workflow-ticket-utility-42");
     expect(stdout).toContain(
-      "npm run start -- PVTI_42 --change improve-workflow-ticket-utility-42",
+      "npm exec night-shift -- start PVTI_42 --change improve-workflow-ticket-utility-42",
     );
   });
 
@@ -96,5 +96,13 @@ describe("night-shift create-ticket CLI", () => {
     const code = await main(["--title", "x", "--status", "Mystery"]);
     expect(code).toBe(64);
     expect(stderr).toContain("invalid --status value");
+  });
+
+  it("uses --repo-root for repo-local config discovery", async () => {
+    const code = await main(["--title", "x", "--repo-root", "/tmp/app"]);
+
+    expect(code).toBe(0);
+    const { loadConfig } = await import("../../config/loader.js");
+    expect(loadConfig).toHaveBeenCalledWith({ cwd: "/tmp/app" });
   });
 });

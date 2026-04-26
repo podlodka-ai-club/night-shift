@@ -7,6 +7,9 @@ import { CodexAdapter } from "./codex.js";
 import type { AgentAdapter, AgentSession } from "./events.js";
 import { instrumentSession } from "./instrumented.js";
 import type {
+  AgentAdapterFactory,
+  AgentAdapterFactoryContext,
+  AgentAdapterRegistry,
   AgentRole,
   ModelPricing,
   OpenSessionOptions,
@@ -35,6 +38,29 @@ export interface CreateAgentOptions {
   cwd?: string;
 }
 
+export const BUILTIN_ADAPTER_FACTORIES: AgentAdapterRegistry = Object.freeze({
+  codex: ({ pricingOverrides }: AgentAdapterFactoryContext) =>
+    new CodexAdapter(pricingOverrides ? { pricingOverrides } : {}),
+  "claude-agent": () => new ClaudeAgentAdapter(),
+});
+
+export function createAdapterRegistry(
+  config: Pick<NightShiftConfig, "adapterFactories">,
+): AgentAdapterRegistry {
+  const customFactories = config.adapterFactories ?? {};
+
+  for (const provider of Object.keys(customFactories)) {
+    if (provider in BUILTIN_ADAPTER_FACTORIES) {
+      throw new Error(`createAgent: provider \"${provider}\" is reserved for a built-in adapter`);
+    }
+  }
+
+  return Object.freeze({
+    ...BUILTIN_ADAPTER_FACTORIES,
+    ...customFactories,
+  });
+}
+
 /**
  * Instantiates the correct adapter for the role, opens a session with the
  * configured model + system prompt, and wraps it for automatic
@@ -45,7 +71,7 @@ export async function createAgent(opts: CreateAgentOptions): Promise<AgentSessio
   if (!roleConfig) {
     throw new Error(`createAgent: no role config for "${opts.role}"`);
   }
-  const adapter = opts.adapter ?? buildAdapter(roleConfig.provider, opts.pricingOverrides);
+  const adapter = opts.adapter ?? createConfiguredAdapter(roleConfig.provider, opts.config, opts.pricingOverrides);
 
   let systemPrompt: string | undefined;
   if (roleConfig.systemPromptFile) {
@@ -63,6 +89,7 @@ export async function createAgent(opts: CreateAgentOptions): Promise<AgentSessio
     ticketId: opts.ticketId,
     profileId: opts.profileId,
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+    ...(roleConfig.skills !== undefined ? { skills: roleConfig.skills } : {}),
     ...(roleConfig.providerOptions !== undefined
       ? { providerOptions: roleConfig.providerOptions as Record<string, unknown> }
       : {}),
@@ -77,16 +104,25 @@ export async function createAgent(opts: CreateAgentOptions): Promise<AgentSessio
   });
 }
 
-function buildAdapter(
+export function createConfiguredAdapter(
   provider: string,
+  config: Pick<NightShiftConfig, "adapterFactories" | "adapters">,
   pricingOverrides?: Readonly<Record<string, ModelPricing>>,
 ): AgentAdapter {
-  switch (provider) {
-    case "codex":
-      return new CodexAdapter(pricingOverrides ? { pricingOverrides } : {});
-    case "claude-agent":
-      return new ClaudeAgentAdapter();
-    default:
-      throw new Error(`createAgent: unknown provider "${provider}"`);
+  const registry = createAdapterRegistry(config);
+  const factory = registry[provider];
+
+  if (!factory) {
+    const available = Object.keys(registry).sort().join(", ");
+    throw new Error(
+      `createAgent: unknown provider \"${provider}\" (available: ${available})`,
+    );
   }
+
+  return factory({
+    ...(config.adapters?.[provider] !== undefined
+      ? { adapterConfig: config.adapters[provider] }
+      : {}),
+    ...(pricingOverrides !== undefined ? { pricingOverrides } : {}),
+  });
 }

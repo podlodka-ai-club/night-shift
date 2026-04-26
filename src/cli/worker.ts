@@ -3,26 +3,24 @@ import path from "node:path";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { simpleGit } from "simple-git";
 import { Client, Connection } from "@temporalio/client";
-import { loadConfig } from "../config/loader.js";
 import { startWorker, startPickupCronWorkflow, runWorkerUntilShutdown } from "../orchestration/worker.js";
 import { createGitHubClient } from "../github/factory.js";
 import type { GitHubClient } from "../github/client.js";
 import { createSimpleGitOps } from "../git/index.js";
 import { createSimpleGitWorktreeOps } from "../worktree/index.js";
 import { createNodeQualityGateRunner, type QualityGate } from "../quality-gates/index.js";
-import { CodexAdapter, ClaudeAgentAdapter } from "../adapters/index.js";
-import type { AgentAdapter } from "../adapters/events.js";
 import { createOpenSpecCli } from "../phases/specify/openspec-cli.js";
 import type { SpecifyFs } from "../phases/specify/phase.js";
 import type { ImplementFs } from "../phases/implement/phase.js";
 import type { ReviewFs } from "../phases/review/phase.js";
 import type { ActivityDepsFactory } from "../orchestration/activities.js";
 import type { ResolvedNightShiftConfig } from "../config/schema.js";
+import { createRoleAdapter, loadRepoLocalConfig } from "./shared.js";
 
 const USAGE = `night-shift worker
 
 Usage:
-  night-shift worker [--config <path>]
+  night-shift worker [--config <path>] [--repo-root <path>]
 
 Starts the Temporal worker that processes ticket workflows.
 
@@ -31,10 +29,6 @@ Exit codes:
   1  unexpected error
   64 usage error
 `;
-
-function makeAdapter(provider: string): AgentAdapter {
-  return provider === "claude-agent" ? new ClaudeAgentAdapter() : new CodexAdapter();
-}
 
 function makeSpecifyFs(repoRoot: string): SpecifyFs {
   return {
@@ -139,7 +133,7 @@ function buildDepsFactory(
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
         fs: makeSpecifyFs(repoRoot),
-        agent: makeAdapter(roleConfig.provider),
+        agent: createRoleAdapter(config, "specifier"),
         openspecCli,
         baseBranch: "main",
         runId,
@@ -154,12 +148,13 @@ function buildDepsFactory(
       return {
         github,
         git: createSimpleGitOps({ repoRoot, git: gitInstance }),
+        repoRoot,
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
         fs: makeImplementFs(),
         worktree: createSimpleGitWorktreeOps({ repoRoot, git: gitInstance }),
         gateRunner: createNodeQualityGateRunner(),
-        agent: makeAdapter(roleConfig.provider),
+        agent: createRoleAdapter(config, "implementer"),
         runId,
         profileId,
         implementerModel: roleConfig.model,
@@ -172,7 +167,7 @@ function buildDepsFactory(
       if (!roleConfig) throw new Error("config.roles.reviewer is not defined");
       return {
         github,
-        agent: makeAdapter(roleConfig.provider),
+        agent: createRoleAdapter(config, "reviewer"),
         fs: makeReviewFs(),
         clock: { now: () => new Date() },
         config,
@@ -196,6 +191,7 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
       args: argv,
       options: {
         config: { type: "string" },
+        "repo-root": { type: "string" },
         help: { type: "boolean", short: "h" },
       },
       allowPositionals: false,
@@ -211,10 +207,10 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
   }
 
   try {
-    const config = await loadConfig({
+    const { config, repoRoot } = await loadRepoLocalConfig({
       ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
+      ...(args.values["repo-root"] !== undefined ? { repoRoot: args.values["repo-root"] } : {}),
     });
-    const repoRoot = path.resolve(config.repoRoot ?? process.cwd());
 
     // Create GitHub client
     let github: GitHubClient | undefined;

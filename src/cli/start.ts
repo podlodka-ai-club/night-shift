@@ -1,14 +1,14 @@
 import { parseArgs } from "node:util";
 import { Connection, Client, WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
-import { loadConfig } from "../config/loader.js";
 import { createGitHubClient } from "../github/factory.js";
 import type { TicketWorkflowInput } from "../orchestration/workflow.js";
+import { loadRepoLocalConfig } from "./shared.js";
 
 const USAGE = `night-shift start
 
 Usage:
   night-shift start <projectItemId> --change <change-name>
-                    [--config <path>] [--profile <id>]
+                    [--config <path>] [--repo-root <path>] [--profile <id>]
 
 Starts a ticket workflow for the given project item.
 
@@ -26,6 +26,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
       options: {
         change: { type: "string" },
         config: { type: "string" },
+        "repo-root": { type: "string" },
         profile: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
@@ -49,8 +50,9 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
   }
 
   try {
-    const config = await loadConfig({
+    const { config } = await loadRepoLocalConfig({
       ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
+      ...(args.values["repo-root"] !== undefined ? { repoRoot: args.values["repo-root"] } : {}),
     });
 
     const githubInput = config.github ?? {

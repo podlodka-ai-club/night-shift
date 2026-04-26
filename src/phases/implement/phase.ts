@@ -7,6 +7,7 @@ import type {
   QualityGateResult as ContractQualityGateResult,
 } from "../../contracts/implement.js";
 import { ImplementationResultSchema } from "../../contracts/implement.js";
+import type { SpecBundle } from "../../contracts/specify.js";
 import type { Ticket } from "../../contracts/ticket.js";
 import type { GitOps } from "../../git/index.js";
 import type { GitHubClient } from "../../github/client.js";
@@ -53,6 +54,8 @@ export interface ImplementResult {
   status: ImplementStatus;
   ticketId: string;
   worktreePath?: string;
+  ticket?: Ticket;
+  specBundle?: SpecBundle;
   /** Full `ImplementationResult` when `status === "pr_opened"`. */
   result?: ImplementationResult;
   /** Short summary posted as a ticket comment. */
@@ -62,6 +65,8 @@ export interface ImplementResult {
 export interface RunImplementPhaseDeps {
   github: GitHubClient;
   git: GitOps;
+  gitForRepo?: (repoRoot: string) => GitOps;
+  repoRoot?: string;
   fs: ImplementFs;
   worktree: WorktreeOps;
   gateRunner: QualityGateRunner;
@@ -360,6 +365,8 @@ async function writeImplementerCommit(
   context: PreparedImplementContext,
   response: ImplementerResponse,
 ): Promise<string> {
+  const git = deps.gitForRepo ? deps.gitForRepo(context.worktreePath) : deps.git;
+
   try {
     await deps.fs.writeWorktreeFiles(
       context.worktreePath,
@@ -373,8 +380,11 @@ async function writeImplementerCommit(
   }
 
   try {
-    await deps.git.checkoutBranch(context.branch);
-    const { sha } = await deps.git.writeTree(
+    await git.checkoutBranch(context.branch);
+    if (response.filesWritten.length === 0) {
+      return await git.currentHeadSha();
+    }
+    const { sha } = await git.writeTree(
       response.filesWritten,
       response.commitMessage,
     );
@@ -534,6 +544,11 @@ async function publishPullRequest(
 function buildImplementResult(
   status: ImplementStatus,
   ticketId: string,
+  ticket: Ticket,
+  changeName: string,
+  branch: string,
+  specCommitSha: string,
+  repoRoot: string | undefined,
   worktreePath: string | undefined,
   summary: string,
   gateResults: ContractQualityGateResult[],
@@ -542,6 +557,15 @@ function buildImplementResult(
   const result: ImplementResult = {
     status,
     ticketId,
+    ticket,
+    specBundle: {
+      specPath: path.resolve(repoRoot ?? process.cwd(), "openspec", "changes", changeName),
+      branch,
+      openQuestions: [],
+      assumptions: [],
+      risks: [],
+      commitSha: specCommitSha,
+    },
     ...(worktreePath !== undefined ? { worktreePath } : {}),
     summary,
   };
@@ -650,6 +674,11 @@ export async function runImplementPhase(
     const result = buildImplementResult(
       status,
       prepared.ticket.id,
+      prepared.ticket,
+      input.changeName,
+      prepared.branch,
+      attemptResult.commitSha,
+      deps.repoRoot,
       worktreePath,
       summary,
       attemptResult.gateResults,

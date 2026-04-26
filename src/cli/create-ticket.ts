@@ -1,8 +1,8 @@
 import { parseArgs } from "node:util";
 import { deriveChangeName } from "../contracts/helpers.js";
-import { loadConfig } from "../config/loader.js";
 import { createGitHubClient } from "../github/factory.js";
 import { StatusNameSchema } from "../github/types.js";
+import { loadRepoLocalConfig } from "./shared.js";
 
 const USAGE = `night-shift create-ticket
 
@@ -11,7 +11,7 @@ Usage:
                            [--body <body>]
                            [--label <label> ...]
                            [--status <status>]
-                           [--config <path>]
+                           [--config <path>] [--repo-root <path>]
                            [--json]
 
 Creates a GitHub issue, adds it to the configured project board, sets the
@@ -55,6 +55,7 @@ export async function main(
         label: { type: "string", multiple: true },
         status: { type: "string" },
         config: { type: "string" },
+        "repo-root": { type: "string" },
         json: { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
@@ -85,10 +86,9 @@ export async function main(
   }
 
   try {
-    const config = await loadConfig({
-      ...(args.values.config !== undefined
-        ? { explicitPath: args.values.config }
-        : {}),
+    const { config } = await loadRepoLocalConfig({
+      ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
+      ...(args.values["repo-root"] !== undefined ? { repoRoot: args.values["repo-root"] } : {}),
     });
 
     const githubInput = config.github ?? {
@@ -114,7 +114,7 @@ export async function main(
     const result = {
       ...created,
       changeName,
-      startCommand: `npm run start -- ${created.itemId} --change ${changeName}`,
+      startCommand: `npm exec night-shift -- start ${created.itemId} --change ${changeName}`,
     };
 
     process.stdout.write(

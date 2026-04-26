@@ -14,6 +14,71 @@ const config: NightShiftConfig = {
 };
 
 describe("createAgent", () => {
+  it("uses a custom adapter factory when the role provider is custom", async () => {
+    const sink: EventSink = { emit() {} };
+    const session = await createAgent({
+      role: "implementer",
+      phase: "implement",
+      runId: "r",
+      ticketId: "T-1",
+      profileId: "p",
+      eventSink: sink,
+      config: {
+        roles: {
+          specifier: { provider: "codex", model: "gpt-5.4" },
+          implementer: { provider: "custom", model: "gpt-5.4" },
+          reviewer: { provider: "codex", model: "gpt-5.4" },
+          subagent: { provider: "codex", model: "gpt-5.4" },
+        },
+        adapterFactories: {
+          custom: () => new InMemoryFakeAdapter({
+            script: [
+              {
+                finalText: "custom-done",
+                usage: { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0 },
+                cost: 1,
+                events: [
+                  { kind: "turn-started" },
+                  {
+                    kind: "turn-completed",
+                    usage: { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0 },
+                    cost: 1,
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      },
+    });
+
+    const result = await session.run("go");
+    expect(result.finalText).toBe("custom-done");
+  });
+
+  it("reports available providers when provider resolution fails", async () => {
+    const sink: EventSink = { emit() {} };
+
+    await expect(
+      createAgent({
+        role: "implementer",
+        phase: "implement",
+        runId: "r",
+        ticketId: "T-1",
+        profileId: "p",
+        eventSink: sink,
+        config: {
+          roles: {
+            specifier: { provider: "codex", model: "gpt-5.4" },
+            implementer: { provider: "bogus", model: "gpt-5.4" },
+            reviewer: { provider: "codex", model: "gpt-5.4" },
+            subagent: { provider: "codex", model: "gpt-5.4" },
+          },
+        },
+      }),
+    ).rejects.toThrow(/available: claude-agent, codex/);
+  });
+
   it("integrates with fake adapter and emits AgentInvoked", async () => {
     const events: PhaseEvent[] = [];
     const sink: EventSink = {
@@ -55,5 +120,58 @@ describe("createAgent", () => {
       expect(events[0].phase).toBe("implement");
       expect(events[0].cost).toBe(100);
     }
+  });
+
+  it("passes configured skills through to the adapter session options", async () => {
+    const sink: EventSink = { emit() {} };
+    let captured: unknown;
+
+    const adapter = {
+      provider: "fake",
+      openSession(opts: unknown) {
+        captured = opts;
+        return new InMemoryFakeAdapter({
+          script: [{
+            finalText: "done",
+            usage: { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0 },
+            events: [
+              { kind: "turn-started" },
+              {
+                kind: "turn-completed",
+                usage: { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0 },
+                cost: 1,
+              },
+            ],
+          }],
+        }).openSession(opts);
+      },
+    };
+
+    const session = await createAgent({
+      role: "implementer",
+      phase: "implement",
+      runId: "r",
+      ticketId: "T-1",
+      profileId: "p",
+      eventSink: sink,
+      config: {
+        roles: {
+          specifier: { provider: "codex", model: "gpt-5.4" },
+          implementer: {
+            provider: "fake",
+            model: "gpt-5.4",
+            skills: ["openspec-apply-change", "openspec-explore"],
+          },
+          reviewer: { provider: "codex", model: "gpt-5.4" },
+          subagent: { provider: "codex", model: "gpt-5.4" },
+        },
+      },
+      adapter,
+    });
+
+    await session.run("go");
+    expect(captured).toMatchObject({
+      skills: ["openspec-apply-change", "openspec-explore"],
+    });
   });
 });

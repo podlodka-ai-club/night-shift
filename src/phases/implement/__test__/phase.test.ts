@@ -143,7 +143,9 @@ describe("runImplementPhase", () => {
     expect(mainGit.commits).toHaveLength(0);
     expect(mainGit.pushes).toHaveLength(0);
     expect(worktreeGit.commits).toHaveLength(1);
-    expect(worktreeGit.pushes).toHaveLength(1);
+    expect(worktreeGit.pushes).toHaveLength(0);
+    const pushed = gh.events.filter((e) => e.kind === "pushBranch");
+    expect(pushed).toHaveLength(1);
   });
 
   it("reuses unpublished branch state when a retry returns no new file changes", async () => {
@@ -205,7 +207,9 @@ describe("runImplementPhase", () => {
     expect(result.status).toBe("pr_opened");
     expect(result.result?.pr.branch).toBe("night-shift/acme/widgets#15-already-fixed");
     expect(worktreeGit.commits).toHaveLength(2);
-    expect(worktreeGit.pushes.at(-1)).toEqual({
+    expect(worktreeGit.pushes).toHaveLength(1);
+    const pushed = gh.events.filter((e) => e.kind === "pushBranch");
+    expect(pushed.at(-1)?.args).toEqual({
       branch: "night-shift/acme/widgets#15-already-fixed",
       sha: implementSha,
     });

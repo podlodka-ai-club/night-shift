@@ -2,9 +2,6 @@ import { parseArgs } from "node:util";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { simpleGit } from "simple-git";
-import { loadConfig } from "../config/loader.js";
-import { CodexAdapter, ClaudeAgentAdapter } from "../adapters/index.js";
-import type { AgentAdapter } from "../adapters/events.js";
 import { createGitHubClient } from "../github/factory.js";
 import { createSimpleGitOps } from "../git/index.js";
 import { createSimpleGitWorktreeOps } from "../worktree/index.js";
@@ -17,12 +14,13 @@ import {
   type ImplementFs,
 } from "../phases/implement/phase.js";
 import { ImplementPhaseError } from "../phases/implement/errors.js";
+import { createRoleAdapter, loadRepoLocalConfig } from "./shared.js";
 
 const USAGE = `night-shift implement
 
 Usage:
   night-shift implement --item <projectItemId> --change <change-name>
-                        [--config <path>]
+                        [--config <path>] [--repo-root <path>]
                         [--run-id <id>] [--profile <id>]
                         [--base-branch <branch>]
 
@@ -92,6 +90,7 @@ export async function main(
         item: { type: "string" },
         change: { type: "string" },
         config: { type: "string" },
+        "repo-root": { type: "string" },
         "run-id": { type: "string" },
         profile: { type: "string" },
         "base-branch": { type: "string" },
@@ -119,10 +118,10 @@ export async function main(
   const baseBranch = args.values["base-branch"] ?? "main";
 
   try {
-    const config = await loadConfig({
+    const { config, repoRoot } = await loadRepoLocalConfig({
       ...(args.values.config !== undefined ? { explicitPath: args.values.config } : {}),
+      ...(args.values["repo-root"] !== undefined ? { repoRoot: args.values["repo-root"] } : {}),
     });
-    const repoRoot = path.resolve(config.repoRoot ?? process.cwd());
     const githubInput = config.github ?? {
       appId: env.GITHUB_APP_ID,
       installationId: env.GITHUB_INSTALLATION_ID,
@@ -141,20 +140,13 @@ export async function main(
     });
     const gateRunner = createNodeQualityGateRunner();
     const implRole = config.roles.implementer;
-    if (!implRole) {
-      process.stderr.write(
-        "config.roles.implementer must be defined\n",
-      );
-      return 1;
-    }
-    const makeAdapter = (provider: string): AgentAdapter =>
-      provider === "claude-agent" ? new ClaudeAgentAdapter() : new CodexAdapter();
-    const adapter = makeAdapter(implRole.provider);
+    const adapter = createRoleAdapter(config, "implementer");
 
     const result = await runImplementPhase(
       {
         github,
         git,
+        repoRoot,
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
         fs: makeFs(),
@@ -163,7 +155,7 @@ export async function main(
         agent: adapter,
         runId,
         profileId,
-        implementerModel: implRole.model,
+        implementerModel: implRole?.model ?? "gpt-5.4",
         qualityGates: defaultQualityGates(),
         baseBranch,
       },

@@ -14,31 +14,66 @@ See [`openspec/project.md`](openspec/project.md) for the project context and [`o
 
 ### Install
 
+For normal use in a target repository, install a pinned private Git revision:
+
 ```bash
-git clone <repo-url> && cd night-shift
-npm install
+# from the repository Night Shift should automate
+npm install --save-dev 'git+ssh://git@github.com/your-org/night-shift.git#main'
 ```
+
+For local development against a checkout of Night Shift itself, install a local
+path dependency instead:
+
+```bash
+# absolute path
+npm install --save-dev /abs/path/to/night-shift
+
+# or a relative path if the repos are side by side
+npm install --save-dev file:../night-shift
+```
+
+Night Shift is currently intended to stay private and be installed into each
+target repository as a repo-local dependency. The private Git install is the
+recommended stable mode for teams and CI because it pins the version per repo.
+The local-path install is useful for dogfooding and development when you want a
+consumer repo to follow your working tree directly.
+
+Current local-path behavior: npm links both `node_modules/night-shift` and the
+local `night-shift` bin back to the source checkout. There is no separate build
+step today; the bin runs source files through `node --import tsx`, so source
+edits are picked up on the next command run. Reinstall only when package
+metadata changes, such as `package.json` dependencies, `bin`, or `exports`.
 
 ### Configure
 
-Copy the example config and edit it:
+Initialize a repo-local config file. `init` also checks for a minimal OpenSpec
+layout and bootstraps it when the repo does not have one yet (`openspec/specs`,
+`openspec/changes`, and `openspec/project.md`):
 
 ```bash
-cp night-shift.config.example.ts night-shift.config.ts
+npm exec night-shift -- init
 ```
 
 Key sections in [night-shift.config.example.ts](night-shift.config.example.ts):
 
 | Section | Purpose |
 |---|---|
-| `roles` | Agent provider + model per role (specifier, implementer, reviewer) |
-| `repoRoot` | Local checkout Night Shift should read, modify, and validate |
+| `roles` | Agent provider, model, and optional provider-native skill ids per role |
+| `adapterFactories` | Optional custom adapter registry for repo-local providers |
 | `qualityGates` | Toggle typecheck / lint / test gates |
 | `github` | GitHub App credentials, repo, and project board ID |
 | `pickup` | Auto-pickup: `enabled`, `intervalMinutes` (divisor of 60), `maxConcurrent` |
 | `temporal` | Temporal server URL, namespace, task queue |
 
-Config is discovered in order: explicit path → `NIGHT_SHIFT_CONFIG` env var → `night-shift.config.{ts,mts,mjs,js}` in cwd.
+Config is discovered in order: explicit path → `NIGHT_SHIFT_CONFIG` env var → `night-shift.config.{ts,mts,mjs,js}` in cwd. Night Shift auto-loads `.env` next to the resolved config file before importing it.
+
+The generated config seeds OpenSpec-oriented role skills by default: the
+specifier gets `openspec-propose` + `openspec-explore`, the implementer gets
+`openspec-apply-change` + `openspec-explore`, and reviewer/subagent get
+`openspec-explore`. Providers that support native skill selection can consume
+those ids directly from config.
+
+If you start from a repo that has no OpenSpec setup yet, run `npm exec night-shift -- init` first. That command now creates the minimal OpenSpec scaffold the specifier expects, in addition to `night-shift.config.ts`.
 
 ### GitHub Setup
 
@@ -60,9 +95,9 @@ GITHUB_REPO_OWNER=your-username
 GITHUB_REPO_NAME=your-repo
 ```
 
-The config reads these env vars automatically. The project's GraphQL node ID (`PVT_...`) is resolved from the project number at startup — no need to look it up manually.
+The config reads these env vars automatically, and Night Shift auto-loads `.env` before evaluating `night-shift.config.ts`. The project's GraphQL node ID (`PVT_...`) is resolved from the project number at startup — no need to look it up manually.
 
-`GITHUB_REPO_OWNER` and `GITHUB_REPO_NAME` select the GitHub repository Night Shift talks to over the API. They do not select the local checkout used for spec generation, implementation, or review. Set `repoRoot` in `night-shift.config.ts` to choose that local checkout; if omitted, Night Shift falls back to the current working directory.
+`GITHUB_REPO_OWNER` and `GITHUB_REPO_NAME` select the GitHub repository Night Shift talks to over the API. The local checkout Night Shift reads and modifies is the repository where you run the CLI, unless you pass `--repo-root <path>`.
 
 > **Tip:** For production, consider using a [GitHub App](https://docs.github.com/en/apps/creating-github-apps) instead of a PAT for bot identity, higher rate limits, and auto-rotating tokens. The config supports `appId` + `installationId` + `privateKeyPath` as an alternative — see [night-shift.config.example.ts](night-shift.config.example.ts).
 
@@ -86,24 +121,22 @@ temporal server start-dev
 Main worker run:
 
 ```bash
-# Set repoRoot in night-shift.config.ts to the application checkout
-# Night Shift should read, modify, and validate.
-npm run worker
+# Run inside the target repository
+npm exec night-shift -- worker
 ```
 
-This is the expected main mode. `repoRoot` in config selects the local checkout used by `specify`, `implement`, and `review`.
+This is the expected main mode. The current working directory is the selected repo root by default. To invoke Night Shift from another directory, use `npm exec --prefix /abs/path/to/target-repo night-shift -- <command> ...` or pass `--repo-root /abs/path/to/target-repo`.
 
 Workflow control commands:
 
 ```bash
-# Run from the Night Shift repo root, or pass --config if invoking elsewhere.
-# These commands do not use a local target checkout.
+# Run inside the target repository, or use --repo-root when invoking elsewhere.
 
 # Trigger a workflow for a project item
-npm run start -- <projectItemId> --change <change-name>
+npm exec night-shift -- start <projectItemId> --change <change-name>
 
 # One-shot: scan Backlog + Ready and start workflows
-npm run pickup
+npm exec night-shift -- pickup
 ```
 
 When `pickup.enabled` is `true` in your config, the worker automatically starts a cron workflow that scans the board every `intervalMinutes` — no separate command needed.
@@ -111,14 +144,14 @@ When `pickup.enabled` is `true` in your config, the worker automatically starts 
 Manual phase runs:
 
 ```bash
-npm run specify -- --item <projectItemId> --change <change-name>
-npm run implement -- --item <projectItemId> --change <change-name>
-npm run review -- <projectItemId> [--iteration <n>]
+npm exec night-shift -- specify --item <projectItemId> --change <change-name>
+npm exec night-shift -- implement --item <projectItemId> --change <change-name>
+npm exec night-shift -- review <projectItemId> [--iteration <n>]
 ```
 
-`specify` and `review` open agent sessions in the configured `repoRoot`. `implement` opens its agent session in the per-ticket worktree created under that repo root.
+`specify` and `review` open agent sessions in the selected repo root. `implement` opens its agent session in the per-ticket worktree created under that repo root.
 
-`start` and `pickup` are different: they only talk to GitHub and Temporal, so they do not need `--repo-root` and do not care which application checkout you want to modify later. Their only cwd-sensitive behavior is config discovery.
+`start` and `pickup` are different: they only talk to GitHub and Temporal, so they use the selected repo root only for config discovery and `.env` loading.
 
 ## Modules
 
@@ -135,18 +168,20 @@ npm run review -- <projectItemId> [--iteration <n>]
 - [`src/orchestration/`](src/orchestration/) — Durable ticket workflow engine built on Temporal (workflow, activities, worker, webhook bridge). See [`src/orchestration/README.md`](src/orchestration/README.md).
 - [`src/cli/`](src/cli/) — CLI entry points (`night-shift specify …`, `night-shift implement …`, `night-shift review …`, `night-shift worker`, `night-shift start …`, `night-shift pickup`).
 
-## Scripts
+## Developer Scripts
+
+These scripts are for developing Night Shift itself from this repository. End users in target repositories should prefer `npm exec night-shift -- ...`.
 
 - `npm run typecheck` — `tsc --noEmit`
 - `npm test` — run Vitest suites
 - `npm run lint:contracts` — guardrail: `src/contracts/**` imports only `zod` and siblings
 - `npm run lint:boundaries` — guardrail: enforce import boundaries for `contracts`, `adapters`, `config`, `github`, `git`, `phases`, `worktree`, `quality-gates`, `orchestration`, and `cli` modules
-- `npm run specify -- --item <projectItemId> --change <change-name>` — run the Specify phase against a single project item using the configured `repoRoot`
-- `npm run implement -- --item <projectItemId> --change <change-name>` — run the Implement phase against a single project item using the configured `repoRoot`
-- `npm run review -- <projectItemId> [--iteration <n>]` — run the Review phase against a single project item using the configured `repoRoot`
-- `npm run worker` — start the Temporal worker using the configured `repoRoot` (also runs the pickup cron when `pickup.enabled` is `true`)
-- `npm run start -- <projectItemId> --change <change-name>` — trigger a ticket workflow; run from the Night Shift repo root unless you pass `--config`, no target checkout required
-- `npm run pickup` — one-shot scan of Backlog + Ready columns; run from the Night Shift repo root unless you pass `--config`, no target checkout required
+- `npm run specify -- --item <projectItemId> --change <change-name>` — run the Specify phase entrypoint during Night Shift development
+- `npm run implement -- --item <projectItemId> --change <change-name>` — run the Implement phase entrypoint during Night Shift development
+- `npm run review -- <projectItemId> [--iteration <n>]` — run the Review phase entrypoint during Night Shift development
+- `npm run worker` — start the Temporal worker entrypoint during Night Shift development
+- `npm run start -- <projectItemId> --change <change-name>` — trigger a ticket workflow during Night Shift development
+- `npm run pickup` — one-shot scan of Backlog + Ready columns during Night Shift development
 
 ## Workflow Phases
 
