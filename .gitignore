@@ -7,3 +7,5 @@ night-shift.config.*
 !night-shift.config.example.ts
 *.log
 .DS_Store
+.tmp/
+.tmp-*/

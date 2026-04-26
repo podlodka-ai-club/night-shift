@@ -1,7 +1,10 @@
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { WorktreeOps } from "../index.js";
+import {
+  worktreePathSegmentsForTicket,
+  type WorktreeOps,
+} from "../index.js";
 
 export interface FakeWorktreeOps extends WorktreeOps {
   readonly events: ReadonlyArray<{
@@ -29,7 +32,7 @@ export function createInMemoryFakeWorktreeOps(config?: {
       return events;
     },
     async create({ ticketId, branch, fromRef }) {
-      const p = path.join(root, ticketId);
+      const p = path.join(root, ...worktreePathSegmentsForTicket(ticketId));
       await mkdir(p, { recursive: true });
       events.push({
         kind: "create",

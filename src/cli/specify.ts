@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import path from "node:path";
 import { simpleGit } from "simple-git";
 import { createGitHubClient } from "../github/factory.js";
+import { createAutomationWriteContext, withAutomationWriteContext } from "../github/provenance.js";
 import { createSimpleGitOps } from "../git/index.js";
 import { createSimpleGitWorktreeOps } from "../worktree/index.js";
 import { createOpenSpecCli } from "../phases/specify/openspec-cli.js";
@@ -103,7 +104,10 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
       repo: env.GITHUB_REPO,
       projectNodeId: env.GITHUB_PROJECT_NODE_ID,
     };
-    const github = await createGitHubClient(githubInput);
+    const github = withAutomationWriteContext(
+      await createGitHubClient(githubInput),
+      createAutomationWriteContext("specify-cli", "specify", runId, profileId),
+    );
     const gitInstance = simpleGit(repoRoot);
     const openspecCli = createOpenSpecCli();
     const roleConfig = config.roles.specifier;

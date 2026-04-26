@@ -53,9 +53,9 @@ export type ImplementStatus = "pr_opened" | "needs_input";
 export interface ImplementResult {
   status: ImplementStatus;
   ticketId: string;
-  worktreePath?: string;
   ticket?: Ticket;
   specBundle?: SpecBundle;
+  worktreePath?: string;
   /** Full `ImplementationResult` when `status === "pr_opened"`. */
   result?: ImplementationResult;
   /** Short summary posted as a ticket comment. */
@@ -68,6 +68,7 @@ export interface RunImplementPhaseDeps {
   gitForRepo?: (repoRoot: string) => GitOps;
   repoRoot?: string;
   fs: ImplementFs;
+  fsForRepo?: (repoRoot: string) => ImplementFs;
   worktree: WorktreeOps;
   gateRunner: QualityGateRunner;
   agent: AgentAdapter;
@@ -197,11 +198,14 @@ interface LoadedImplementContext {
   issue: ImplementIssue;
   operatorComments: Comment[];
   ticket: Ticket;
-  bundleFiles: SpecBundleFile[];
+  specPath: string;
 }
 
 interface PreparedImplementContext extends LoadedImplementContext {
   branch: string;
+  git: GitOps;
+  fs: ImplementFs;
+  bundleFiles: SpecBundleFile[];
   worktreePath: string;
 }
 
@@ -282,18 +286,14 @@ async function loadImplementContext(
     issue,
   );
 
-  const bundleFiles = await readRequiredSpecBundle(
-    deps.fs,
-    input.changeName,
-    ticket.id,
-  );
+  const specPath = path.posix.join("openspec", "changes", input.changeName);
 
   return {
     itemStatus,
     issue,
     operatorComments: filterOperatorComments(allComments),
     ticket,
-    bundleFiles,
+    specPath,
   };
 }
 
@@ -312,11 +312,27 @@ async function prepareImplementContext(
     branch,
   });
 
-  return {
-    ...context,
-    branch,
-    worktreePath: worktree.path,
-  };
+  try {
+    const git = deps.gitForRepo?.(worktree.path) ?? deps.git;
+    const fs = deps.fsForRepo?.(worktree.path) ?? deps.fs;
+    const bundleFiles = await readRequiredSpecBundle(
+      fs,
+      input.changeName,
+      context.ticket.id,
+    );
+
+    return {
+      ...context,
+      branch,
+      fs,
+      git,
+      bundleFiles,
+      worktreePath: worktree.path,
+    };
+  } catch (err) {
+    await deps.worktree.remove(worktree.path);
+    throw err;
+  }
 }
 
 async function runImplementerTurn(
@@ -365,18 +381,20 @@ async function writeImplementerCommit(
   context: PreparedImplementContext,
   response: ImplementerResponse,
 ): Promise<string> {
-  const git = deps.gitForRepo ? deps.gitForRepo(context.worktreePath) : deps.git;
+  const git = context.git;
 
-  try {
-    await deps.fs.writeWorktreeFiles(
-      context.worktreePath,
-      response.filesWritten,
-    );
-  } catch (err) {
-    throw new ImplementIoError(
-      `failed to write implementer files: ${(err as Error).message}`,
-      { ticketId: context.ticket.id, worktreePath: context.worktreePath, cause: err },
-    );
+  if (response.filesWritten.length > 0) {
+    try {
+      await deps.fs.writeWorktreeFiles(
+        context.worktreePath,
+        response.filesWritten,
+      );
+    } catch (err) {
+      throw new ImplementIoError(
+        `failed to write implementer files: ${(err as Error).message}`,
+        { ticketId: context.ticket.id, worktreePath: context.worktreePath, cause: err },
+      );
+    }
   }
 
   try {
@@ -519,14 +537,22 @@ async function publishPullRequest(
 ): Promise<ImplementPullRequest> {
   try {
     await deps.github.pushBranch(context.branch, commitSha);
-    return await deps.github.upsertPullRequest({
+    const pr = await deps.github.upsertPullRequest({
       head: context.branch,
       base: deps.baseBranch,
       title: `${context.ticket.id}: ${context.ticket.title}`,
       body: `Closes ${context.ticket.url}\n\n${summary}`,
     });
+    return {
+      ...pr,
+      headSha: commitSha,
+    };
   } catch (err) {
-    if (err instanceof GitHubPushRejectedError) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      err instanceof GitHubPushRejectedError ||
+      /force-with-lease|stale info|fetch first|non-fast-forward|lease/i.test(message)
+    ) {
       throw new ImplementGitError(
         `push rejected for ${context.branch}`,
         {
@@ -543,12 +569,8 @@ async function publishPullRequest(
 
 function buildImplementResult(
   status: ImplementStatus,
-  ticketId: string,
   ticket: Ticket,
-  changeName: string,
-  branch: string,
-  specCommitSha: string,
-  repoRoot: string | undefined,
+  specBundle: SpecBundle,
   worktreePath: string | undefined,
   summary: string,
   gateResults: ContractQualityGateResult[],
@@ -556,16 +578,9 @@ function buildImplementResult(
 ): ImplementResult {
   const result: ImplementResult = {
     status,
-    ticketId,
+    ticketId: ticket.id,
     ticket,
-    specBundle: {
-      specPath: path.resolve(repoRoot ?? process.cwd(), "openspec", "changes", changeName),
-      branch,
-      openQuestions: [],
-      assumptions: [],
-      risks: [],
-      commitSha: specCommitSha,
-    },
+    specBundle,
     ...(worktreePath !== undefined ? { worktreePath } : {}),
     summary,
   };
@@ -659,6 +674,14 @@ export async function runImplementPhase(
       pr ? { number: pr.number, url: pr.url } : undefined,
       attemptResult.response,
     );
+    const specBundle: SpecBundle = {
+      specPath: path.resolve(deps.repoRoot ?? process.cwd(), prepared.specPath),
+      branch: prepared.branch,
+      openQuestions: [],
+      assumptions: [],
+      risks: [],
+      commitSha: attemptResult.commitSha,
+    };
 
     await deps.github.upsertComment(
       prepared.issue.number,
@@ -673,12 +696,8 @@ export async function runImplementPhase(
 
     const result = buildImplementResult(
       status,
-      prepared.ticket.id,
       prepared.ticket,
-      input.changeName,
-      prepared.branch,
-      attemptResult.commitSha,
-      deps.repoRoot,
+      specBundle,
       worktreePath,
       summary,
       attemptResult.gateResults,

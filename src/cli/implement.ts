@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { simpleGit } from "simple-git";
 import { createGitHubClient } from "../github/factory.js";
+import { createAutomationWriteContext, withAutomationWriteContext } from "../github/provenance.js";
 import { createSimpleGitOps } from "../git/index.js";
 import { createSimpleGitWorktreeOps } from "../worktree/index.js";
 import {
@@ -34,7 +35,7 @@ Exit codes:
   64 usage error
 `;
 
-function makeFs(): ImplementFs {
+function makeFs(repoRoot: string): ImplementFs {
   return {
     async readSpecBundle(specPath) {
       const out: Array<{ path: string; content: string }> = [];
@@ -57,7 +58,7 @@ function makeFs(): ImplementFs {
             });
         }
       };
-      await walk(specPath, "");
+      await walk(path.join(repoRoot, specPath), "");
       return out;
     },
     async writeWorktreeFiles(worktreePath, files) {
@@ -131,7 +132,10 @@ export async function main(
       repo: env.GITHUB_REPO,
       projectNodeId: env.GITHUB_PROJECT_NODE_ID,
     };
-    const github = await createGitHubClient(githubInput);
+    const github = withAutomationWriteContext(
+      await createGitHubClient(githubInput),
+      createAutomationWriteContext("implement-cli", "implement", runId, profileId),
+    );
     const gitInstance = simpleGit(repoRoot);
     const git = createSimpleGitOps({ repoRoot, git: gitInstance });
     const worktree = createSimpleGitWorktreeOps({
@@ -149,7 +153,8 @@ export async function main(
         repoRoot,
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
-        fs: makeFs(),
+        fs: makeFs(repoRoot),
+        fsForRepo: makeFs,
         worktree,
         gateRunner,
         agent: adapter,

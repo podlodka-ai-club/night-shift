@@ -6,6 +6,7 @@ import { Client, Connection } from "@temporalio/client";
 import { startWorker, startPickupCronWorkflow, runWorkerUntilShutdown } from "../orchestration/worker.js";
 import { createGitHubClient } from "../github/factory.js";
 import type { GitHubClient } from "../github/client.js";
+import { createAutomationWriteContext, withAutomationWriteContext } from "../github/provenance.js";
 import { createSimpleGitOps } from "../git/index.js";
 import { createSimpleGitWorktreeOps } from "../worktree/index.js";
 import { createNodeQualityGateRunner, type QualityGate } from "../quality-gates/index.js";
@@ -55,7 +56,7 @@ function makeSpecifyFs(repoRoot: string): SpecifyFs {
   };
 }
 
-function makeImplementFs(): ImplementFs {
+function makeImplementFs(repoRoot: string): ImplementFs {
   return {
     async readSpecBundle(specPath) {
       const out: Array<{ path: string; content: string }> = [];
@@ -74,7 +75,7 @@ function makeImplementFs(): ImplementFs {
           else out.push({ path: path.posix.join(specPath, r), content: await readFile(full, "utf8") });
         }
       };
-      await walk(specPath, "");
+      await walk(path.join(repoRoot, specPath), "");
       return out;
     },
     async writeWorktreeFiles(worktreePath, files) {
@@ -87,10 +88,11 @@ function makeImplementFs(): ImplementFs {
   };
 }
 
-function makeReviewFs(): ReviewFs {
+function makeReviewFs(repoRoot: string): ReviewFs {
   return {
     async readFile(filePath: string): Promise<string> {
-      return readFile(filePath, "utf8");
+      const resolved = path.isAbsolute(filePath) ? filePath : path.join(repoRoot, filePath);
+      return readFile(resolved, "utf8");
     },
   };
 }
@@ -128,7 +130,10 @@ function buildDepsFactory(
       if (!roleConfig) throw new Error("config.roles.specifier is not defined");
       const gitInstance = simpleGit(repoRoot);
       return {
-        github,
+        github: withAutomationWriteContext(
+          github,
+          createAutomationWriteContext("worker", "specify", runId, profileId),
+        ),
         worktree: createSimpleGitWorktreeOps({ repoRoot, git: gitInstance }),
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
@@ -146,12 +151,16 @@ function buildDepsFactory(
       if (!roleConfig) throw new Error("config.roles.implementer is not defined");
       const gitInstance = simpleGit(repoRoot);
       return {
-        github,
+        github: withAutomationWriteContext(
+          github,
+          createAutomationWriteContext("worker", "implement", runId, profileId),
+        ),
         git: createSimpleGitOps({ repoRoot, git: gitInstance }),
         repoRoot,
         gitForRepo: (scopedRepoRoot: string) =>
           createSimpleGitOps({ repoRoot: scopedRepoRoot, git: simpleGit(scopedRepoRoot) }),
-        fs: makeImplementFs(),
+        fs: makeImplementFs(repoRoot),
+        fsForRepo: makeImplementFs,
         worktree: createSimpleGitWorktreeOps({ repoRoot, git: gitInstance }),
         gateRunner: createNodeQualityGateRunner(),
         agent: createRoleAdapter(config, "implementer"),
@@ -166,9 +175,12 @@ function buildDepsFactory(
       const roleConfig = config.roles.reviewer;
       if (!roleConfig) throw new Error("config.roles.reviewer is not defined");
       return {
-        github,
+        github: withAutomationWriteContext(
+          github,
+          createAutomationWriteContext("worker", "review", runId, profileId),
+        ),
         agent: createRoleAdapter(config, "reviewer"),
-        fs: makeReviewFs(),
+        fs: makeReviewFs(repoRoot),
         clock: { now: () => new Date() },
         config,
         runId,

@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createGitHubClient } from "../github/factory.js";
+import { createAutomationWriteContext, withAutomationWriteContext } from "../github/provenance.js";
 import { runReviewPhase, type ReviewFs } from "../phases/review/phase.js";
 import { ReviewPhaseError } from "../phases/review/errors.js";
 import type { ReviewInput } from "../contracts/review.js";
@@ -25,10 +26,11 @@ Exit codes:
   64 usage error
 `;
 
-function makeFs(): ReviewFs {
+function makeFs(repoRoot: string): ReviewFs {
   return {
-    async readFile(path: string): Promise<string> {
-      return readFile(path, "utf8");
+    async readFile(filePath: string): Promise<string> {
+      const resolved = path.isAbsolute(filePath) ? filePath : path.join(repoRoot, filePath);
+      return readFile(resolved, "utf8");
     },
   };
 }
@@ -96,7 +98,10 @@ export async function main(
       repo: env.GITHUB_REPO,
       projectNodeId: env.GITHUB_PROJECT_NODE_ID,
     };
-    const github = await createGitHubClient(githubInput);
+    const github = withAutomationWriteContext(
+      await createGitHubClient(githubInput),
+      createAutomationWriteContext("review-cli", "review", runId, profileId),
+    );
 
     const reviewRole = config.roles.reviewer;
     const adapter = createRoleAdapter(config, "reviewer");
@@ -164,7 +169,7 @@ export async function main(
       {
         github,
         agent: adapter,
-        fs: makeFs(),
+        fs: makeFs(repoRoot),
         clock: { now: () => new Date() },
         config,
         runId,
