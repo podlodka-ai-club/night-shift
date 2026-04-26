@@ -250,6 +250,24 @@ describe("ticketWorkflow", () => {
     expect(mockReview).not.toHaveBeenCalled();
   });
 
+  it("ends the attempt even when phase-failure marking also fails", async () => {
+    mockSpecify.mockRejectedValue(new Error("specifier agent failed: invalid schema"));
+    mockMarkPhaseFailure.mockRejectedValue(new Error("Not Found"));
+
+    await expect(ticketWorkflow(BASE_INPUT)).resolves.toBeUndefined();
+
+    expect(mockMarkPhaseFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "specify",
+        rootCause: "specifier agent failed: invalid schema",
+      }),
+      "run-1",
+      "default",
+    );
+    expect(mockImplement).not.toHaveBeenCalled();
+    expect(mockReview).not.toHaveBeenCalled();
+  });
+
   it("implement failure blocks the item and ends the attempt", async () => {
     mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
     mockImplement.mockRejectedValue(new Error("git push rejected"));

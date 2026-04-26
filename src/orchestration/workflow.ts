@@ -281,17 +281,21 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
     phase: "specify" | "implement" | "review",
     error: unknown,
   ): Promise<void> {
-    await markPhaseFailure(
-      {
-        itemId: input.itemId,
-        changeName: input.changeName,
-        phase,
-        rootCause: extractRootCauseMessage(error),
-        nextStepStatus: phase === "specify" ? "Backlog" : "Ready",
-      },
-      runId,
-      profileId,
-    );
+    try {
+      await markPhaseFailure(
+        {
+          itemId: input.itemId,
+          changeName: input.changeName,
+          phase,
+          rootCause: extractRootCauseMessage(error),
+          nextStepStatus: phase === "specify" ? "Backlog" : "Ready",
+        },
+        runId,
+        profileId,
+      );
+    } catch {
+      return;
+    }
   }
 
   async function waitForImplementRetry(): Promise<void> {
