@@ -72,6 +72,14 @@ describe("handleWorkflowTrigger", () => {
     expect(result).toEqual({ action: "signaled", workflowId: "ticket-42", signal: "implementRetry" });
   });
 
+  it("Ready event signals resume for review escalation", async () => {
+    mockQuery.mockResolvedValue("review_escalation");
+    const event = { ...baseEvent, currentStatus: "Ready" };
+
+    const result = await handleWorkflowTrigger(event, fakeClient, "q");
+    expect(result).toEqual({ action: "signaled", workflowId: "ticket-42", signal: "resume" });
+  });
+
   it("Ready event starts implement-phase workflow when none exists", async () => {
     const { WorkflowNotFoundError } = await import("@temporalio/client");
     mockQuery.mockRejectedValue(new WorkflowNotFoundError("missing", "ticket-42", "run-1"));
@@ -84,6 +92,7 @@ describe("handleWorkflowTrigger", () => {
     expect(mockStart).toHaveBeenCalledWith("ticketWorkflow", expect.objectContaining({
       taskQueue: "q",
       workflowId: "ticket-42",
+      workflowIdReusePolicy: "ALLOW_DUPLICATE",
       args: [expect.objectContaining({ startPhase: "implement" })],
     }));
   });
@@ -99,6 +108,7 @@ describe("handleWorkflowTrigger", () => {
     expect(mockStart).toHaveBeenCalledWith("ticketWorkflow", expect.objectContaining({
       taskQueue: "q",
       workflowId: "ticket-42",
+      workflowIdReusePolicy: "ALLOW_DUPLICATE",
       args: [expect.objectContaining({ startPhase: "implement" })],
     }));
   });

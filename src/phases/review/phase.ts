@@ -61,8 +61,11 @@ function isMissingFileError(err: unknown): boolean {
   );
 }
 
-function isOwnPullRequestApprovalError(err: unknown): boolean {
-  return err instanceof Error && /approve your own pull request/i.test(err.message);
+function isOwnPullRequestReviewRestrictionError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    /(approve|request changes on) your own pull request/i.test(err.message)
+  );
 }
 
 function isUnresolvableReviewCommentError(err: unknown): boolean {
@@ -204,7 +207,7 @@ export async function runReviewPhase(
   for (const relPath of ["proposal.md", "design.md", "tasks.md"]) {
     const fullPath = `${specPath}/${relPath}`;
     try {
-      const content = await deps.fs.readFile(fullPath);
+      const content = await deps.github.getFileContent(fullPath, pr.headSha);
       bundleFiles.push({ path: relPath, content });
     } catch (err) {
       if (relPath === "design.md" && isMissingFileError(err)) {
@@ -359,7 +362,7 @@ export async function runReviewPhase(
             body: summaryBody,
           });
         } catch (err) {
-          if (!isOwnPullRequestApprovalError(err)) {
+          if (!isOwnPullRequestReviewRestrictionError(err)) {
             throw err;
           }
           await deps.github.createReview(pr.number, {
@@ -392,10 +395,20 @@ export async function runReviewPhase(
           body: summaryBody,
         });
       } else {
-        await deps.github.createReview(pr.number, {
-          event: "REQUEST_CHANGES",
-          body: summaryBody,
-        });
+        try {
+          await deps.github.createReview(pr.number, {
+            event: "REQUEST_CHANGES",
+            body: summaryBody,
+          });
+        } catch (err) {
+          if (!isOwnPullRequestReviewRestrictionError(err)) {
+            throw err;
+          }
+          await deps.github.createReview(pr.number, {
+            event: "COMMENT",
+            body: summaryBody,
+          });
+        }
       }
 
       await upsertFindingComments(deps.github, pr.number, findings);

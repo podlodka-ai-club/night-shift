@@ -290,6 +290,40 @@ export async function getPullRequestDiff(
   return data;
 }
 
+export async function getFileContent(
+  rest: RestClient,
+  owner: string,
+  repo: string,
+  filePath: string,
+  ref?: string,
+): Promise<string> {
+  const { data } = await retryable(() =>
+    rest.request<{
+      content?: string;
+      encoding?: string;
+      type?: string;
+    }>("GET /repos/{owner}/{repo}/contents/{path}", {
+      owner,
+      repo,
+      path: filePath,
+      ...(ref !== undefined ? { ref } : {}),
+    }),
+  );
+
+  if (data.type !== "file" || typeof data.content !== "string") {
+    throw new GitHubApiError(422, `path ${filePath} is not a file`);
+  }
+
+  if (data.encoding !== "base64") {
+    throw new GitHubApiError(
+      422,
+      `unsupported encoding for ${filePath}: ${data.encoding ?? "unknown"}`,
+    );
+  }
+
+  return Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf8");
+}
+
 export async function listChangedFiles(
   rest: RestClient,
   owner: string,

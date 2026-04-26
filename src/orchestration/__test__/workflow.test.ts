@@ -161,7 +161,7 @@ describe("ticketWorkflow", () => {
     expect(mockReview).toHaveBeenCalledOnce();
   });
 
-  it("passes a worktree-backed spec path to review when starting in implement", async () => {
+  it("passes the repo-relative spec path to review when starting in implement", async () => {
     mockImplement.mockResolvedValue({
       ...BASE_IMPLEMENT_RESULT,
       worktreePath: "/tmp/ns/ticket-42",
@@ -181,7 +181,7 @@ describe("ticketWorkflow", () => {
       expect.objectContaining({
         reviewInput: expect.objectContaining({
           specBundle: expect.objectContaining({
-            specPath: "/tmp/ns/ticket-42/openspec/changes/my-change",
+            specPath: "openspec/changes/my-change",
           }),
         }),
       }),
@@ -362,6 +362,7 @@ describe("ticketWorkflow", () => {
     await flushMicrotasks();
 
     expect(queryValue("getBlockedReason")).toBe("review_escalation");
+    expect(mockImplement).toHaveBeenCalledTimes(4);
 
     // Let it succeed this time
     mockReview.mockResolvedValue({ status: "ready_to_merge", result: { verdict: "ready-to-merge", findings: [], iteration: 0, summary: "lgtm" } });
@@ -369,7 +370,7 @@ describe("ticketWorkflow", () => {
     await wfPromise;
   });
 
-  it("review escalate → blocks → resume → re-enters review at iteration 0", async () => {
+  it("review escalate → blocks → resume → reruns implement before review at iteration 0", async () => {
     mockSpecify.mockResolvedValue(BASE_SPECIFY_RESULT);
     mockImplement.mockResolvedValue(BASE_IMPLEMENT_RESULT);
     mockReview
@@ -387,7 +388,7 @@ describe("ticketWorkflow", () => {
     fireSignal("resume");
     await wfPromise;
 
-    // Review was called twice (once escalated, once after resume)
+    expect(mockImplement).toHaveBeenCalledTimes(2);
     expect(mockReview).toHaveBeenCalledTimes(2);
   });
 

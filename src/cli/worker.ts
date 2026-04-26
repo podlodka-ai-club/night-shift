@@ -3,7 +3,7 @@ import path from "node:path";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { simpleGit } from "simple-git";
 import { Client, Connection } from "@temporalio/client";
-import { startWorker, startPickupCronWorkflow, runWorkerUntilShutdown } from "../orchestration/worker.js";
+import { startWorker, startPickupSchedule, runWorkerUntilShutdown } from "../orchestration/worker.js";
 import { createGitHubClient } from "../github/factory.js";
 import type { GitHubClient } from "../github/client.js";
 import { createAutomationWriteContext, withAutomationWriteContext } from "../github/provenance.js";
@@ -252,13 +252,13 @@ export async function main(argv: string[], _env: NodeJS.ProcessEnv = process.env
 
       if (config.pickup?.enabled) {
         if (github) {
-          await startPickupCronWorkflow({ config });
-          process.stdout.write(`Pickup cron started (every ${config.pickup.intervalMinutes}m, max ${config.pickup.maxConcurrent} concurrent)\n`);
+          await startPickupSchedule({ config });
+          process.stdout.write(`Pickup schedule started (every ${config.pickup.intervalSeconds}s, max ${config.pickup.maxConcurrent} concurrent)\n`);
         } else {
-          process.stderr.write("Warning: pickup.enabled is true but no GitHub client available — pickup cron not started\n");
+          process.stderr.write("Warning: pickup.enabled is true but no GitHub client available — pickup schedule not started\n");
         }
       } else {
-        process.stdout.write("Pickup cron disabled (set pickup.enabled=true in night-shift.config.* to register it)\n");
+        process.stdout.write("Pickup schedule disabled (set pickup.enabled=true in night-shift.config.* to register it)\n");
       }
 
       await runWorkerUntilShutdown(worker);

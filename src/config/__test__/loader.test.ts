@@ -211,9 +211,9 @@ describe("PickupConfigSchema", () => {
   it("accepts valid pickup config", () => {
     const parsed = NightShiftConfigSchema.parse({
       ...DEFAULT_CONFIG,
-      pickup: { enabled: true, intervalMinutes: 10, maxConcurrent: 3 },
+      pickup: { enabled: true, intervalSeconds: 10, maxConcurrent: 3 },
     });
-    expect(parsed.pickup).toEqual({ enabled: true, intervalMinutes: 10, maxConcurrent: 3 });
+    expect(parsed.pickup).toEqual({ enabled: true, intervalSeconds: 10, maxConcurrent: 3 });
   });
 
   it("applies defaults when section is partial", () => {
@@ -221,7 +221,15 @@ describe("PickupConfigSchema", () => {
       ...DEFAULT_CONFIG,
       pickup: { enabled: true },
     });
-    expect(parsed.pickup).toEqual({ enabled: true, intervalMinutes: 5, maxConcurrent: 5 });
+    expect(parsed.pickup).toEqual({ enabled: true, intervalSeconds: 10, maxConcurrent: 5 });
+  });
+
+  it("accepts legacy minute-based pickup config", () => {
+    const parsed = NightShiftConfigSchema.parse({
+      ...DEFAULT_CONFIG,
+      pickup: { enabled: true, intervalMinutes: 1, maxConcurrent: 3 },
+    });
+    expect(parsed.pickup).toEqual({ enabled: true, intervalSeconds: 60, maxConcurrent: 3 });
   });
 
   it("allows omitting pickup entirely", () => {
@@ -229,22 +237,22 @@ describe("PickupConfigSchema", () => {
     expect(parsed.pickup).toBeUndefined();
   });
 
-  it("rejects intervalMinutes: 0", () => {
+  it("rejects intervalSeconds: 0", () => {
+    expect(() =>
+      NightShiftConfigSchema.parse({
+        ...DEFAULT_CONFIG,
+        pickup: { enabled: true, intervalSeconds: 0 },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects intervalMinutes: 0 in legacy configs", () => {
     expect(() =>
       NightShiftConfigSchema.parse({
         ...DEFAULT_CONFIG,
         pickup: { enabled: true, intervalMinutes: 0 },
       }),
     ).toThrow();
-  });
-
-  it("rejects non-divisor intervalMinutes (e.g., 7)", () => {
-    expect(() =>
-      NightShiftConfigSchema.parse({
-        ...DEFAULT_CONFIG,
-        pickup: { enabled: true, intervalMinutes: 7 },
-      }),
-    ).toThrow(/divisor of 60/);
   });
 
   it("rejects maxConcurrent: 0", () => {

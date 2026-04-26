@@ -5,7 +5,7 @@ const mockCreateRoleAdapter = vi.fn(() => ({ openSession: vi.fn() }));
 const mockCreateGitHubClient = vi.fn();
 const mockStartWorker = vi.fn();
 const mockRunWorkerUntilShutdown = vi.fn();
-const mockStartPickupCronWorkflow = vi.fn();
+const mockStartPickupSchedule = vi.fn();
 const mockAcquireWorkerLock = vi.fn();
 const mockCreateSimpleGitOps = vi.fn(({ repoRoot }) => ({ repoRoot }));
 const mockCreateSimpleGitWorktreeOps = vi.fn(({ repoRoot }) => ({ repoRoot }));
@@ -30,7 +30,7 @@ vi.mock("../worker-lock.js", () => ({
 
 vi.mock("../../orchestration/worker.js", () => ({
   startWorker: (...args: unknown[]) => mockStartWorker(...args),
-  startPickupCronWorkflow: (...args: unknown[]) => mockStartPickupCronWorkflow(...args),
+  startPickupSchedule: (...args: unknown[]) => mockStartPickupSchedule(...args),
   runWorkerUntilShutdown: (...args: unknown[]) => mockRunWorkerUntilShutdown(...args),
 }));
 
@@ -65,6 +65,11 @@ const resolvedConfig = {
     namespace: "default",
     taskQueue: "night-shift",
   },
+  pickup: {
+    enabled: true,
+    intervalSeconds: 10,
+    maxConcurrent: 5,
+  },
   github: {
     token: "test-token",
     owner: "acme",
@@ -92,7 +97,7 @@ describe("night-shift worker CLI", () => {
     mockCreateGitHubClient.mockResolvedValue(fakeGitHubClient);
     mockStartWorker.mockResolvedValue({});
     mockRunWorkerUntilShutdown.mockResolvedValue(undefined);
-    mockStartPickupCronWorkflow.mockResolvedValue(undefined);
+    mockStartPickupSchedule.mockResolvedValue(undefined);
     mockAcquireWorkerLock.mockResolvedValue({
       lockPath: "/tmp/repo/.night-shift/locks/worker.json",
       release: vi.fn().mockResolvedValue(undefined),
@@ -164,6 +169,7 @@ describe("night-shift worker CLI", () => {
     mockLoadRepoLocalConfig.mockResolvedValue({
       config: {
         ...resolvedConfig,
+        pickup: undefined,
       },
       repoRoot: "/tmp/repo",
     });
@@ -171,8 +177,8 @@ describe("night-shift worker CLI", () => {
     const code = await main([]);
 
     expect(code).toBe(0);
-    expect(mockStartPickupCronWorkflow).not.toHaveBeenCalled();
-    expect(stdout).toContain("Pickup cron disabled");
+    expect(mockStartPickupSchedule).not.toHaveBeenCalled();
+    expect(stdout).toContain("Pickup schedule disabled");
   });
 
   it("releases the worker lock when startup fails", async () => {

@@ -50,7 +50,7 @@ describe("night-shift init CLI", () => {
     expect(content).toContain('.env');
     expect(content).toContain('pickup: {');
     expect(content).toContain('enabled: true');
-    expect(content).toContain('intervalMinutes: 5');
+    expect(content).toContain('intervalSeconds: 10');
     expect(content).not.toContain('systemPromptFile');
     expect(content).toContain('adapterFactories');
     expect(content).not.toContain('skills');

@@ -47,19 +47,18 @@ export const TemporalConfigSchema = z.object({
 });
 export type TemporalConfig = z.infer<typeof TemporalConfigSchema>;
 
-const VALID_INTERVAL_MINUTES = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60] as const;
-
-export const PickupConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  intervalMinutes: z
-    .number()
-    .int()
-    .refine((v) => (VALID_INTERVAL_MINUTES as readonly number[]).includes(v), {
-      message: `intervalMinutes must be a divisor of 60: ${VALID_INTERVAL_MINUTES.join(", ")}`,
-    })
-    .default(5),
-  maxConcurrent: z.number().int().min(1).default(5),
-});
+export const PickupConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    intervalSeconds: z.number().int().min(1).optional(),
+    intervalMinutes: z.number().int().min(1).optional(),
+    maxConcurrent: z.number().int().min(1).default(5),
+  })
+  .transform(({ enabled, intervalSeconds, intervalMinutes, maxConcurrent }) => ({
+    enabled,
+    intervalSeconds: intervalSeconds ?? (intervalMinutes != null ? intervalMinutes * 60 : 10),
+    maxConcurrent,
+  }));
 export type PickupConfig = z.infer<typeof PickupConfigSchema>;
 
 export const NightShiftConfigSchema = z.object({

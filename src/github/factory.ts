@@ -27,6 +27,7 @@ import {
 import {
   createBranch,
   createReview,
+  getFileContent,
   getPullRequestDiff,
   listChangedFiles,
   listReviewComments,
@@ -246,6 +247,9 @@ export async function createGitHubClient(
     },
     async listChangedFiles(pullNumber) {
       return listChangedFiles(rest, owner, repo, pullNumber);
+    },
+    async getFileContent(filePath, ref) {
+      return getFileContent(rest, owner, repo, filePath, ref);
     },
     async listReviewComments(pullNumber) {
       return listReviewComments(rest, owner, repo, pullNumber);

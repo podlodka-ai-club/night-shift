@@ -91,11 +91,14 @@ function makeInput(overrides: Partial<ReviewInput> = {}): ReviewInput {
 function seedBase(gh: FakeGitHubClient, status: string = "In review") {
   gh.seedIssue({ number: 1, title: "Add feature" });
   gh.seedItem({ itemId: "PVTI_1", issueNumber: 1, status: status as never });
-  gh.seedPr({ number: 1, branch: "ns/acme-widgets-1" });
+  gh.seedPr({ number: 1, branch: "ns/acme-widgets-1", headSha: "abc1234" });
   gh.seedDiff(1, "diff --git a/src/a.ts b/src/a.ts\n+added");
   gh.seedChangedFiles(1, [
     { path: "src/a.ts", additions: 1, deletions: 0, status: "modified" },
   ]);
+  gh.seedFileContent("openspec/changes/c/proposal.md", "# Proposal", "abc1234");
+  gh.seedFileContent("openspec/changes/c/design.md", "# Design", "abc1234");
+  gh.seedFileContent("openspec/changes/c/tasks.md", "# Tasks", "abc1234");
 }
 
 function buildDeps(
@@ -159,6 +162,10 @@ describe("runReviewPhase", () => {
     const agent = new InMemoryFakeAdapter({ script: [] });
     const gh = createInMemoryFakeGitHubClient();
     seedBase(gh);
+    const originalGetFileContent = gh.getFileContent.bind(gh);
+    gh.seedFileContent("openspec/changes/c/design.md", "content", "abc1234");
+    gh.seedFileContent("openspec/changes/c/tasks.md", "content", "abc1234");
+
     const deps: ReviewDeps = {
       github: gh,
       agent,
@@ -174,6 +181,10 @@ describe("runReviewPhase", () => {
       profileId: "default",
       reviewerModel: "gpt-test",
     };
+    gh.getFileContent = async (filePath: string, ref?: string) => {
+      if (filePath.endsWith("proposal.md")) throw new Error("ENOENT");
+      return await originalGetFileContent(filePath, ref);
+    };
     await expect(
       runReviewPhase(phaseInput(), deps),
     ).rejects.toBeInstanceOf(ReviewIoError);
@@ -187,17 +198,17 @@ describe("runReviewPhase", () => {
     const { gh, deps } = buildDeps(agent);
     seedBase(gh);
 
-    const fs = makeFs();
+    const originalGetFileContent = gh.getFileContent.bind(gh);
+    gh.getFileContent = async (filePath: string, ref?: string) => {
+      if (filePath.endsWith("design.md")) {
+        throw new Error("ENOENT");
+      }
+      return await originalGetFileContent(filePath, ref);
+    };
+
     const result = await runReviewPhase(phaseInput(), {
       ...deps,
-      fs: {
-        async readFile(filePath: string) {
-          if (filePath.endsWith("design.md")) {
-            throw new Error("ENOENT");
-          }
-          return await fs.readFile(filePath);
-        },
-      },
+      github: gh,
     });
 
     expect(result.status).toBe("ready_to_merge");
@@ -258,6 +269,41 @@ describe("runReviewPhase", () => {
       (e) => (e.args as { status: string }).status,
     );
     expect(statuses).toContain("Ready to merge");
+  });
+
+  it("falls back to COMMENT when GitHub rejects requesting changes on Night Shift's own PR", async () => {
+    const agent = new InMemoryFakeAdapter({
+      script: [{
+        events: [],
+        finalText: reviewResponseJson({
+          findings: [{ severity: "error", message: "fix this" }],
+        }),
+        usage: usage(),
+      }],
+    });
+    const gh = createInMemoryFakeGitHubClient();
+    seedBase(gh);
+    const originalCreateReview = gh.createReview.bind(gh);
+    let firstAttempt = true;
+    gh.createReview = async (pullNumber, input) => {
+      if (firstAttempt && input.event === "REQUEST_CHANGES") {
+        firstAttempt = false;
+        throw new Error("Review Can not request changes on your own pull request");
+      }
+      return await originalCreateReview(pullNumber, input);
+    };
+
+    const { deps } = buildDeps(agent, gh);
+    const result = await runReviewPhase(phaseInput(), deps);
+
+    expect(result.status).toBe("needs_fix");
+    const reviews = getEvents(gh, "createReview");
+    expect(reviews).toHaveLength(1);
+    expect((reviews[0]!.args as { event: string }).event).toBe("COMMENT");
+    const statuses = getEvents(gh, "setStatus").map(
+      (e) => (e.args as { status: string }).status,
+    );
+    expect(statuses).toContain("Ready");
   });
 
   it("passes workingDirectory to the reviewer session when provided", async () => {

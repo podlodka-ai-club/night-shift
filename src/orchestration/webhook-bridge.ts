@@ -3,6 +3,7 @@ import {
   WorkflowExecutionAlreadyStartedError,
   WorkflowNotFoundError,
 } from "@temporalio/client";
+import { WorkflowIdReusePolicy } from "@temporalio/common";
 import type { BlockedReason, TicketWorkflowInput } from "./workflow.js";
 
 export interface WebhookEvent {
@@ -58,6 +59,7 @@ async function handleBacklog(
     await client.workflow.start("ticketWorkflow", {
       taskQueue,
       workflowId,
+      workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
       args: [input],
     });
     return { action: "started", workflowId };
@@ -99,6 +101,10 @@ async function handleReady(
     await signalWorkflow(client, workflowId, "implementRetry");
     return { action: "signaled", workflowId, signal: "implementRetry" };
   }
+  if (reason === "review_escalation") {
+    await signalWorkflow(client, workflowId, "resume");
+    return { action: "signaled", workflowId, signal: "resume" };
+  }
 
   // Closed runs can still answer queries, so fall back to a fresh implement start
   // unless the current workflow is at a resumable human gate handled above.
@@ -122,6 +128,7 @@ async function startReadyWorkflow(
     await client.workflow.start("ticketWorkflow", {
       taskQueue,
       workflowId,
+      workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
       args: [input],
     });
     return { action: "started", workflowId };
@@ -137,6 +144,10 @@ async function startReadyWorkflow(
   if (reason === "implement_needs_input") {
     await signalWorkflow(client, workflowId, "implementRetry");
     return { action: "signaled", workflowId, signal: "implementRetry" };
+  }
+  if (reason === "review_escalation") {
+    await signalWorkflow(client, workflowId, "resume");
+    return { action: "signaled", workflowId, signal: "resume" };
   }
 
   return { action: "ignored", workflowId };

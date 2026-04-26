@@ -1,5 +1,12 @@
 import { Worker, NativeConnection } from "@temporalio/worker";
-import { Client, Connection } from "@temporalio/client";
+import {
+  Client,
+  Connection,
+  ScheduleAlreadyRunning,
+  ScheduleClient,
+  ScheduleOverlapPolicy,
+  WorkflowNotFoundError,
+} from "@temporalio/client";
 import { fileURLToPath } from "node:url";
 import type { ResolvedNightShiftConfig } from "../config/schema.js";
 import { setActivityDepsFactory, type ActivityDepsFactory } from "./activities.js";
@@ -10,6 +17,8 @@ import type { GitHubClient } from "../github/client.js";
 const WORKFLOWS_PATH = fileURLToPath(new URL("./workflow.ts", import.meta.url));
 const ORCHESTRATION_DIR = fileURLToPath(new URL("./", import.meta.url));
 const TEMPORAL_TYPESCRIPT_LOADER_PATH = fileURLToPath(new URL("./temporal-typescript-loader.cjs", import.meta.url));
+const PICKUP_SCHEDULE_ID = "pickup-schedule";
+const LEGACY_PICKUP_CRON_WORKFLOW_ID = "pickup-cron";
 
 function addWorkflowTypeScriptLoader(config: any): any {
   const existingRules = Array.isArray(config.module?.rules) ? config.module.rules : [];
@@ -68,7 +77,18 @@ export async function startWorker(opts: StartWorkerOpts): Promise<Worker> {
   return worker;
 }
 
-export async function startPickupCronWorkflow(opts: {
+async function stopLegacyPickupCronWorkflow(client: Client): Promise<void> {
+  try {
+    await client.workflow.getHandle(LEGACY_PICKUP_CRON_WORKFLOW_ID).terminate("Pickup cron migrated to schedule");
+  } catch (err) {
+    if (err instanceof WorkflowNotFoundError) {
+      return;
+    }
+    throw err;
+  }
+}
+
+export async function startPickupSchedule(opts: {
   config: ResolvedNightShiftConfig;
 }): Promise<void> {
   const { config } = opts;
@@ -80,39 +100,39 @@ export async function startPickupCronWorkflow(opts: {
     address: temporalConfig.serverUrl,
   });
   const client = new Client({ connection: clientConnection, namespace: temporalConfig.namespace });
+  const scheduleClient = new ScheduleClient({ connection: clientConnection, namespace: temporalConfig.namespace });
 
-  const cronSchedule = `*/${pickup.intervalMinutes} * * * *`;
+  await stopLegacyPickupCronWorkflow(client);
+
+  const scheduleOptions = {
+    scheduleId: PICKUP_SCHEDULE_ID,
+    spec: {
+      intervals: [{ every: `${pickup.intervalSeconds}s` }],
+    },
+    action: {
+      type: "startWorkflow" as const,
+      workflowType: "pickupWorkflow",
+      taskQueue: temporalConfig.taskQueue,
+      args: [pickup.maxConcurrent],
+    },
+    policies: {
+      overlap: ScheduleOverlapPolicy.SKIP,
+    },
+  };
 
   try {
-    await client.workflow.start("pickupWorkflow", {
-      taskQueue: temporalConfig.taskQueue,
-      workflowId: "pickup-cron",
-      cronSchedule,
-      args: [pickup.maxConcurrent],
+    await scheduleClient.create({
+      ...scheduleOptions,
+      state: { triggerImmediately: true },
     });
   } catch (err: unknown) {
-    // Ignore if already running
-    if (
-      err != null &&
-      typeof err === "object" &&
-      "name" in err &&
-      (err as { name: string }).name === "WorkflowExecutionAlreadyStartedError"
-    ) {
-      // Cron already exists — fall through to fire immediate run
-    } else {
-      throw err;
+    if (err instanceof ScheduleAlreadyRunning) {
+      const handle = scheduleClient.getHandle(PICKUP_SCHEDULE_ID);
+      await handle.update(() => scheduleOptions);
+      await handle.trigger(ScheduleOverlapPolicy.SKIP);
+      return;
     }
-  }
-
-  // Fire an immediate one-off pickup so we don't wait for the first cron tick.
-  try {
-    await client.workflow.start("pickupWorkflow", {
-      taskQueue: temporalConfig.taskQueue,
-      workflowId: `pickup-immediate-${Date.now()}`,
-      args: [pickup.maxConcurrent],
-    });
-  } catch {
-    // Best-effort — cron will catch up regardless
+    throw err;
   }
 }
 

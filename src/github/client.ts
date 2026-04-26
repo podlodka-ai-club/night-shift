@@ -58,6 +58,7 @@ export interface GitHubClient {
   // PR reviews
   getPullRequestDiff(pullNumber: number): Promise<string>;
   listChangedFiles(pullNumber: number): Promise<ChangedFile[]>;
+  getFileContent(path: string, ref?: string): Promise<string>;
   listReviewComments(pullNumber: number): Promise<ReviewComment[]>;
   upsertReviewComment(
     pullNumber: number,

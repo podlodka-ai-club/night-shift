@@ -71,7 +71,7 @@ export default defineNightShiftConfig({
   // periodically scans Backlog + Ready columns and starts ticket workflows.
   pickup: {
     enabled: true,
-    intervalMinutes: 5, // must evenly divide 60
+    intervalSeconds: 10,
     maxConcurrent: 5,
   },
   // Optional: Temporal server connection. Defaults shown below.

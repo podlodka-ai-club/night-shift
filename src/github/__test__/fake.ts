@@ -64,6 +64,7 @@ export interface FakeGitHubClient extends GitHubClient {
   seedItem(item: { itemId: string; ticketId?: string; title?: string; issueNumber?: number; status?: StatusName; createdAt?: string }): void;
   seedDiff(pullNumber: number, diff: string): void;
   seedChangedFiles(pullNumber: number, files: ChangedFile[]): void;
+  seedFileContent(path: string, content: string, ref?: string): void;
   seedReviewComment(pullNumber: number, comment: ReviewComment): void;
   seedReview(pullNumber: number, review: Review): void;
   seedPr(pr: { number: number; branch: string; baseBranch?: string; headSha?: string; url?: string; draft?: boolean; title?: string }): void;
@@ -89,6 +90,7 @@ export function createInMemoryFakeGitHubClient(config?: {
   const events: FakeEvent[] = [];
   const diffs = new Map<number, string>();
   const changedFiles = new Map<number, ChangedFile[]>();
+  const fileContents = new Map<string, string>();
   const reviewComments = new Map<number, ReviewComment[]>();
   const reviews = new Map<number, Review[]>();
   let nextCommentId = 1;
@@ -152,6 +154,9 @@ export function createInMemoryFakeGitHubClient(config?: {
     },
     seedChangedFiles(pullNumber, files) {
       changedFiles.set(pullNumber, files);
+    },
+    seedFileContent(filePath, content, ref) {
+      fileContents.set(`${ref ?? "HEAD"}:${filePath}`, content);
     },
     seedReviewComment(pullNumber, comment) {
       const arr = reviewComments.get(pullNumber) ?? [];
@@ -399,6 +404,18 @@ export function createInMemoryFakeGitHubClient(config?: {
     async listChangedFiles(pullNumber) {
       log("listChangedFiles", { pullNumber });
       return changedFiles.get(pullNumber) ?? [];
+    },
+    async getFileContent(filePath, ref) {
+      log("getFileContent", { path: filePath, ...(ref !== undefined ? { ref } : {}) });
+      const direct = fileContents.get(`${ref ?? "HEAD"}:${filePath}`);
+      if (direct !== undefined) {
+        return direct;
+      }
+      const head = fileContents.get(`HEAD:${filePath}`);
+      if (head !== undefined) {
+        return head;
+      }
+      throw new GitHubNotFoundError(`file ${filePath} not found at ${ref ?? "HEAD"}`);
     },
     async listReviewComments(pullNumber) {
       log("listReviewComments", { pullNumber });

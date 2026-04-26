@@ -1,6 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import { startWorker, runWorkerUntilShutdown } from "../worker.js";
+import { startPickupSchedule, startWorker, runWorkerUntilShutdown } from "../worker.js";
 import type { ResolvedNightShiftConfig } from "../../config/schema.js";
+
+const temporalClientMocks = vi.hoisted(() => ({
+  ScheduleAlreadyRunning: class ScheduleAlreadyRunning extends Error {
+    constructor(message: string, public readonly scheduleId: string) {
+      super(message);
+    }
+  },
+  WorkflowNotFoundError: class WorkflowNotFoundError extends Error {
+    constructor(message: string, public readonly workflowId: string, public readonly runId?: string) {
+      super(message);
+    }
+  },
+  ScheduleOverlapPolicy: {
+    SKIP: "SKIP",
+  },
+}));
 
 // Mock Temporal worker
 const mockRun = vi.fn().mockResolvedValue(undefined);
@@ -10,6 +26,33 @@ const mockWorkerCreate = vi.fn().mockResolvedValue({
   shutdown: mockShutdown,
 });
 const mockConnect = vi.fn().mockResolvedValue({});
+const mockScheduleCreate = vi.fn();
+const mockScheduleUpdate = vi.fn();
+const mockScheduleTrigger = vi.fn();
+const mockWorkflowTerminate = vi.fn();
+
+vi.mock("@temporalio/client", () => ({
+  Connection: {
+    connect: (...args: unknown[]) => mockConnect(...args),
+  },
+  Client: vi.fn().mockImplementation(() => ({
+    workflow: {
+      getHandle: vi.fn(() => ({
+        terminate: (...args: unknown[]) => mockWorkflowTerminate(...args),
+      })),
+    },
+  })),
+  ScheduleClient: vi.fn().mockImplementation(() => ({
+    create: (...args: unknown[]) => mockScheduleCreate(...args),
+    getHandle: vi.fn(() => ({
+      update: (...args: unknown[]) => mockScheduleUpdate(...args),
+      trigger: (...args: unknown[]) => mockScheduleTrigger(...args),
+    })),
+  })),
+  ScheduleAlreadyRunning: temporalClientMocks.ScheduleAlreadyRunning,
+  ScheduleOverlapPolicy: temporalClientMocks.ScheduleOverlapPolicy,
+  WorkflowNotFoundError: temporalClientMocks.WorkflowNotFoundError,
+}));
 
 vi.mock("@temporalio/worker", () => ({
   Worker: {
@@ -26,6 +69,11 @@ const fakeConfig: ResolvedNightShiftConfig = {
     serverUrl: "localhost:7233",
     namespace: "test-ns",
     taskQueue: "test-queue",
+  },
+  pickup: {
+    enabled: true,
+    intervalSeconds: 10,
+    maxConcurrent: 2,
   },
 };
 
@@ -67,6 +115,64 @@ describe("startWorker", () => {
         }),
       ]),
     );
+  });
+});
+
+describe("startPickupSchedule", () => {
+  it("creates a pickup schedule and triggers it immediately on create", async () => {
+    mockWorkflowTerminate.mockRejectedValueOnce(new temporalClientMocks.WorkflowNotFoundError("missing", "pickup-cron"));
+    mockScheduleCreate.mockResolvedValueOnce(undefined);
+
+    await startPickupSchedule({ config: fakeConfig });
+
+    expect(mockConnect).toHaveBeenCalledWith({
+      address: "localhost:7233",
+    });
+    expect(mockScheduleCreate).toHaveBeenCalledWith({
+      scheduleId: "pickup-schedule",
+      spec: { intervals: [{ every: "10s" }] },
+      action: {
+        type: "startWorkflow",
+        workflowType: "pickupWorkflow",
+        taskQueue: "test-queue",
+        args: [2],
+      },
+      policies: {
+        overlap: temporalClientMocks.ScheduleOverlapPolicy.SKIP,
+      },
+      state: { triggerImmediately: true },
+    });
+    expect(mockScheduleUpdate).not.toHaveBeenCalled();
+    expect(mockScheduleTrigger).not.toHaveBeenCalled();
+  });
+
+  it("updates an existing schedule and triggers a best-effort run", async () => {
+    mockWorkflowTerminate.mockResolvedValueOnce(undefined);
+    mockScheduleCreate.mockRejectedValueOnce(
+      new temporalClientMocks.ScheduleAlreadyRunning("exists", "pickup-schedule"),
+    );
+    mockScheduleUpdate.mockResolvedValueOnce(undefined);
+    mockScheduleTrigger.mockResolvedValueOnce(undefined);
+
+    await startPickupSchedule({ config: fakeConfig });
+
+    expect(mockWorkflowTerminate).toHaveBeenCalledWith("Pickup cron migrated to schedule");
+    expect(mockScheduleUpdate).toHaveBeenCalledOnce();
+    const updateFn = mockScheduleUpdate.mock.calls[0]?.[0] as (() => unknown) | undefined;
+    expect(updateFn?.()).toEqual({
+      scheduleId: "pickup-schedule",
+      spec: { intervals: [{ every: "10s" }] },
+      action: {
+        type: "startWorkflow",
+        workflowType: "pickupWorkflow",
+        taskQueue: "test-queue",
+        args: [2],
+      },
+      policies: {
+        overlap: temporalClientMocks.ScheduleOverlapPolicy.SKIP,
+      },
+    });
+    expect(mockScheduleTrigger).toHaveBeenCalledWith(temporalClientMocks.ScheduleOverlapPolicy.SKIP);
   });
 });
 

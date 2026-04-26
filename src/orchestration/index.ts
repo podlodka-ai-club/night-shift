@@ -25,7 +25,7 @@ export {
 } from "./workflow.js";
 
 // Worker
-export { startWorker, startPickupCronWorkflow, runWorkerUntilShutdown, type StartWorkerOpts } from "./worker.js";
+export { startWorker, startPickupSchedule, runWorkerUntilShutdown, type StartWorkerOpts } from "./worker.js";
 
 // Pickup
 export {

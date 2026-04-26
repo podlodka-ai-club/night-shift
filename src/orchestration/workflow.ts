@@ -224,18 +224,9 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
       throw new Error("Implement phase completed without PR result");
     }
 
-    const persistedBundle = latestSpecBundle ?? implResult.specBundle;
-    const reviewBundle =
-      latestSpecBundle || !implResult.worktreePath
-        ? persistedBundle
-        : {
-            ...persistedBundle,
-            specPath: `${implResult.worktreePath.replace(/[\\/]+$/, "")}/${persistedBundle.specPath.replace(/^[/\\]+/, "")}`,
-          };
-
     return {
       ticket: implResult.ticket,
-      specBundle: reviewBundle,
+      specBundle: latestSpecBundle ?? implResult.specBundle,
       pr: implResult.result.pr,
     };
   }
@@ -469,7 +460,21 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
   updateDashboard();
 
   let reviewDone = false;
+  let rerunImplementBeforeReview = false;
   while (!reviewDone) {
+    if (rerunImplementBeforeReview) {
+      currentPhase = "implement";
+      updateDashboard();
+
+      if (!(await runImplementLoop())) {
+        return;
+      }
+
+      currentPhase = "review";
+      updateDashboard();
+      rerunImplementBeforeReview = false;
+    }
+
     let escalated = false;
 
     for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -519,6 +524,7 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
         resumeRequested = false;
         blockedReason = null;
         escalated = true;
+        rerunImplementBeforeReview = true;
         updateDashboard();
         break; // Break inner loop, outer while restarts from iteration 0
       }
@@ -538,6 +544,7 @@ export async function ticketWorkflow(input: TicketWorkflowInput): Promise<void> 
       await condition(() => resumeRequested);
       resumeRequested = false;
       blockedReason = null;
+      rerunImplementBeforeReview = true;
       updateDashboard();
       // Outer loop restarts review from iteration 0
     }
