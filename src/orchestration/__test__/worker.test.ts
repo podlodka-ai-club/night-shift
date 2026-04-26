@@ -39,6 +39,8 @@ describe("startWorker", () => {
   it("creates a worker with correct config", async () => {
     await startWorker({ config: fakeConfig, depsFactory: fakeDepsFactory });
 
+    const workerOptions = mockWorkerCreate.mock.calls[0]?.[0];
+
     expect(mockConnect).toHaveBeenCalledWith({
       address: "localhost:7233",
     });
@@ -47,7 +49,23 @@ describe("startWorker", () => {
       expect.objectContaining({
         namespace: "test-ns",
         taskQueue: "test-queue",
+        workflowsPath: expect.stringMatching(/workflow\.ts$/),
       }),
+    );
+
+    expect(workerOptions?.bundlerOptions?.webpackConfigHook).toEqual(expect.any(Function));
+
+    const hookedConfig = workerOptions?.bundlerOptions?.webpackConfigHook({});
+    const rules = hookedConfig?.module?.rules;
+
+    expect(Array.isArray(rules)).toBe(true);
+    expect(rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          test: expect.any(RegExp),
+          use: [expect.objectContaining({ loader: expect.stringMatching(/temporal-typescript-loader\.cjs$/) })],
+        }),
+      ]),
     );
   });
 });

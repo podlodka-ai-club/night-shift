@@ -1,10 +1,34 @@
 import { Worker, NativeConnection } from "@temporalio/worker";
 import { Client, Connection } from "@temporalio/client";
+import { fileURLToPath } from "node:url";
 import type { ResolvedNightShiftConfig } from "../config/schema.js";
 import { setActivityDepsFactory, type ActivityDepsFactory } from "./activities.js";
 import * as activities from "./activities.js";
 import * as pickupActivities from "./pickup-activities.js";
 import type { GitHubClient } from "../github/client.js";
+
+const WORKFLOWS_PATH = fileURLToPath(new URL("./workflow.ts", import.meta.url));
+const ORCHESTRATION_DIR = fileURLToPath(new URL("./", import.meta.url));
+const TEMPORAL_TYPESCRIPT_LOADER_PATH = fileURLToPath(new URL("./temporal-typescript-loader.cjs", import.meta.url));
+
+function addWorkflowTypeScriptLoader(config: any): any {
+  const existingRules = Array.isArray(config.module?.rules) ? config.module.rules : [];
+
+  return {
+    ...config,
+    module: {
+      ...config.module,
+      rules: [
+        ...existingRules,
+        {
+          test: /\.ts$/,
+          include: [ORCHESTRATION_DIR],
+          use: [{ loader: TEMPORAL_TYPESCRIPT_LOADER_PATH }],
+        },
+      ],
+    },
+  };
+}
 
 export interface StartWorkerOpts {
   config: ResolvedNightShiftConfig;
@@ -34,7 +58,10 @@ export async function startWorker(opts: StartWorkerOpts): Promise<Worker> {
     connection,
     namespace: temporalConfig.namespace,
     taskQueue: temporalConfig.taskQueue,
-    workflowsPath: new URL("./workflow.ts", import.meta.url).pathname,
+    workflowsPath: WORKFLOWS_PATH,
+    bundlerOptions: {
+      webpackConfigHook: addWorkflowTypeScriptLoader,
+    },
     activities: allActivities,
   });
 
