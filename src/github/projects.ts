@@ -223,16 +223,25 @@ export async function ensureStatusOptions(
     );
   }
 
+  const canonicalOptions = STATUS_NAMES.filter(
+    (name) => existingByName.has(name) || missing.includes(name),
+  );
+  const customOptions = Object.values(args.existingOptions).filter(
+    (name) => !STATUS_NAMES.includes(name as StatusName),
+  );
+
   const nextOptions = [
-    ...Object.entries(args.existingOptions).map(([, name]) => ({
+    ...canonicalOptions.map((name) => ({
       name,
       color: STATUS_COLORS[name as StatusName] ?? "GRAY",
-      description: "",
+      description: missing.includes(name)
+        ? `night-shift auto-created status: ${name}`
+        : "",
     })),
-    ...missing.map((name) => ({
+    ...customOptions.map((name) => ({
       name,
-      color: STATUS_COLORS[name],
-      description: `night-shift auto-created status: ${name}`,
+      color: "GRAY",
+      description: "",
     })),
   ];
 

@@ -90,7 +90,7 @@ describe("ensureStatusOptions", () => {
     expect(resolved.statusOptionIds.Blocked).toBe("h");
   });
 
-  it("sends one mutation adding missing options (existing preserved)", async () => {
+  it("sends one mutation ordering missing statuses by workflow direction", async () => {
     const existing = { a: "Backlog" };
     const { gql, calls } = makeGql([
       {
@@ -119,11 +119,62 @@ describe("ensureStatusOptions", () => {
     expect(calls).toHaveLength(1);
     const input = (calls[0]!.variables as { input: { singleSelectOptions: Array<{ name: string }> } })
       .input.singleSelectOptions;
-    expect(input.map((o) => o.name)).toContain("Backlog");
-    expect(input.map((o) => o.name)).toContain("Ready to merge");
-    expect(input.map((o) => o.name)).toContain("Blocked");
+    expect(input.map((o) => o.name)).toEqual([
+      "Backlog",
+      "Refinement",
+      "Refined",
+      "Ready",
+      "In progress",
+      "In review",
+      "Ready to merge",
+      "Blocked",
+    ]);
     expect(resolved.statusOptionIds["Ready to merge"]).toBe("new6");
     expect(resolved.statusOptionIds.Blocked).toBe("new7");
+  });
+
+  it("keeps custom statuses after the canonical workflow statuses", async () => {
+    const existing = { x: "Custom", a: "Backlog", d: "Ready" };
+    const { gql, calls } = makeGql([
+      {
+        updateProjectV2Field: {
+          projectV2Field: {
+            id: "F1",
+            options: [
+              { id: "a", name: "Backlog" },
+              { id: "new1", name: "Refinement" },
+              { id: "new2", name: "Refined" },
+              { id: "d", name: "Ready" },
+              { id: "new4", name: "In progress" },
+              { id: "new5", name: "In review" },
+              { id: "new6", name: "Ready to merge" },
+              { id: "new7", name: "Blocked" },
+              { id: "x", name: "Custom" },
+            ],
+          },
+        },
+      },
+    ]);
+
+    await ensureStatusOptions(gql, {
+      fieldId: "F1",
+      existingOptions: existing,
+      manage: true,
+    });
+
+    const input = (calls[0]!.variables as { input: { singleSelectOptions: Array<{ name: string }> } })
+      .input.singleSelectOptions;
+    expect(input.map((o) => o.name)).toEqual([
+      "Backlog",
+      "Refinement",
+      "Refined",
+      "Ready",
+      "In progress",
+      "In review",
+      "Ready to merge",
+      "Blocked",
+      "Custom",
+    ]);
   });
 
   it("throws ConfigError when missing and manage=false", async () => {
