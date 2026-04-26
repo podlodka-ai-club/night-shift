@@ -18,7 +18,6 @@ type AgentRoleConfig = {
   provider: string;
   model: string;
   systemPromptFile?: string;  // resolved relative to cwd
-  skills?: string[];          // optional provider-native skill ids
   providerOptions?: unknown;  // opaque passthrough
 };
 ```
@@ -70,7 +69,6 @@ export default defineNightShiftConfig({
     implementer: {
       provider: "codex",
       model: "gpt-5.4",
-      skills: ["openspec-apply-change", "openspec-explore"],
     },
   },
   github: {
@@ -84,11 +82,9 @@ export default defineNightShiftConfig({
 });
 ```
 
-`roles.<role>.skills` is an optional list of provider-native skill ids Night
-Shift passes through to the adapter at session-open time. This is the config
-surface for enabling OpenSpec-oriented skills such as
-`openspec-propose`, `openspec-apply-change`, and `openspec-explore` when the
-selected provider supports them.
+Repo-local agent behavior should come from what the provider automatically
+discovers in the repository, such as project instructions or OpenSpec setup,
+rather than from a `skills` list in Night Shift config.
 
 ## Module boundary
 

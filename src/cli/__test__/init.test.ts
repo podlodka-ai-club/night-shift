@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -34,23 +34,22 @@ describe("night-shift init CLI", () => {
   it("creates a repo-local config template", async () => {
     const code = await main(["--repo-root", tmp]);
     const configPath = path.join(tmp, "night-shift.config.ts");
-    const projectPath = path.join(tmp, "openspec", "project.md");
 
     expect(code).toBe(0);
     expect(stdout).toContain(configPath);
-    expect(stdout).toContain(path.join(tmp, "openspec", "specs"));
-    expect(stdout).toContain(path.join(tmp, "openspec", "changes"));
-    expect(stdout).toContain(projectPath);
+    expect(stdout).toContain('npm install -g openspec');
+    expect(stdout).toContain('openspec init .');
+    expect(stdout).toContain('specifier: provider=codex, model=gpt-5.4');
+    expect(stdout).toContain('repository itself, not from Night Shift config');
+    expect(stdout).not.toContain(path.join(tmp, "openspec", "specs"));
 
     const content = readFileSync(configPath, "utf8");
     expect(content).toContain('defineNightShiftConfig');
     expect(content).toContain('process.env.GITHUB_TOKEN');
     expect(content).toContain('.env');
     expect(content).toContain('adapterFactories');
-    expect(content).toContain('openspec-propose');
-    expect(content).toContain('openspec-apply-change');
-
-    expect(readFileSync(projectPath, "utf8")).toContain('Bootstrapped by');
+    expect(content).not.toContain('skills');
+    expect(existsSync(path.join(tmp, "openspec"))).toBe(false);
   });
 
   it("does not overwrite an existing config without --force", async () => {
@@ -72,20 +71,15 @@ describe("night-shift init CLI", () => {
     expect(readFileSync(configPath, "utf8")).toBe("existing\n");
   });
 
-  it("scaffolds missing OpenSpec files without overwriting an existing config", async () => {
+  it("does not scaffold OpenSpec when an existing config blocks init", async () => {
     const configPath = path.join(tmp, "night-shift.config.ts");
-    const specsDir = path.join(tmp, "openspec", "specs");
-    const changesDir = path.join(tmp, "openspec", "changes");
-    const projectPath = path.join(tmp, "openspec", "project.md");
     writeFileSync(configPath, "existing\n", "utf8");
 
     const code = await main(["--repo-root", tmp]);
 
-    expect(code).toBe(0);
-    expect(stderr).toContain('Keeping it and scaffolding missing OpenSpec files');
+    expect(code).toBe(1);
+    expect(stderr).toContain('already exists');
     expect(readFileSync(configPath, "utf8")).toBe("existing\n");
-    expect(stdout).toContain(specsDir);
-    expect(stdout).toContain(changesDir);
-    expect(stdout).toContain(projectPath);
+    expect(existsSync(path.join(tmp, "openspec"))).toBe(false);
   });
 });

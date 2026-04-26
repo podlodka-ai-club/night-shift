@@ -20,13 +20,11 @@ export default defineNightShiftConfig({
       provider: "codex",
       model: "gpt-5.4",
       systemPromptFile: "prompts/specifier.md",
-      skills: ["openspec-propose", "openspec-explore"],
     },
     implementer: {
       provider: "codex",
       model: "gpt-5.4",
       systemPromptFile: "prompts/implementer.md",
-      skills: ["openspec-apply-change", "openspec-explore"],
     },
     // The reviewer runs often and gets a lot of context; prefer a cheaper
     // model here and rely on the quality-gate findings for correctness.
@@ -34,12 +32,10 @@ export default defineNightShiftConfig({
       provider: "codex",
       model: "gpt-5.4-mini",
       systemPromptFile: "prompts/reviewer.md",
-      skills: ["openspec-explore"],
     },
     subagent: {
       provider: "codex",
       model: "gpt-5.4-mini",
-      skills: ["openspec-explore"],
     },
   },
   qualityGates: {

@@ -89,7 +89,6 @@ export async function createAgent(opts: CreateAgentOptions): Promise<AgentSessio
     ticketId: opts.ticketId,
     profileId: opts.profileId,
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
-    ...(roleConfig.skills !== undefined ? { skills: roleConfig.skills } : {}),
     ...(roleConfig.providerOptions !== undefined
       ? { providerOptions: roleConfig.providerOptions as Record<string, unknown> }
       : {}),

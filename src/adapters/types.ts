@@ -62,7 +62,6 @@ export const OpenSessionOptionsSchema = z.object({
   role: AgentRoleSchema,
   model: z.string().min(1),
   systemPrompt: z.string().optional(),
-  skills: z.array(z.string().min(1)).optional(),
   workingDirectory: z.string().optional(),
   runId: z.string().min(1),
   ticketId: z.string().min(1),

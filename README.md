@@ -40,15 +40,15 @@ consumer repo to follow your working tree directly.
 
 Current local-path behavior: npm links both `node_modules/night-shift` and the
 local `night-shift` bin back to the source checkout. There is no separate build
-step today; the bin runs source files through `node --import tsx`, so source
-edits are picked up on the next command run. Reinstall only when package
-metadata changes, such as `package.json` dependencies, `bin`, or `exports`.
+step today; the bin registers the bundled `tsx` runtime from the Night Shift
+package itself, so source edits are picked up on the next command run. Reinstall
+only when package metadata changes, such as `package.json` dependencies, `bin`,
+or `exports`.
 
 ### Configure
 
-Initialize a repo-local config file. `init` also checks for a minimal OpenSpec
-layout and bootstraps it when the repo does not have one yet (`openspec/specs`,
-`openspec/changes`, and `openspec/project.md`):
+Initialize a repo-local config file. `init` writes `night-shift.config.ts` and
+prints the follow-up OpenSpec setup commands you need to run explicitly:
 
 ```bash
 npm exec night-shift -- init
@@ -58,7 +58,7 @@ Key sections in [night-shift.config.example.ts](night-shift.config.example.ts):
 
 | Section | Purpose |
 |---|---|
-| `roles` | Agent provider, model, and optional provider-native skill ids per role |
+| `roles` | Agent provider and model per role |
 | `adapterFactories` | Optional custom adapter registry for repo-local providers |
 | `qualityGates` | Toggle typecheck / lint / test gates |
 | `github` | GitHub App credentials, repo, and project board ID |
@@ -67,13 +67,10 @@ Key sections in [night-shift.config.example.ts](night-shift.config.example.ts):
 
 Config is discovered in order: explicit path → `NIGHT_SHIFT_CONFIG` env var → `night-shift.config.{ts,mts,mjs,js}` in cwd. Night Shift auto-loads `.env` next to the resolved config file before importing it.
 
-The generated config seeds OpenSpec-oriented role skills by default: the
-specifier gets `openspec-propose` + `openspec-explore`, the implementer gets
-`openspec-apply-change` + `openspec-explore`, and reviewer/subagent get
-`openspec-explore`. Providers that support native skill selection can consume
-those ids directly from config.
+Agent-specific repo guidance should come from what is set up in the repository
+itself, not from Night Shift config.
 
-If you start from a repo that has no OpenSpec setup yet, run `npm exec night-shift -- init` first. That command now creates the minimal OpenSpec scaffold the specifier expects, in addition to `night-shift.config.ts`.
+If you start from a repo that has no OpenSpec setup yet, run `npm exec night-shift -- init` first, then follow the printed setup steps to install OpenSpec globally and run `openspec init .` in that repository before using the specifier.
 
 ### GitHub Setup
 

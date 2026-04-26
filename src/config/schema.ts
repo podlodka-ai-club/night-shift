@@ -10,7 +10,6 @@ export const AgentRoleConfigSchema = z.object({
   provider: ProviderSchema,
   model: z.string().min(1),
   systemPromptFile: z.string().min(1).optional(),
-  skills: z.array(z.string().min(1)).optional(),
   providerOptions: z.unknown().optional(),
 });
 export type AgentRoleConfig = z.infer<typeof AgentRoleConfigSchema>;
