@@ -49,6 +49,7 @@ function createSelectedIssue(issueUrl: string): SelectedProjectIssue {
     readyOptionId: 'ready',
     inProgressOptionId: 'in-progress',
     inReviewOptionId: 'in-review',
+    blockedOptionId: 'blocked',
     issueNumber: 77,
     issueTitle: 'Seeded issue',
     taskDescription: 'Create a deterministic change',
@@ -75,20 +76,29 @@ function createWorkflowResult(overrides: Partial<AutomateReadyIssueResult> = {})
   };
 }
 
+type ProjectSelectionItem = {
+  itemId: string;
+  statusName: string;
+  issueNumber: number;
+  issueTitle: string;
+  issueBody: string;
+};
+
 function createProjectSelectionResponse(
-  ...items: Array<{
-    itemId: string;
-    statusName: string;
-    issueNumber: number;
-    issueTitle: string;
-    issueBody: string;
-  }>
+  ...args:
+    | [options?: { statusOptions?: Array<{ id: string; name: string }> }, ...items: ProjectSelectionItem[]]
+    | ProjectSelectionItem[]
 ) {
+  const [firstArg, ...restArgs] = args;
+  const hasOptions = firstArg !== undefined && !('itemId' in firstArg);
+  const options = hasOptions ? firstArg : undefined;
+  const items = (hasOptions ? restArgs : args) as ProjectSelectionItem[];
+
   return {
     owner: {
       projectV2: {
         id: 'PVT_project',
-        fields: { nodes: [buildStatusField()] },
+        fields: { nodes: [buildStatusField(options?.statusOptions)] },
         items: {
           nodes: items.map((item) => ({
             id: item.itemId,
@@ -158,27 +168,7 @@ describe('seedIssueInProject', () => {
         html_url: `https://github.com/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues/77`,
         node_id: 'I_issue_77',
       },
-      GRAPHQL_UserProjectMetadata: {
-        owner: {
-          projectV2: {
-            id: 'PVT_project',
-            fields: {
-              nodes: [
-                {
-                  __typename: 'ProjectV2SingleSelectField',
-                  id: 'PVT_field',
-                  name: 'Status',
-                  options: [
-                    { id: 'ready', name: 'Ready' },
-                    { id: 'in-progress', name: 'In progress' },
-                    { id: 'in-review', name: 'In review' },
-                  ],
-                },
-              ],
-            },
-          },
-        },
-      },
+      GRAPHQL_UserProjectIssueSelection: createProjectSelectionResponse(),
       GRAPHQL_AddProjectItem: {
         addProjectV2ItemById: {
           item: {
@@ -204,7 +194,70 @@ describe('seedIssueInProject', () => {
     assert.deepStrictEqual(seededIssue, createSeededIssue());
     assert.deepStrictEqual(calls, [
       `REST POST /repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues`,
-      'GRAPHQL UserProjectMetadata',
+      'GRAPHQL UserProjectIssueSelection',
+      'GRAPHQL AddProjectItem',
+      'GRAPHQL MoveProjectItemStatus',
+    ]);
+  });
+
+  it('normalizes missing canonical project statuses before seeding the issue', async () => {
+    const config = createTestConfig();
+    const { deps, calls } = createGitHubDepsStub({
+      [`REST POST /repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues`]: {
+        number: 77,
+        html_url: `https://github.com/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues/77`,
+        node_id: 'I_issue_77',
+      },
+      GRAPHQL_UserProjectIssueSelection: createProjectSelectionResponse({
+        statusOptions: [
+          { id: 'ready', name: 'Ready' },
+          { id: 'in-progress', name: 'In progress' },
+          { id: 'in-review', name: 'In review' },
+        ],
+      }),
+      GRAPHQL_UpdateStatusField: {
+        updateProjectV2Field: {
+          projectV2Field: {
+            id: 'PVT_field',
+            options: [
+              { id: 'backlog', name: 'Backlog' },
+              { id: 'refinement', name: 'Refinement' },
+              { id: 'refined', name: 'Refined' },
+              { id: 'ready', name: 'Ready' },
+              { id: 'in-progress', name: 'In progress' },
+              { id: 'in-review', name: 'In review' },
+              { id: 'ready-to-merge', name: 'Ready to merge' },
+              { id: 'blocked', name: 'Blocked' },
+            ],
+          },
+        },
+      },
+      GRAPHQL_AddProjectItem: {
+        addProjectV2ItemById: {
+          item: {
+            id: 'PVT_item',
+          },
+        },
+      },
+      GRAPHQL_MoveProjectItemStatus: {
+        updateProjectV2ItemFieldValue: {
+          projectV2Item: { id: 'PVT_item' },
+        },
+      },
+    });
+
+    await seedIssueInProject(
+      deps,
+      config,
+      TEST_RUN_ID,
+      `[e2e] orchestrator live test ${TEST_RUN_ID}`,
+      `E2E_RUN_MARKER: ${TEST_RUN_ID}`,
+    );
+
+    assert.deepStrictEqual(calls, [
+      `REST POST /repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues`,
+      'GRAPHQL UserProjectIssueSelection',
+      'GRAPHQL UpdateStatusField',
       'GRAPHQL AddProjectItem',
       'GRAPHQL MoveProjectItemStatus',
     ]);
@@ -460,15 +513,20 @@ function createRawFetchResponse(response: RawResponseStub): Response {
   } as Response;
 }
 
-function buildStatusField() {
+function buildStatusField(options: Array<{ id: string; name: string }> = [
+  { id: 'backlog', name: 'Backlog' },
+  { id: 'refinement', name: 'Refinement' },
+  { id: 'refined', name: 'Refined' },
+  { id: 'ready', name: 'Ready' },
+  { id: 'in-progress', name: 'In progress' },
+  { id: 'in-review', name: 'In review' },
+  { id: 'ready-to-merge', name: 'Ready to merge' },
+  { id: 'blocked', name: 'Blocked' },
+]) {
   return {
     __typename: 'ProjectV2SingleSelectField' as const,
     id: 'PVT_field',
     name: 'Status',
-    options: [
-      { id: 'ready', name: 'Ready' },
-      { id: 'in-progress', name: 'In progress' },
-      { id: 'in-review', name: 'In review' },
-    ],
+    options,
   };
 }

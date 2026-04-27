@@ -29,6 +29,7 @@ export type Activities = ReturnType<typeof createActivities>;
 const defaultActivities = createActivities(createActivityRuntimes());
 
 export const {
+  ensureProjectStatusOptions,
   getTopReadyIssue,
   openPullRequest,
   commentOnIssue,

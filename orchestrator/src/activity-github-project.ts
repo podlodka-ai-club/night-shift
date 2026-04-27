@@ -1,10 +1,14 @@
 import {
+  CANONICAL_PROJECT_STATUS_NAMES,
   DEFAULT_BLOCKED_STATUS,
   DEFAULT_IN_PROGRESS_STATUS,
   DEFAULT_IN_REVIEW_STATUS,
   DEFAULT_READY_STATUS,
   type AutomateReadyIssueInput,
+  type EnsureProjectStatusOptionsInput,
   type MoveProjectItemStatusInput,
+  type ProjectStatusName,
+  type ResolvedProjectStatusOptions,
   type SelectedProjectIssue,
 } from './shared';
 import type { GitHubActivityDeps } from './activity-deps';
@@ -28,7 +32,12 @@ interface ProjectData {
 }
 
 type ProjectFieldNode =
-  | { __typename: 'ProjectV2SingleSelectField'; id: string; name: string; options: Array<{ id: string; name: string }> }
+  | {
+      __typename: 'ProjectV2SingleSelectField';
+      id: string;
+      name: string;
+      options: Array<{ id: string; name: string; color?: string; description?: string | null }>;
+    }
   | { __typename: string };
 
 interface ProjectItemNode {
@@ -51,6 +60,31 @@ type ProjectSingleSelectField = Extract<ProjectFieldNode, { __typename: 'Project
 type ProjectIssueContent = Extract<NonNullable<ProjectItemNode['content']>, { __typename: 'Issue' }>;
 type ProjectStatusOption = ProjectSingleSelectField['options'][number];
 type ReadyProjectItem = ProjectItemNode & { content: ProjectIssueContent };
+type ProjectStatusField = Pick<ProjectSingleSelectField, 'id' | 'options'>;
+
+interface UpdateStatusFieldMutationData {
+  updateProjectV2Field: {
+    projectV2Field: {
+      id: string;
+      options: ProjectStatusOption[];
+    };
+  };
+}
+
+interface ResolvedStatusField extends ProjectStatusField {
+  statusOptionIds: Record<ProjectStatusName, string>;
+}
+
+const PROJECT_STATUS_COLORS: Record<ProjectStatusName, string> = {
+  Backlog: 'GRAY',
+  Refinement: 'BLUE',
+  Refined: 'BLUE',
+  Ready: 'GREEN',
+  'In progress': 'YELLOW',
+  'In review': 'PURPLE',
+  'Ready to merge': 'GREEN',
+  Blocked: 'RED',
+};
 
 const PROJECT_FIELDS_FRAGMENT = `
   fragment ProjectFields on ProjectV2 {
@@ -64,6 +98,8 @@ const PROJECT_FIELDS_FRAGMENT = `
           options {
             id
             name
+            color
+            description
           }
         }
       }
@@ -145,6 +181,37 @@ const MOVE_PROJECT_ITEM_MUTATION = `
   }
 `;
 
+const UPDATE_STATUS_FIELD_MUTATION = `
+  mutation UpdateStatusField($input: UpdateProjectV2FieldInput!) {
+    updateProjectV2Field(input: $input) {
+      projectV2Field {
+        ... on ProjectV2SingleSelectField {
+          id
+          options {
+            id
+            name
+            color
+            description
+          }
+        }
+      }
+    }
+  }
+`;
+
+export async function ensureProjectStatusOptionsActivity(
+  deps: GitHubActivityDeps,
+  input: EnsureProjectStatusOptionsInput,
+): Promise<ResolvedProjectStatusOptions> {
+  const project = await lookupProject(deps, input.projectOwner, input.projectNumber);
+  const statusField = await ensureCanonicalProjectStatusOptions(deps, getProjectStatusField(project));
+  return {
+    projectId: project.id,
+    statusFieldId: statusField.id,
+    statusOptionIds: statusField.statusOptionIds,
+  };
+}
+
 export async function getTopReadyIssueActivity(
   deps: GitHubActivityDeps,
   input: AutomateReadyIssueInput,
@@ -154,11 +221,11 @@ export async function getTopReadyIssueActivity(
   const inReviewStatusName = input.inReviewStatusName ?? DEFAULT_IN_REVIEW_STATUS;
   const blockedStatusName = input.blockedStatusName ?? DEFAULT_BLOCKED_STATUS;
   const project = await lookupProject(deps, input.projectOwner, input.projectNumber);
-  const statusField = getProjectStatusField(project);
+  const statusField = await ensureCanonicalProjectStatusOptions(deps, getProjectStatusField(project));
   const readyOption = getRequiredStatusOption(statusField, readyStatusName);
   const inProgressOption = getRequiredStatusOption(statusField, inProgressStatusName);
   const inReviewOption = getRequiredStatusOption(statusField, inReviewStatusName);
-  const blockedOption = findStatusOption(statusField, blockedStatusName);
+  const blockedOption = getRequiredStatusOption(statusField, blockedStatusName);
   const readyItem = getReadyIssueItem(project, readyStatusName, input.projectOwner, input.projectNumber);
   const readyIssue = readyItem.content;
 
@@ -169,7 +236,7 @@ export async function getTopReadyIssueActivity(
     readyOptionId: readyOption.id,
     inProgressOptionId: inProgressOption.id,
     inReviewOptionId: inReviewOption.id,
-    blockedOptionId: blockedOption?.id,
+    blockedOptionId: blockedOption.id,
     issueNumber: readyIssue.number,
     issueTitle: readyIssue.title,
     taskDescription: buildTaskDescription(readyIssue.title, readyIssue.body),
@@ -258,17 +325,41 @@ async function lookupProjectOwner(
   }
 }
 
-function getProjectStatusField(project: ProjectData): ProjectSingleSelectField {
+async function ensureCanonicalProjectStatusOptions(
+  deps: GitHubActivityDeps,
+  statusField: ProjectStatusField,
+): Promise<ResolvedStatusField> {
+  const statusOptionIds = buildProjectStatusOptionIds(statusField.options);
+  const missingStatusNames = CANONICAL_PROJECT_STATUS_NAMES.filter((statusName) => !statusOptionIds[statusName]);
+  if (missingStatusNames.length === 0) {
+    return {
+      id: statusField.id,
+      options: statusField.options,
+      statusOptionIds: statusOptionIds as Record<ProjectStatusName, string>,
+    };
+  }
+
+  const updatedField = await githubGraphql<UpdateStatusFieldMutationData>(deps, UPDATE_STATUS_FIELD_MUTATION, {
+    input: {
+      fieldId: statusField.id,
+      singleSelectOptions: buildStatusFieldUpdateOptions(statusField.options, missingStatusNames),
+    },
+  });
+
+  return buildResolvedStatusField(updatedField.updateProjectV2Field.projectV2Field);
+}
+
+function getProjectStatusField(project: ProjectData): ProjectStatusField {
   const statusField = project.fields.nodes.find(
     (field): field is ProjectSingleSelectField => isProjectSingleSelectField(field) && field.name === PROJECT_STATUS_FIELD_NAME,
   );
   if (!statusField) {
     throw new Error('The GitHub Project does not contain a Status field.');
   }
-  return statusField;
+  return { id: statusField.id, options: statusField.options };
 }
 
-function getRequiredStatusOption(statusField: ProjectSingleSelectField, statusName: string): ProjectStatusOption {
+function getRequiredStatusOption(statusField: ProjectStatusField, statusName: string): ProjectStatusOption {
   const statusOption = findStatusOption(statusField, statusName);
   if (!statusOption) {
     throw new Error(`Could not find the ${statusName} status option on the GitHub Project.`);
@@ -276,8 +367,65 @@ function getRequiredStatusOption(statusField: ProjectSingleSelectField, statusNa
   return statusOption;
 }
 
-function findStatusOption(statusField: ProjectSingleSelectField, statusName: string): ProjectStatusOption | undefined {
+function findStatusOption(statusField: ProjectStatusField, statusName: string): ProjectStatusOption | undefined {
   return statusField.options.find((option) => option.name === statusName);
+}
+
+function buildProjectStatusOptionIds(
+  options: readonly ProjectStatusOption[],
+): Partial<Record<ProjectStatusName, string>> {
+  const optionIds: Partial<Record<ProjectStatusName, string>> = {};
+  for (const option of options) {
+    if (!isProjectStatusName(option.name)) continue;
+    optionIds[option.name] = option.id;
+  }
+  return optionIds;
+}
+
+function buildStatusFieldUpdateOptions(
+  options: readonly ProjectStatusOption[],
+  missingStatusNames: readonly ProjectStatusName[],
+): Array<{ name: string; color: string; description: string }> {
+  const existingOptionsByName = new Map(options.map((option) => [option.name, option]));
+  const customOptionNames = options
+    .map((option) => option.name)
+    .filter((optionName) => !isProjectStatusName(optionName));
+
+  return [
+    ...CANONICAL_PROJECT_STATUS_NAMES.filter(
+      (statusName) => existingOptionsByName.has(statusName) || missingStatusNames.includes(statusName),
+    ).map((statusName) => {
+      const existingOption = existingOptionsByName.get(statusName);
+      return {
+        name: statusName,
+        color: existingOption?.color ?? PROJECT_STATUS_COLORS[statusName],
+        description:
+          existingOption?.description ??
+          (missingStatusNames.includes(statusName) ? `orchestrator auto-created status: ${statusName}` : ''),
+      };
+    }),
+    ...customOptionNames.map((name) => {
+      const existingOption = existingOptionsByName.get(name);
+      return {
+        name,
+        color: existingOption?.color ?? 'GRAY',
+        description: existingOption?.description ?? '',
+      };
+    }),
+  ];
+}
+
+function buildResolvedStatusField(statusField: ProjectStatusField): ResolvedStatusField {
+  const statusOptionIds = buildProjectStatusOptionIds(statusField.options);
+  const missingStatusNames = CANONICAL_PROJECT_STATUS_NAMES.filter((statusName) => !statusOptionIds[statusName]);
+  if (missingStatusNames.length > 0) {
+    throw new Error(`Could not ensure the GitHub Project statuses: ${missingStatusNames.join(', ')}.`);
+  }
+  return {
+    id: statusField.id,
+    options: statusField.options,
+    statusOptionIds: statusOptionIds as Record<ProjectStatusName, string>,
+  };
 }
 
 function getReadyIssueItem(
@@ -302,6 +450,10 @@ function buildTaskDescription(issueTitle: string, issueBody: string): string {
 
 function isProjectSingleSelectField(field: ProjectFieldNode): field is ProjectSingleSelectField {
   return field.__typename === 'ProjectV2SingleSelectField';
+}
+
+function isProjectStatusName(value: string): value is ProjectStatusName {
+  return CANONICAL_PROJECT_STATUS_NAMES.some((statusName) => statusName === value);
 }
 
 function isProjectIssueContent(content: ProjectItemNode['content'] | undefined): content is ProjectIssueContent {

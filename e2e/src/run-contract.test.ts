@@ -24,10 +24,23 @@ describe('run contract helpers', () => {
     assert.deepStrictEqual(REQUIRED_STATUS_SEQUENCE, ['Ready', 'In progress', 'In review']);
   });
 
+  it('accepts richer donor-compatible board lifecycles around the current ready flow', () => {
+    assert.doesNotThrow(() => {
+      assertObservedStatusSequence(['Backlog', 'Refinement', 'Refined', 'Ready', 'In progress', 'In review', 'Ready to merge']);
+    });
+  });
+
   it('rejects a status sequence that skips In progress', () => {
     assert.throws(
       () => assertObservedStatusSequence(['Ready', 'In review']),
       /observed statuses did not include the required sequence/i,
+    );
+  });
+
+  it('rejects non-canonical board status names', () => {
+    assert.throws(
+      () => assertObservedStatusSequence(['Ready', 'In Progress', 'In review']),
+      /non-canonical board statuses/i,
     );
   });
 });

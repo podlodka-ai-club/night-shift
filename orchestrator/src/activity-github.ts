@@ -1,19 +1,29 @@
 import type {
   AutomateReadyIssueInput,
   CreatedPullRequest,
+  EnsureProjectStatusOptionsInput,
   IssueCommentInput,
   MoveProjectItemStatusInput,
   OpenPullRequestInput,
+  ResolvedProjectStatusOptions,
   SelectedProjectIssue,
 } from './shared';
 import type { GitHubActivityDeps } from './activity-deps';
 import { commentOnIssueActivity, openPullRequestActivity } from './activity-github-pull-request';
-import { getTopReadyIssueActivity, moveProjectItemStatusActivity } from './activity-github-project';
+import {
+  ensureProjectStatusOptionsActivity,
+  getTopReadyIssueActivity,
+  moveProjectItemStatusActivity,
+} from './activity-github-project';
 
 export { buildIssueComment } from './activity-github-pull-request';
 
 export function createGitHubActivities(deps: GitHubActivityDeps) {
   return {
+    async ensureProjectStatusOptions(input: EnsureProjectStatusOptionsInput): Promise<ResolvedProjectStatusOptions> {
+      return ensureProjectStatusOptionsActivity(deps, input);
+    },
+
     async getTopReadyIssue(input: AutomateReadyIssueInput): Promise<SelectedProjectIssue> {
       return getTopReadyIssueActivity(deps, input);
     },

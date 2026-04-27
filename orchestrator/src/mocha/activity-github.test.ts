@@ -89,6 +89,74 @@ describe('github activities', () => {
     assert.deepStrictEqual(JSON.parse(String(fetchCalls[1].init?.body)).variables.itemsAfter, 'cursor-1');
   });
 
+  it('creates missing canonical project status options before selecting the Ready issue', async () => {
+    const selectedIssue = buildSelectedIssue();
+    const fetchCalls: FetchCall[] = [];
+    const { getTopReadyIssue } = createActivityTestRig({
+      github: {
+        fetch: createFetchSequenceMock(
+          [
+            jsonResponse(
+              buildProjectQueryResponse(selectedIssue, {
+                statusOptions: [
+                  {
+                    id: selectedIssue.readyOptionId,
+                    name: selectedIssue.readyStatusName,
+                    color: 'GREEN',
+                    description: 'Already ready',
+                  },
+                  { id: selectedIssue.inProgressOptionId, name: 'In progress', color: 'YELLOW' },
+                  { id: selectedIssue.inReviewOptionId, name: selectedIssue.inReviewStatusName, color: 'PURPLE' },
+                  { id: 'custom-option', name: 'Custom', color: 'ORANGE', description: 'Custom lane' },
+                ],
+              }),
+            ),
+            jsonResponse({
+              data: {
+                updateProjectV2Field: {
+                  projectV2Field: {
+                    id: selectedIssue.statusFieldId,
+                    options: [
+                      { id: 'backlog-option', name: 'Backlog' },
+                      { id: 'refinement-option', name: 'Refinement' },
+                      { id: 'refined-option', name: 'Refined' },
+                      { id: selectedIssue.readyOptionId, name: selectedIssue.readyStatusName },
+                      { id: selectedIssue.inProgressOptionId, name: 'In progress' },
+                      { id: selectedIssue.inReviewOptionId, name: selectedIssue.inReviewStatusName },
+                      { id: 'ready-to-merge-option', name: 'Ready to merge' },
+                      { id: selectedIssue.blockedOptionId, name: 'Blocked' },
+                      { id: 'custom-option', name: 'Custom' },
+                    ],
+                  },
+                },
+              },
+            }),
+          ],
+          fetchCalls,
+        ),
+      },
+    });
+
+    const issue = await getTopReadyIssue({ projectOwner: 'Mugenor', projectNumber: 1 });
+
+    assert.deepStrictEqual(issue, selectedIssue);
+    assert.strictEqual(fetchCalls.length, 2);
+    assert.match(String(fetchCalls[1].init?.body), /updateProjectV2Field/);
+    const mutationVariables = JSON.parse(String(fetchCalls[1].init?.body)).variables;
+    assert.strictEqual(mutationVariables.input.fieldId, selectedIssue.statusFieldId);
+    assert.deepStrictEqual(mutationVariables.input.singleSelectOptions, [
+      { name: 'Backlog', color: 'GRAY', description: 'orchestrator auto-created status: Backlog' },
+      { name: 'Refinement', color: 'BLUE', description: 'orchestrator auto-created status: Refinement' },
+      { name: 'Refined', color: 'BLUE', description: 'orchestrator auto-created status: Refined' },
+      { name: 'Ready', color: 'GREEN', description: 'Already ready' },
+      { name: 'In progress', color: 'YELLOW', description: '' },
+      { name: 'In review', color: 'PURPLE', description: '' },
+      { name: 'Ready to merge', color: 'GREEN', description: 'orchestrator auto-created status: Ready to merge' },
+      { name: 'Blocked', color: 'RED', description: 'orchestrator auto-created status: Blocked' },
+      { name: 'Custom', color: 'ORANGE', description: 'Custom lane' },
+    ]);
+  });
+
   it('opens the pull request using the stable issue branch', async () => {
     const worktree = buildWorktreeContext();
     const fetchCalls: FetchCall[] = [];

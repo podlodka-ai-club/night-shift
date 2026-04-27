@@ -57,51 +57,7 @@ describe('workflow failure paths', function () {
     ]);
     assert.deepStrictEqual(statusUpdates, [
       buildStatusUpdateInput(issue, issue.inProgressOptionId),
-      buildStatusUpdateInput(issue, issue.blockedOptionId ?? issue.inProgressOptionId),
-    ]);
-  });
-
-  it('moves exhausted agent failures back to Ready when Blocked is not configured', async () => {
-    const calls: string[] = [];
-    const issue = { ...buildSelectedIssue(), blockedOptionId: undefined };
-    const worktree = buildWorktreeContext(issue);
-    const statusUpdates: MoveProjectItemStatusInput[] = [];
-
-    await assert.rejects(
-      () =>
-        runWorkflow({
-          workflowId: 'automate-ready-issue-fallback-ready-test',
-          expectedWorkerWarnings: [/agent failed/],
-          activities: {
-            async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
-            async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded:7'); return worktree; },
-            async runAgentSequence() { calls.push('runAgentSequence:7'); throw new Error('agent failed'); },
-            async commitAndPush() { throw new Error('commit should not run after agent failure'); },
-            async openPullRequest() { throw new Error('openPullRequest should not run after agent failure'); },
-            async cleanupWorktree() { calls.push('cleanupWorktree:orchestrator/issue-7'); },
-            async commentOnIssue() { throw new Error('commentOnIssue should not run after agent failure'); },
-            async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
-              statusUpdates.push(input);
-              calls.push(`moveProjectItemStatus:${input.projectItemId}`);
-            },
-          },
-        }),
-      /Workflow execution failed/,
-    );
-
-    assert.deepStrictEqual(calls, [
-      'getTopReadyIssue',
-      'moveProjectItemStatus:item-1',
-      'createWorktreeForIssueIfNeeded:7',
-      'runAgentSequence:7',
-      'runAgentSequence:7',
-      'runAgentSequence:7',
-      'moveProjectItemStatus:item-1',
-      'cleanupWorktree:orchestrator/issue-7',
-    ]);
-    assert.deepStrictEqual(statusUpdates, [
-      buildStatusUpdateInput(issue, issue.inProgressOptionId),
-      buildStatusUpdateInput(issue, issue.readyOptionId),
+      buildStatusUpdateInput(issue, issue.blockedOptionId),
     ]);
   });
 
@@ -180,7 +136,7 @@ describe('workflow failure paths', function () {
     ]);
     assert.deepStrictEqual(statusUpdates, [
       buildStatusUpdateInput(issue, issue.inProgressOptionId),
-      buildStatusUpdateInput(issue, issue.blockedOptionId ?? issue.readyOptionId),
+      buildStatusUpdateInput(issue, issue.blockedOptionId),
     ]);
   });
 });

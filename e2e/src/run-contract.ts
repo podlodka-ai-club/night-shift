@@ -1,4 +1,7 @@
-export const REQUIRED_STATUS_SEQUENCE = ['Ready', 'In progress', 'In review'] as const;
+import { CANONICAL_PROJECT_STATUS_NAMES, READY_ISSUE_STATUS_SEQUENCE } from '../../orchestrator/lib/shared';
+
+export const REQUIRED_STATUS_SEQUENCE = READY_ISSUE_STATUS_SEQUENCE;
+const CANONICAL_PROJECT_STATUS_NAME_SET = new Set<string>(CANONICAL_PROJECT_STATUS_NAMES);
 
 export function buildSeedIssueTitle(runId: string): string {
   return `[e2e] orchestrator live test ${runId}`;
@@ -17,6 +20,11 @@ export function buildSeedIssueBody(runId: string): string {
 }
 
 export function assertObservedStatusSequence(observedStatuses: string[]): void {
+  const nonCanonicalStatuses = observedStatuses.filter((statusName) => !CANONICAL_PROJECT_STATUS_NAME_SET.has(statusName));
+  if (nonCanonicalStatuses.length > 0) {
+    throw new Error(`Observed non-canonical board statuses: ${nonCanonicalStatuses.join(', ')}`);
+  }
+
   let nextRequiredStatusIndex = 0;
 
   for (const observedStatus of observedStatuses) {

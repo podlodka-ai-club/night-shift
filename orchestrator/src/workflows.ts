@@ -114,7 +114,7 @@ export async function automateTopReadyIssue(
 }
 
 function resolveFailureStatusOptionId(issue: SelectedProjectIssue): string {
-  return issue.blockedOptionId ?? issue.readyOptionId;
+  return issue.blockedOptionId;
 }
 
 function buildStatusUpdateInput(

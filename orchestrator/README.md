@@ -20,6 +20,21 @@ For each selected issue, the workflow currently does this:
 8. Move the project item to `In review`
 9. Clean up the local worktree
 
+## Project board status model
+
+The orchestrator now normalizes the GitHub Project `Status` field to the donor-compatible set before selecting work:
+
+- `Backlog`
+- `Refinement`
+- `Refined`
+- `Ready`
+- `In progress`
+- `In review`
+- `Ready to merge`
+- `Blocked`
+
+Missing canonical options are created idempotently during project lookup so the current `Ready -> In progress -> In review` path can keep running against the richer board vocabulary.
+
 ## Run locally
 
 ### Prerequisites

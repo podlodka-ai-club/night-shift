@@ -1,7 +1,7 @@
 import assert from 'assert';
 import { buildBranchName, buildIssueComment } from '../../orchestrator/lib/activities';
 import type { GitHubClientDeps } from '../../orchestrator/lib/activity-deps';
-import { buildRepoApiPath, githubGraphql, githubRest, isMissingProjectOwnerError } from '../../orchestrator/lib/activity-github-client';
+import { buildRepoApiPath, githubGraphql, githubRest } from '../../orchestrator/lib/activity-github-client';
 import { createGitHubActivities } from '../../orchestrator/lib/activity-github';
 import { DEFAULT_READY_STATUS, type AutomateReadyIssueResult, type SelectedProjectIssue } from '../../orchestrator/lib/shared';
 import type { E2EConfig } from './config';
@@ -16,38 +16,6 @@ const GITHUB_JSON_HEADERS = {
   'Content-Type': 'application/json',
   'X-GitHub-Api-Version': '2022-11-28',
 } as const;
-
-interface ProjectMetadataQueryData {
-  owner: ProjectOwner | null;
-}
-
-interface ProjectOwner {
-  projectV2: ProjectMetadata | null;
-}
-
-interface ProjectMetadata {
-  id: string;
-  fields: {
-    nodes: ProjectMetadataFieldNode[];
-  };
-}
-
-type ProjectMetadataFieldNode =
-  | {
-      __typename: 'ProjectV2SingleSelectField';
-      id: string;
-      name: string;
-      options: ProjectStatusOption[];
-    }
-  | { __typename: string };
-
-type ProjectStatusFieldNode = Extract<ProjectMetadataFieldNode, { __typename: 'ProjectV2SingleSelectField' }>;
-type ProjectStatusOption = { id: string; name: string };
-
-interface ProjectStatusField {
-  id: string;
-  options: ProjectStatusOption[];
-}
 
 interface IssueCreateResponse {
   number: number;
@@ -128,49 +96,6 @@ export interface CleanupReport {
   failures: Array<{ step: string; error: string }>;
 }
 
-const PROJECT_METADATA_FRAGMENT = `
-  fragment ProjectMetadataFields on ProjectV2 {
-    id
-    fields(first: 50) {
-      nodes {
-        __typename
-        ... on ProjectV2SingleSelectField {
-          id
-          name
-          options {
-            id
-            name
-          }
-        }
-      }
-    }
-  }
-`;
-
-const USER_PROJECT_METADATA_QUERY = `
-  query UserProjectMetadata($login: String!, $number: Int!) {
-    owner: user(login: $login) {
-      projectV2(number: $number) {
-        ...ProjectMetadataFields
-      }
-    }
-  }
-
-  ${PROJECT_METADATA_FRAGMENT}
-`;
-
-const ORGANIZATION_PROJECT_METADATA_QUERY = `
-  query OrganizationProjectMetadata($login: String!, $number: Int!) {
-    owner: organization(login: $login) {
-      projectV2(number: $number) {
-        ...ProjectMetadataFields
-      }
-    }
-  }
-
-  ${PROJECT_METADATA_FRAGMENT}
-`;
-
 const ADD_PROJECT_ITEM_MUTATION = `
   mutation AddProjectItem($projectId: ID!, $contentId: ID!) {
     addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
@@ -237,19 +162,26 @@ export async function seedIssueInProject(
   body: string,
 ): Promise<SeededIssue> {
   const issue = await createIssue(deps, config, title, body);
-  const project = await lookupProjectMetadata(deps, config.projectOwner, config.projectNumber);
-  const statusField = getProjectStatusField(project);
-  const readyOption = getRequiredStatusOption(statusField, DEFAULT_READY_STATUS);
-  const projectItemId = await addIssueToProject(deps, project.id, issue.node_id);
-  await updateProjectItemStatus(deps, project.id, projectItemId, statusField.id, readyOption.id);
+  const projectStatus = await createGitHubActivities(deps).ensureProjectStatusOptions({
+    projectOwner: config.projectOwner,
+    projectNumber: config.projectNumber,
+  });
+  const projectItemId = await addIssueToProject(deps, projectStatus.projectId, issue.node_id);
+  await updateProjectItemStatus(
+    deps,
+    projectStatus.projectId,
+    projectItemId,
+    projectStatus.statusFieldId,
+    projectStatus.statusOptionIds[DEFAULT_READY_STATUS],
+  );
 
   return {
     runId,
     issueNumber: issue.number,
     issueUrl: issue.html_url,
-    projectId: project.id,
+    projectId: projectStatus.projectId,
     projectItemId,
-    statusFieldId: statusField.id,
+    statusFieldId: projectStatus.statusFieldId,
   };
 }
 
@@ -383,71 +315,6 @@ async function createIssue(
     method: 'POST',
     body: JSON.stringify({ title, body }),
   });
-}
-
-async function lookupProjectMetadata(
-  deps: GitHubClientDeps,
-  projectOwner: string,
-  projectNumber: number,
-): Promise<ProjectMetadata> {
-  const notFoundError = () => new Error(`Could not find GitHub Project ${projectOwner}/${projectNumber}.`);
-  const variables = { login: projectOwner, number: projectNumber };
-  const userOwner = await lookupProjectOwner(deps, USER_PROJECT_METADATA_QUERY, variables, 'User');
-  if (userOwner?.projectV2) {
-    return userOwner.projectV2;
-  }
-  if (userOwner) {
-    throw notFoundError();
-  }
-
-  const organizationOwner = await lookupProjectOwner(deps, ORGANIZATION_PROJECT_METADATA_QUERY, variables, 'Organization');
-  if (organizationOwner?.projectV2) {
-    return organizationOwner.projectV2;
-  }
-
-  throw notFoundError();
-}
-
-async function lookupProjectOwner(
-  deps: GitHubClientDeps,
-  query: string,
-  variables: Record<string, unknown>,
-  ownerType: 'User' | 'Organization',
-): Promise<ProjectOwner | null> {
-  try {
-    const data = await githubGraphql<ProjectMetadataQueryData>(deps, query, variables);
-    return data.owner;
-  } catch (error) {
-    if (isMissingProjectOwnerError(error, ownerType)) {
-      return null;
-    }
-    throw error;
-  }
-}
-
-function getProjectStatusField(project: ProjectMetadata): ProjectStatusField {
-  const statusField = project.fields.nodes.find(
-    (field): field is ProjectStatusFieldNode => isProjectStatusFieldNode(field),
-  );
-  if (!statusField) {
-    throw new Error('The GitHub Project does not contain a Status field.');
-  }
-
-  return { id: statusField.id, options: statusField.options };
-}
-
-function getRequiredStatusOption(statusField: ProjectStatusField, statusName: string): ProjectStatusOption {
-  const option = statusField.options.find((candidate) => candidate.name === statusName);
-  if (!option) {
-    throw new Error(`Could not find the ${statusName} status option on the GitHub Project.`);
-  }
-  return option;
-}
-
-function isProjectStatusFieldNode(
-  field: ProjectMetadataFieldNode,
-): field is ProjectStatusFieldNode {
-  return field.__typename === 'ProjectV2SingleSelectField' && 'name' in field && field.name === PROJECT_STATUS_FIELD_NAME;
 }
 
 function assertCommonWorkflowArtifacts(

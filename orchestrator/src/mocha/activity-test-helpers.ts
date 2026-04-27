@@ -120,6 +120,17 @@ export function buildSelectedIssue(): SelectedProjectIssue {
   };
 }
 
+const DEFAULT_PROJECT_STATUS_OPTIONS = [
+  { id: 'backlog-option', name: 'Backlog' },
+  { id: 'refinement-option', name: 'Refinement' },
+  { id: 'refined-option', name: 'Refined' },
+  { id: 'ready-option', name: 'Ready' },
+  { id: 'progress-option', name: 'In progress' },
+  { id: 'review-option', name: 'In review' },
+  { id: 'ready-to-merge-option', name: 'Ready to merge' },
+  { id: 'blocked-option', name: 'Blocked' },
+] as const;
+
 export function buildWorktreeContext(issue = buildSelectedIssue()): WorktreeContext {
   const branchName = buildBranchName(issue.issueNumber);
   const filePath = buildDummyFilePath(issue.issueNumber);
@@ -143,7 +154,12 @@ export function buildWorktreeContext(issue = buildSelectedIssue()): WorktreeCont
 
 export function buildProjectQueryResponse(
   issue: SelectedProjectIssue,
-  options?: { items?: unknown[]; hasNextPage?: boolean; endCursor?: string | null },
+  options?: {
+    items?: unknown[];
+    hasNextPage?: boolean;
+    endCursor?: string | null;
+    statusOptions?: ReadonlyArray<{ id: string; name: string; color?: string; description?: string | null }>;
+  },
 ): unknown {
   return {
     data: {
@@ -156,12 +172,7 @@ export function buildProjectQueryResponse(
                 __typename: 'ProjectV2SingleSelectField',
                 id: issue.statusFieldId,
                 name: 'Status',
-                options: [
-                  { id: issue.readyOptionId, name: issue.readyStatusName },
-                  { id: issue.inProgressOptionId, name: 'In progress' },
-                  { id: issue.inReviewOptionId, name: issue.inReviewStatusName },
-                  ...(issue.blockedOptionId ? [{ id: issue.blockedOptionId, name: 'Blocked' }] : []),
-                ],
+                options: options?.statusOptions ?? DEFAULT_PROJECT_STATUS_OPTIONS,
               },
             ],
           },

@@ -1,10 +1,63 @@
 export const TASK_QUEUE = 'orchestrator';
+export const CANONICAL_PROJECT_STATUS_NAMES = [
+  'Backlog',
+  'Refinement',
+  'Refined',
+  'Ready',
+  'In progress',
+  'In review',
+  'Ready to merge',
+  'Blocked',
+] as const;
+export type ProjectStatusName = (typeof CANONICAL_PROJECT_STATUS_NAMES)[number];
+
 export const DEFAULT_READY_STATUS = 'Ready';
 export const DEFAULT_IN_PROGRESS_STATUS = 'In progress';
 export const DEFAULT_IN_REVIEW_STATUS = 'In review';
 export const DEFAULT_BLOCKED_STATUS = 'Blocked';
 export const DEFAULT_BRANCH_PREFIX = 'orchestrator';
 export const DEFAULT_FILE_PATH_PREFIX = 'orchestrator-runs';
+
+export const READY_ISSUE_STATUS_SEQUENCE = [
+  DEFAULT_READY_STATUS,
+  DEFAULT_IN_PROGRESS_STATUS,
+  DEFAULT_IN_REVIEW_STATUS,
+] as const;
+
+export const WORKFLOW_BLOCKED_REASONS = [
+  'specify_needs_input',
+  'awaiting_spec_review',
+  'implement_needs_input',
+  'review_escalation',
+] as const;
+export type WorkflowBlockedReason = (typeof WORKFLOW_BLOCKED_REASONS)[number];
+
+export const WORKFLOW_SIGNAL_NAMES = ['specifyRetry', 'specReviewed', 'implementRetry', 'resume'] as const;
+export type WorkflowSignalName = (typeof WORKFLOW_SIGNAL_NAMES)[number];
+
+export const BLOCKED_REASON_BOARD_SIGNAL_RULES = [
+  { blockedReason: 'specify_needs_input', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
+  { blockedReason: 'awaiting_spec_review', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
+  { blockedReason: 'awaiting_spec_review', boardStatusName: 'Ready', signalName: 'specReviewed' },
+  { blockedReason: 'implement_needs_input', boardStatusName: 'Ready', signalName: 'implementRetry' },
+  { blockedReason: 'review_escalation', boardStatusName: 'Ready', signalName: 'resume' },
+  { blockedReason: 'review_escalation', boardStatusName: 'In review', signalName: 'resume' },
+] as const satisfies ReadonlyArray<{
+  blockedReason: WorkflowBlockedReason;
+  boardStatusName: ProjectStatusName;
+  signalName: WorkflowSignalName;
+}>;
+
+export interface EnsureProjectStatusOptionsInput {
+  projectOwner: string;
+  projectNumber: number;
+}
+
+export interface ResolvedProjectStatusOptions {
+  projectId: string;
+  statusFieldId: string;
+  statusOptionIds: Record<ProjectStatusName, string>;
+}
 
 export interface AutomateReadyIssueInput {
   projectOwner: string;
@@ -23,7 +76,7 @@ export interface SelectedProjectIssue {
   readyOptionId: string;
   inProgressOptionId: string;
   inReviewOptionId: string;
-  blockedOptionId?: string;
+  blockedOptionId: string;
   issueNumber: number;
   issueTitle: string;
   taskDescription: string;
