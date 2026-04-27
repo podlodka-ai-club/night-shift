@@ -1,0 +1,22 @@
+{
+  "name": "orchestrator-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc --build",
+    "live": "ts-node src/run-e2e.ts",
+    "live:fake": "E2E_AGENT_MODE=fake ts-node src/run-e2e.ts",
+    "live:real": "E2E_AGENT_MODE=real ts-node src/run-e2e.ts",
+    "test": "mocha --exit --require ts-node/register src/**/*.test.ts"
+  },
+  "devDependencies": {
+    "@temporalio/testing": "^1.16.0",
+    "@temporalio/worker": "^1.16.0",
+    "@tsconfig/node22": "^22.0.0",
+    "@types/mocha": "8.x",
+    "@types/node": "^22.9.1",
+    "mocha": "8.x",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}

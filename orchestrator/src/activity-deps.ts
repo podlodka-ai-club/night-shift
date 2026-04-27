@@ -57,7 +57,7 @@ export interface ActivityContextDeps {
   heartbeat: (details: unknown) => void;
 }
 
-export interface GitHubActivityDeps extends GitHubClientDeps {}
+export type GitHubActivityDeps = GitHubClientDeps;
 
 export interface WorktreeActivityDeps extends FileSystemDeps, CommandDeps, ClockDeps {}
 

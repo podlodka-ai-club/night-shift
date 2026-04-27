@@ -7,7 +7,7 @@ import type {
   SelectedProjectIssue,
 } from './shared';
 import type { GitHubActivityDeps } from './activity-deps';
-import { buildIssueComment, commentOnIssueActivity, openPullRequestActivity } from './activity-github-pull-request';
+import { commentOnIssueActivity, openPullRequestActivity } from './activity-github-pull-request';
 import { getTopReadyIssueActivity, moveProjectItemStatusActivity } from './activity-github-project';
 
 export { buildIssueComment } from './activity-github-pull-request';

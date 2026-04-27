@@ -1,7 +1,15 @@
 import { after, before } from 'mocha';
 import assert from 'assert';
+import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
-import { Worker } from '@temporalio/worker';
+import {
+  DefaultLogger,
+  Runtime,
+  Worker,
+  type Logger,
+  type LogLevel,
+  type LogMetadata,
+} from '@temporalio/worker';
 import { automateTopReadyIssue } from '../workflows';
 import {
   TASK_QUEUE,
@@ -12,6 +20,21 @@ import {
 } from '../shared';
 
 type WorkflowActivities = Record<string, (...args: any[]) => unknown | Promise<unknown>>;
+type ExpectedWorkerWarning = RegExp | string;
+type WorkflowRunInput = {
+  workflowId: string;
+  activities: WorkflowActivities;
+  expectedWorkerWarnings?: readonly ExpectedWorkerWarning[];
+};
+
+let currentExpectedWorkerWarnings: readonly ExpectedWorkerWarning[] = [];
+
+Runtime.install({
+  logger: createExpectedWarningFilterLogger(
+    new DefaultLogger('INFO'),
+    () => currentExpectedWorkerWarnings,
+  ),
+});
 
 export function createWorkflowTestRig() {
   let testEnv: TestWorkflowEnvironment;
@@ -24,24 +47,121 @@ export function createWorkflowTestRig() {
     await testEnv.teardown();
   });
 
-  async function runWorkflow(input: { workflowId: string; activities: WorkflowActivities }) {
-    const worker = await Worker.create({
-      connection: testEnv.nativeConnection,
-      taskQueue: TASK_QUEUE,
-      workflowsPath: require.resolve('../workflows'),
-      activities: input.activities,
-    });
+  async function runWorkflow(input: WorkflowRunInput) {
+    const previousExpectedWarnings = currentExpectedWorkerWarnings;
+    currentExpectedWorkerWarnings = input.expectedWorkerWarnings ?? [];
 
-    return worker.runUntil(
-      testEnv.client.workflow.execute(automateTopReadyIssue, {
+    try {
+      const worker = await Worker.create({
+        connection: testEnv.nativeConnection,
         taskQueue: TASK_QUEUE,
-        workflowId: input.workflowId,
-        args: [{ projectOwner: 'Mugenor', projectNumber: 1 }],
-      }),
-    );
+        workflowsPath: require.resolve('../workflows'),
+        activities: wrapActivitiesWithExpectedFailures(input.activities, currentExpectedWorkerWarnings),
+      });
+
+      return worker.runUntil(
+        testEnv.client.workflow.execute(automateTopReadyIssue, {
+          taskQueue: TASK_QUEUE,
+          workflowId: input.workflowId,
+          args: [{ projectOwner: 'Mugenor', projectNumber: 1 }],
+        }),
+      );
+    } finally {
+      await settleExpectedWarningLogging();
+      currentExpectedWorkerWarnings = previousExpectedWarnings;
+    }
   }
 
   return { runWorkflow };
+}
+
+function wrapActivitiesWithExpectedFailures(
+  activities: WorkflowActivities,
+  expectedWarnings: readonly ExpectedWorkerWarning[],
+): WorkflowActivities {
+  return Object.fromEntries(
+    Object.entries(activities).map(([name, activity]) => [
+      name,
+      async (...args: any[]) => {
+        try {
+          return await activity(...args);
+        } catch (error) {
+          if (!matchesExpectedWorkerWarning(expectedWarnings, error)) throw error;
+          throw ApplicationFailure.fromError(error, {
+            category: ApplicationFailureCategory.BENIGN,
+          });
+        }
+      },
+    ]),
+  );
+}
+
+export function createExpectedWarningFilterLogger(
+  baseLogger: Logger,
+  getExpectedWarnings: () => readonly ExpectedWorkerWarning[],
+): Logger {
+  const log = (level: LogLevel, message: string, meta?: LogMetadata) => {
+    if (shouldSuppressExpectedWorkerWarning(level, message, meta, getExpectedWarnings())) return;
+    baseLogger.log(level, message, meta);
+  };
+
+  return {
+    log,
+    trace: (message, meta) => log('TRACE', message, meta),
+    debug: (message, meta) => log('DEBUG', message, meta),
+    info: (message, meta) => log('INFO', message, meta),
+    warn: (message, meta) => log('WARN', message, meta),
+    error: (message, meta) => log('ERROR', message, meta),
+  };
+}
+
+function shouldSuppressExpectedWorkerWarning(
+  level: LogLevel,
+  message: string,
+  meta: LogMetadata | undefined,
+  expectedWarnings: readonly ExpectedWorkerWarning[],
+): boolean {
+  if (level !== 'WARN' || expectedWarnings.length === 0) return false;
+  if (meta?.sdkComponent !== 'worker' && meta?.sdkComponent !== 'workflow') return false;
+
+  const searchableText = [
+    message,
+    typeof meta.activityType === 'string' ? meta.activityType : '',
+    typeof meta.workflowId === 'string' ? meta.workflowId : '',
+    describeLogField(meta.error),
+    describeLogField(meta.cause),
+  ].join('\n');
+
+  return matchesExpectedWorkerWarningText(expectedWarnings, searchableText);
+}
+
+function describeLogField(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`;
+  return String(value);
+}
+
+function matchesExpectedWorkerWarning(
+  expectedWarnings: readonly ExpectedWorkerWarning[],
+  error: unknown,
+): boolean {
+  return matchesExpectedWorkerWarningText(expectedWarnings, describeLogField(error));
+}
+
+function matchesExpectedWorkerWarningText(
+  expectedWarnings: readonly ExpectedWorkerWarning[],
+  searchableText: string,
+): boolean {
+  return expectedWarnings.some((expectedWarning) => {
+    if (typeof expectedWarning === 'string') return searchableText.includes(expectedWarning);
+    expectedWarning.lastIndex = 0;
+    return expectedWarning.test(searchableText);
+  });
+}
+
+async function settleExpectedWarningLogging(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  Runtime.instance().flushLogs();
 }
 
 export function assertWorkflowActivityFailure(error: unknown, expectedCause: RegExp): true {

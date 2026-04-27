@@ -27,6 +27,7 @@ describe('workflow failure paths', function () {
       () =>
         runWorkflow({
           workflowId: 'automate-ready-issue-failure-test',
+          expectedWorkerWarnings: [/agent failed/, /cleanup failed/],
           activities: {
             async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
             async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded:7'); return worktree; },
@@ -70,6 +71,7 @@ describe('workflow failure paths', function () {
       () =>
         runWorkflow({
           workflowId: 'automate-ready-issue-fallback-ready-test',
+          expectedWorkerWarnings: [/agent failed/],
           activities: {
             async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
             async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded:7'); return worktree; },
@@ -111,6 +113,7 @@ describe('workflow failure paths', function () {
       () =>
         runWorkflow({
           workflowId: 'automate-ready-issue-preserve-root-error-test',
+          expectedWorkerWarnings: [/agent failed/, /status update failed/],
           activities: {
             async getTopReadyIssue() { return issue; },
             async createWorktreeForIssueIfNeeded() { return worktree; },
@@ -138,6 +141,7 @@ describe('workflow failure paths', function () {
       () =>
         runWorkflow({
           workflowId: 'automate-ready-issue-post-agent-failure-test',
+          expectedWorkerWarnings: [/commit failed/],
           activities: {
             async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
             async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded:7'); return worktree; },
