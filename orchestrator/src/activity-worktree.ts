@@ -58,13 +58,35 @@ export function createWorktreeActivities(deps: WorktreeActivityDeps) {
       const worktree = buildWorktreeContext(issue, branchName, filePath, generatedAt, localRepoPaths);
 
       if (await pathExists(deps, localRepoPaths.worktreePath)) {
-        return worktree;
+        if (await isHealthyIssueWorktree(deps, worktree)) {
+          return worktree;
+        }
       }
 
       await ensureBaseClone(deps, localRepoPaths);
       await ensureWorktreesIgnored(deps, localRepoPaths);
       await refreshCloneToDefaultBranch(deps, localRepoPaths.repoRoot, defaultBranch);
-      await ensureIssueWorktree(deps, localRepoPaths.repoRoot, localRepoPaths.worktreePath, branchName, defaultBranch);
+
+      if (await pathExists(deps, localRepoPaths.worktreePath)) {
+        await cleanupLocalWorktree(deps, localRepoPaths.repoRoot, localRepoPaths.worktreePath, branchName, {
+          tolerateCorruptState: true,
+        });
+      }
+
+      try {
+        await ensureIssueWorktree(deps, localRepoPaths.repoRoot, localRepoPaths.worktreePath, branchName, defaultBranch);
+      } catch (error) {
+        const errorMessage = toErrorMessage(error);
+        if (!isRecoverableWorktreeRegistrationError(errorMessage)) {
+          throw error;
+        }
+
+        await cleanupLocalWorktree(deps, localRepoPaths.repoRoot, localRepoPaths.worktreePath, branchName, {
+          tolerateCorruptState: true,
+        });
+        await ensureIssueWorktree(deps, localRepoPaths.repoRoot, localRepoPaths.worktreePath, branchName, defaultBranch);
+      }
+
       return worktree;
     },
 
@@ -74,11 +96,17 @@ export function createWorktreeActivities(deps: WorktreeActivityDeps) {
       await git(deps, worktreePath, ['add', '--all']);
       await commitWorktreeIfNeeded(deps, worktree, commitMessage);
 
-      if (!(await hasCommitsToPush(deps, worktree))) {
+      const remoteBranchExists = await hasRemoteBranch(deps, worktree.repoRoot, worktree.branchName);
+      const baseRef = remoteBranchExists ? `origin/${worktree.branchName}` : `origin/${worktree.defaultBranch}`;
+
+      if (!(await hasAheadCommits(deps, worktree.worktreePath, baseRef))) {
+        if (remoteBranchExists && (await refsMatch(deps, worktree.worktreePath, 'HEAD', `origin/${branchName}`))) {
+          return;
+        }
         throw new Error(`Agent produced no changes to push for branch ${branchName}.`);
       }
 
-      await git(deps, worktreePath, ['push', '-u', 'origin', branchName]);
+      await git(deps, worktreePath, buildPushArgs(branchName));
     },
 
     async readOpenSpecChangeFiles(input: ReadOpenSpecChangeFilesInput): Promise<OpenSpecChangeFile[]> {
@@ -197,19 +225,31 @@ async function hasStagedChanges(deps: WorktreeActivityDeps, worktreePath: string
   return result.exitCode === 1;
 }
 
+function buildPushArgs(branchName: string): string[] {
+  // Steady-state policy: automation owns these per-ticket branches, but we still
+  // avoid force pushes so retries remain safe without rewriting remote history.
+  return ['push', '-u', 'origin', branchName];
+}
+
+async function isHealthyIssueWorktree(deps: WorktreeActivityDeps, worktree: WorktreeContext): Promise<boolean> {
+  try {
+    const result = await git(deps, worktree.worktreePath, ['rev-parse', '--show-toplevel']);
+    const [reportedTopLevelPath, expectedWorktreePath] = await Promise.all([
+      deps.realpath(result.stdout.trim()),
+      deps.realpath(worktree.worktreePath),
+    ]);
+    return reportedTopLevelPath === expectedWorktreePath;
+  } catch {
+    return false;
+  }
+}
+
 async function commitWorktreeIfNeeded(deps: WorktreeActivityDeps, worktree: WorktreeContext, commitMessage?: string): Promise<void> {
   if (!(await hasStagedChanges(deps, worktree.worktreePath))) {
     return;
   }
 
   await git(deps, worktree.worktreePath, ['commit', '-m', buildCommitMessage(worktree, commitMessage)]);
-}
-
-async function hasCommitsToPush(deps: WorktreeActivityDeps, worktree: WorktreeContext): Promise<boolean> {
-  const baseRef = (await hasRemoteBranch(deps, worktree.repoRoot, worktree.branchName))
-    ? `origin/${worktree.branchName}`
-    : `origin/${worktree.defaultBranch}`;
-  return hasAheadCommits(deps, worktree.worktreePath, baseRef);
 }
 
 async function hasAheadCommits(deps: WorktreeActivityDeps, worktreePath: string, baseRef: string): Promise<boolean> {
@@ -219,6 +259,18 @@ async function hasAheadCommits(deps: WorktreeActivityDeps, worktreePath: string,
     throw new Error(`Could not determine whether HEAD is ahead of ${baseRef}.`);
   }
   return commitCount > 0;
+}
+
+async function refsMatch(deps: WorktreeActivityDeps, worktreePath: string, leftRef: string, rightRef: string): Promise<boolean> {
+  const [leftSha, rightSha] = await Promise.all([
+    resolveGitRef(deps, worktreePath, leftRef),
+    resolveGitRef(deps, worktreePath, rightRef),
+  ]);
+  return leftSha === rightSha;
+}
+
+async function resolveGitRef(deps: WorktreeActivityDeps, worktreePath: string, ref: string): Promise<string> {
+  return (await git(deps, worktreePath, ['rev-parse', ref])).stdout.trim();
 }
 
 function buildCommitMessage(worktree: WorktreeContext, commitMessage?: string): string {
@@ -301,22 +353,57 @@ async function cleanupLocalWorktree(
   repoRoot: string,
   worktreePath: string,
   branchName: string,
+  options: { tolerateCorruptState?: boolean } = {},
 ): Promise<void> {
   const cleanupFailures: string[] = [];
+  const tolerateCorruptState = options.tolerateCorruptState ?? false;
 
   try {
     await git(deps, repoRoot, ['worktree', 'remove', '--force', worktreePath]);
   } catch (error) {
-    cleanupFailures.push(toErrorMessage(error));
+    if (tolerateCorruptState) {
+      try {
+        await deps.rm(worktreePath, { force: true, recursive: true });
+      } catch (rmError) {
+        cleanupFailures.push(toErrorMessage(rmError));
+      }
+    } else {
+      cleanupFailures.push(toErrorMessage(error));
+    }
   }
 
   try {
     await git(deps, repoRoot, ['branch', '-D', branchName]);
   } catch (error) {
-    cleanupFailures.push(toErrorMessage(error));
+    const errorMessage = toErrorMessage(error);
+    if (tolerateCorruptState && isStaleWorktreeBranchRegistrationError(errorMessage)) {
+      try {
+        await git(deps, repoRoot, ['worktree', 'prune']);
+        await git(deps, repoRoot, ['branch', '-D', branchName]);
+      } catch (pruneError) {
+        cleanupFailures.push(toErrorMessage(pruneError));
+      }
+    } else if (!(tolerateCorruptState && isMissingLocalBranchError(errorMessage))) {
+      cleanupFailures.push(errorMessage);
+    }
   }
 
   if (cleanupFailures.length > 0) {
     throw new Error(`Failed to clean up worktree ${worktreePath}: ${cleanupFailures.join('; ')}`);
   }
+}
+
+function isMissingLocalBranchError(errorMessage: string): boolean {
+  return errorMessage.includes('branch') && (
+    errorMessage.includes('not found')
+    || errorMessage.includes('not a valid object name')
+  );
+}
+
+function isStaleWorktreeBranchRegistrationError(errorMessage: string): boolean {
+  return errorMessage.includes('cannot delete branch') && errorMessage.includes('used by worktree');
+}
+
+function isRecoverableWorktreeRegistrationError(errorMessage: string): boolean {
+  return errorMessage.includes('used by worktree') || errorMessage.includes('already checked out');
 }

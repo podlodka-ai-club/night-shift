@@ -28,7 +28,7 @@
 ## From Task 5 review (20260428T133031690060Z)
 
 - ~~`ImplementPhaseContractError` discards the original error cause when wrapping parse or `AgentContractError` failures. Pass `{ cause }` to preserve stack context for debugging.~~ **Fixed** in follow-up (20260428T134128583856Z): constructor now accepts and assigns `cause`.
-- Partial worktree recovery only checks directory existence (`pathExists`), not git state validity. A worktree left in a corrupted state (e.g., interrupted `git worktree add`) will be returned as valid and produce cryptic downstream failures. Add git state validation or cleanup-on-corruption when cleanup policy is finalized in Task 9.
+- ~~Partial worktree recovery only checks directory existence (`pathExists`), not git state validity. A worktree left in a corrupted state (e.g., interrupted `git worktree add`) will be returned as valid and produce cryptic downstream failures. Add git state validation or cleanup-on-corruption when cleanup policy is finalized in Task 9.~~ **Resolved** in Task 9: `isHealthyIssueWorktree` validates git state via `rev-parse --show-toplevel`; corrupt worktrees are cleaned up and recreated.
 - Quality gate logs (up to 4 KB) are embedded verbatim in the implement retry prompt via `buildRetryFailureMessage`. Consider a secondary truncation or summarization step to avoid inflating prompt token usage on noisy build output.
 
 ## From Task 6 review (20260428T151352596798Z)
@@ -61,4 +61,9 @@
 - Signal handlers (`workflows.ts:120-131`) silently discard signals when guard flags are false. Operators get no feedback. Consider updating `shellState.latestActivity` on discard for observability.
 - `client.ts` top-level error handler (`console.error(err)`) does not unwind the `.cause` chain. Temporal's `WorkflowFailedError` wraps the actual cause; operators see only the outermost message.
 - `buildPhaseFailureComment` (`workflows.ts:418`) suggests `readyStatusName` for review phase failures where a PR already exists. Consider suggesting `inReviewStatusName` for review failures.
-- `CleanupWorktreeInput` and `cleanupWorktree` activity are declared in `shared.ts` and `activity-worktree.ts` but never wired into any phase or workflow. Remove or wire into Task 9 cleanup policy.
+- ~~`CleanupWorktreeInput` and `cleanupWorktree` activity are declared in `shared.ts` and `activity-worktree.ts` but never wired into any phase or workflow. Remove or wire into Task 9 cleanup policy.~~ **Resolved** in Task 9: `cleanupWorktree` is now wired into the success path of the phased workflow via `cleanupSuccessfulWorktree`.
+
+## From Task 9 review (20260428T205106670470Z)
+
+- Partial worktree recovery (`isHealthyIssueWorktree`) only checks `rev-parse --show-toplevel`. A deeper health check (e.g. HEAD validity, index integrity) may be warranted if corruption patterns are observed in production. Low priority.
+- `cleanupLocalWorktree` deletes the local branch on success-path cleanup while the remote branch/PR still exists. Document or guard against re-entry after cleanup if the workflow is ever extended to allow post-cleanup operations on the same ticket.

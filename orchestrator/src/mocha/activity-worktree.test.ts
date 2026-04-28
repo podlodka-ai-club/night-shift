@@ -1,5 +1,6 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
+import type { WorktreeActivityDeps } from '../activity-deps';
 import { buildBranchName, buildDummyChangeContent, buildDummyFilePath } from '../activities';
 import {
   type AppendCall,
@@ -93,6 +94,7 @@ describe('worktree activities', () => {
 
   it('returns the existing worktree context when the issue worktree is already present', async () => {
     const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
     const gitCalls: GitCall[] = [];
     const { createWorktreeForIssueIfNeeded } = createActivityTestRig({
       worktree: {
@@ -102,17 +104,292 @@ describe('worktree activities', () => {
         }
         throw createNotFoundError();
       },
+        realpath: (async (targetPath) => String(targetPath)) as WorktreeActivityDeps['realpath'],
         execFile: async (_file, args, options) => {
         gitCalls.push({ args, cwd: options?.cwd });
+        if (args[0] === 'rev-parse') {
+          return { stdout: `${worktree.worktreePath}\n`, stderr: '', exitCode: 0 };
+        }
         return { stdout: '', stderr: '', exitCode: 0 };
       },
         now: () => 123,
       },
     });
 
-    const worktree = await createWorktreeForIssueIfNeeded({ issue });
-    assert.deepStrictEqual(worktree, buildWorktreeContext(issue));
-    assert.deepStrictEqual(gitCalls, []);
+    const existingWorktree = await createWorktreeForIssueIfNeeded({ issue });
+    assert.deepStrictEqual(existingWorktree, worktree);
+    assert.deepStrictEqual(gitCalls, [{ cwd: worktree.worktreePath, args: ['rev-parse', '--show-toplevel'] }]);
+  });
+
+  it('recreates a corrupt existing issue worktree instead of trusting the directory', async () => {
+    const worktree = buildWorktreeContext();
+    const gitCalls: GitCall[] = [];
+    const { createWorktreeForIssueIfNeeded } = createActivityTestRig({
+      worktree: {
+        access: async (targetPath: string) => {
+          if (targetPath === worktree.repoRoot || targetPath === worktree.worktreePath) {
+            return undefined;
+          }
+          throw createNotFoundError();
+        },
+        realpath: (async (targetPath) => String(targetPath)) as WorktreeActivityDeps['realpath'],
+        mkdir: async () => undefined,
+        rm: async () => undefined,
+        execFile: async (_file, args, options) => {
+          gitCalls.push({ args, cwd: options?.cwd });
+          if (args[0] === 'rev-parse') {
+            throw new Error('not a git worktree');
+          }
+          if (args[0] === 'check-ignore') {
+            return { stdout: '.worktrees\n', stderr: '', exitCode: 0 };
+          }
+          if (args[0] === 'ls-remote') {
+            return { stdout: '', stderr: '', exitCode: 2 };
+          }
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+        now: () => 123,
+      },
+    });
+
+    const recreatedWorktree = await createWorktreeForIssueIfNeeded({ issue: buildSelectedIssue() });
+
+    assert.deepStrictEqual(recreatedWorktree, worktree);
+    assert.deepStrictEqual(gitCalls, [
+      { cwd: worktree.worktreePath, args: ['rev-parse', '--show-toplevel'] },
+      { cwd: worktree.repoRoot, args: ['fetch', '--prune', 'origin'] },
+      { cwd: worktree.repoRoot, args: ['check-ignore', '.worktrees'] },
+      { cwd: worktree.repoRoot, args: ['checkout', '-B', 'main', 'origin/main'] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'remove', '--force', worktree.worktreePath] },
+      { cwd: worktree.repoRoot, args: ['branch', '-D', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['ls-remote', '--exit-code', '--heads', 'origin', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'add', '-b', worktree.branchName, worktree.worktreePath, 'origin/main'] },
+    ]);
+  });
+
+  it('recovers from a corrupt worktree even when git cleanup metadata is already missing', async () => {
+    const worktree = buildWorktreeContext();
+    const gitCalls: GitCall[] = [];
+    const rmCalls: string[] = [];
+    const { createWorktreeForIssueIfNeeded } = createActivityTestRig({
+      worktree: {
+        access: async (targetPath: string) => {
+          if (targetPath === worktree.repoRoot || targetPath === worktree.worktreePath) {
+            return undefined;
+          }
+          throw createNotFoundError();
+        },
+        realpath: (async (targetPath) => String(targetPath)) as WorktreeActivityDeps['realpath'],
+        mkdir: async () => undefined,
+        rm: async (targetPath) => {
+          rmCalls.push(String(targetPath));
+        },
+        execFile: async (_file, args, options) => {
+          gitCalls.push({ args, cwd: options?.cwd });
+          if (args[0] === 'rev-parse') {
+            throw new Error('not a git worktree');
+          }
+          if (args[0] === 'check-ignore') {
+            return { stdout: '.worktrees\n', stderr: '', exitCode: 0 };
+          }
+          if (args[0] === 'worktree' && args[1] === 'remove') {
+            throw new Error('git worktree remove failed in /tmp/orchestrator: not a working tree');
+          }
+          if (args[0] === 'branch' && args[1] === '-D') {
+            throw new Error(`git branch -D ${worktree.branchName} failed in /tmp/orchestrator: branch not found`);
+          }
+          if (args[0] === 'ls-remote') {
+            return { stdout: '', stderr: '', exitCode: 2 };
+          }
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+        now: () => 123,
+      },
+    });
+
+    const recreatedWorktree = await createWorktreeForIssueIfNeeded({ issue: buildSelectedIssue() });
+
+    assert.deepStrictEqual(recreatedWorktree, worktree);
+    assert.deepStrictEqual(rmCalls, [worktree.worktreePath]);
+    assert.deepStrictEqual(gitCalls, [
+      { cwd: worktree.worktreePath, args: ['rev-parse', '--show-toplevel'] },
+      { cwd: worktree.repoRoot, args: ['fetch', '--prune', 'origin'] },
+      { cwd: worktree.repoRoot, args: ['check-ignore', '.worktrees'] },
+      { cwd: worktree.repoRoot, args: ['checkout', '-B', 'main', 'origin/main'] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'remove', '--force', worktree.worktreePath] },
+      { cwd: worktree.repoRoot, args: ['branch', '-D', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['ls-remote', '--exit-code', '--heads', 'origin', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'add', '-b', worktree.branchName, worktree.worktreePath, 'origin/main'] },
+    ]);
+  });
+
+  it('prunes stale worktree registrations before retrying branch deletion during corrupt recovery', async () => {
+    const worktree = buildWorktreeContext();
+    const gitCalls: GitCall[] = [];
+    const rmCalls: string[] = [];
+    let branchDeleteAttempts = 0;
+    const { createWorktreeForIssueIfNeeded } = createActivityTestRig({
+      worktree: {
+        access: async (targetPath: string) => {
+          if (targetPath === worktree.repoRoot || targetPath === worktree.worktreePath) {
+            return undefined;
+          }
+          throw createNotFoundError();
+        },
+        realpath: (async (targetPath) => String(targetPath)) as WorktreeActivityDeps['realpath'],
+        mkdir: async () => undefined,
+        rm: async (targetPath) => {
+          rmCalls.push(String(targetPath));
+        },
+        execFile: async (_file, args, options) => {
+          gitCalls.push({ args, cwd: options?.cwd });
+          if (args[0] === 'rev-parse') {
+            throw new Error('not a git worktree');
+          }
+          if (args[0] === 'check-ignore') {
+            return { stdout: '.worktrees\n', stderr: '', exitCode: 0 };
+          }
+          if (args[0] === 'worktree' && args[1] === 'remove') {
+            throw new Error('git worktree remove failed in /tmp/orchestrator: not a working tree');
+          }
+          if (args[0] === 'branch' && args[1] === '-D') {
+            branchDeleteAttempts += 1;
+            if (branchDeleteAttempts === 1) {
+              throw new Error(`git branch -D ${worktree.branchName} failed in /tmp/orchestrator: cannot delete branch '${worktree.branchName}' used by worktree at '${worktree.worktreePath}'`);
+            }
+            return { stdout: '', stderr: '', exitCode: 0 };
+          }
+          if (args[0] === 'ls-remote') {
+            return { stdout: '', stderr: '', exitCode: 2 };
+          }
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+        now: () => 123,
+      },
+    });
+
+    const recreatedWorktree = await createWorktreeForIssueIfNeeded({ issue: buildSelectedIssue() });
+
+    assert.deepStrictEqual(recreatedWorktree, worktree);
+    assert.deepStrictEqual(rmCalls, [worktree.worktreePath]);
+    assert.deepStrictEqual(gitCalls, [
+      { cwd: worktree.worktreePath, args: ['rev-parse', '--show-toplevel'] },
+      { cwd: worktree.repoRoot, args: ['fetch', '--prune', 'origin'] },
+      { cwd: worktree.repoRoot, args: ['check-ignore', '.worktrees'] },
+      { cwd: worktree.repoRoot, args: ['checkout', '-B', 'main', 'origin/main'] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'remove', '--force', worktree.worktreePath] },
+      { cwd: worktree.repoRoot, args: ['branch', '-D', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'prune'] },
+      { cwd: worktree.repoRoot, args: ['branch', '-D', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['ls-remote', '--exit-code', '--heads', 'origin', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'add', '-b', worktree.branchName, worktree.worktreePath, 'origin/main'] },
+    ]);
+  });
+
+  it('recovers stale git worktree registrations even when the worktree directory is already gone', async () => {
+    const worktree = buildWorktreeContext();
+    const gitCalls: GitCall[] = [];
+    const rmCalls: string[] = [];
+    let addAttempts = 0;
+    let branchDeleteAttempts = 0;
+    const { createWorktreeForIssueIfNeeded } = createActivityTestRig({
+      worktree: {
+        access: async (targetPath: string) => {
+          if (targetPath === worktree.repoRoot) {
+            return undefined;
+          }
+          throw createNotFoundError();
+        },
+        realpath: (async (targetPath) => String(targetPath)) as WorktreeActivityDeps['realpath'],
+        mkdir: async () => undefined,
+        rm: async (targetPath) => {
+          rmCalls.push(String(targetPath));
+        },
+        execFile: async (_file, args, options) => {
+          gitCalls.push({ args, cwd: options?.cwd });
+          if (args[0] === 'check-ignore') {
+            return { stdout: '.worktrees\n', stderr: '', exitCode: 0 };
+          }
+          if (args[0] === 'ls-remote') {
+            return { stdout: '', stderr: '', exitCode: 2 };
+          }
+          if (args[0] === 'worktree' && args[1] === 'add') {
+            addAttempts += 1;
+            if (addAttempts === 1) {
+              throw new Error(`git worktree add failed in ${worktree.repoRoot}: branch '${worktree.branchName}' is already checked out at '${worktree.worktreePath}'`);
+            }
+            return { stdout: '', stderr: '', exitCode: 0 };
+          }
+          if (args[0] === 'worktree' && args[1] === 'remove') {
+            throw new Error('git worktree remove failed in /tmp/orchestrator: not a working tree');
+          }
+          if (args[0] === 'branch' && args[1] === '-D') {
+            branchDeleteAttempts += 1;
+            if (branchDeleteAttempts === 1) {
+              throw new Error(`git branch -D ${worktree.branchName} failed in /tmp/orchestrator: cannot delete branch '${worktree.branchName}' used by worktree at '${worktree.worktreePath}'`);
+            }
+            return { stdout: '', stderr: '', exitCode: 0 };
+          }
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+        now: () => 123,
+      },
+    });
+
+    const recreatedWorktree = await createWorktreeForIssueIfNeeded({ issue: buildSelectedIssue() });
+
+    assert.deepStrictEqual(recreatedWorktree, worktree);
+    assert.deepStrictEqual(rmCalls, [worktree.worktreePath]);
+    assert.deepStrictEqual(gitCalls, [
+      { cwd: worktree.repoRoot, args: ['fetch', '--prune', 'origin'] },
+      { cwd: worktree.repoRoot, args: ['check-ignore', '.worktrees'] },
+      { cwd: worktree.repoRoot, args: ['checkout', '-B', 'main', 'origin/main'] },
+      { cwd: worktree.repoRoot, args: ['ls-remote', '--exit-code', '--heads', 'origin', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'add', '-b', worktree.branchName, worktree.worktreePath, 'origin/main'] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'remove', '--force', worktree.worktreePath] },
+      { cwd: worktree.repoRoot, args: ['branch', '-D', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'prune'] },
+      { cwd: worktree.repoRoot, args: ['branch', '-D', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['ls-remote', '--exit-code', '--heads', 'origin', worktree.branchName] },
+      { cwd: worktree.repoRoot, args: ['worktree', 'add', '-b', worktree.branchName, worktree.worktreePath, 'origin/main'] },
+    ]);
+  });
+
+  it('treats realpath-equivalent /tmp and /private/tmp worktrees as healthy', async () => {
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const gitCalls: GitCall[] = [];
+    const { createWorktreeForIssueIfNeeded } = createActivityTestRig({
+      worktree: {
+        access: async (targetPath: string) => {
+          if (targetPath === worktree.worktreePath) {
+            return undefined;
+          }
+          throw createNotFoundError();
+        },
+        realpath: (async (targetPath) => {
+          const value = String(targetPath);
+          return value.startsWith('/tmp/') ? value.replace('/tmp/', '/private/tmp/') : value;
+        }) as WorktreeActivityDeps['realpath'],
+        execFile: async (_file, args, options) => {
+          gitCalls.push({ args, cwd: options?.cwd });
+          if (args[0] === 'rev-parse') {
+            return {
+              stdout: `${worktree.worktreePath.replace('/tmp/', '/private/tmp/')}\n`,
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+        now: () => 123,
+      },
+    });
+
+    const existingWorktree = await createWorktreeForIssueIfNeeded({ issue });
+
+    assert.deepStrictEqual(existingWorktree, worktree);
+    assert.deepStrictEqual(gitCalls, [{ cwd: worktree.worktreePath, args: ['rev-parse', '--show-toplevel'] }]);
   });
 
   it('adds .worktrees to the local info exclude when it is not already ignored', async () => {
@@ -222,7 +499,7 @@ describe('worktree activities', () => {
     ]);
   });
 
-  it('stages, commits, and pushes the worktree changes', async () => {
+  it('stages, commits, and pushes the worktree changes without force', async () => {
     const worktree = buildWorktreeContext();
     const gitCalls: GitCall[] = [];
     const { commitAndPush } = createActivityTestRig({
@@ -280,6 +557,36 @@ describe('worktree activities', () => {
     await commitAndPush({ worktree });
     assert.ok(gitCalls.every((call) => call.args[0] !== 'commit'));
     assert.deepStrictEqual(gitCalls.at(-1), { cwd: worktree.worktreePath, args: ['push', '-u', 'origin', worktree.branchName] });
+  });
+
+  it('treats an already-pushed branch as a successful retry replay', async () => {
+    const worktree = buildWorktreeContext();
+    const gitCalls: GitCall[] = [];
+    const { commitAndPush } = createActivityTestRig({
+      worktree: { execFile: async (_file, args, options) => {
+        gitCalls.push({ args, cwd: options?.cwd });
+        if (args[0] === 'diff') return { stdout: '', stderr: '', exitCode: 0 };
+        if (args[0] === 'ls-remote') return { stdout: 'refs/heads/orchestrator/issue-7\n', stderr: '', exitCode: 0 };
+        if (args[0] === 'rev-list') return { stdout: '0\n', stderr: '', exitCode: 0 };
+        if (args[0] === 'rev-parse') return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        if (args[0] === 'push') throw new Error('push should be skipped when the branch is already at HEAD');
+        if (args[0] === 'commit') throw new Error('commit should be skipped when nothing is staged');
+        return { stdout: '', stderr: '', exitCode: 0 };
+      } },
+    });
+
+    await commitAndPush({ worktree });
+
+    assert.ok(gitCalls.every((call) => call.args[0] !== 'commit'));
+    assert.ok(gitCalls.every((call) => call.args[0] !== 'push'));
+    assert.deepStrictEqual(gitCalls, [
+      { cwd: worktree.worktreePath, args: ['add', '--all'] },
+      { cwd: worktree.worktreePath, args: ['diff', '--cached', '--quiet', '--exit-code'] },
+      { cwd: worktree.repoRoot, args: ['ls-remote', '--exit-code', '--heads', 'origin', worktree.branchName] },
+      { cwd: worktree.worktreePath, args: ['rev-list', '--count', `origin/${worktree.branchName}..HEAD`] },
+      { cwd: worktree.worktreePath, args: ['rev-parse', 'HEAD'] },
+      { cwd: worktree.worktreePath, args: ['rev-parse', `origin/${worktree.branchName}`] },
+    ]);
   });
 
   it('fails instead of pushing an unchanged branch when the agent produced no diff', async () => {

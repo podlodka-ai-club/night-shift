@@ -1,4 +1,4 @@
-import { access, appendFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { Context } from '@temporalio/activity';
 import { execa } from 'execa';
 
@@ -57,6 +57,8 @@ export interface FileSystemDeps {
   mkdir: typeof mkdir;
   readdir: typeof readdir;
   readFile: typeof readFile;
+  realpath: typeof realpath;
+  rm: typeof rm;
   appendFile: (targetPath: string, data: string, encoding: BufferEncoding) => Promise<void>;
   writeFile: (targetPath: string, data: string, encoding: BufferEncoding) => Promise<void>;
 }
@@ -102,6 +104,8 @@ export function createActivityDependencies(): ActivityDependencies {
     mkdir,
     readdir,
     readFile,
+    realpath,
+    rm,
     appendFile: (targetPath, data, encoding) => appendFile(targetPath, data, encoding),
     writeFile: (targetPath, data, encoding) => writeFile(targetPath, data, encoding),
     execFile: defaultExecFile,

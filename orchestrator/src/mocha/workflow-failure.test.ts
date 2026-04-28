@@ -22,6 +22,7 @@ describe('workflow failure paths', function () {
     const worktree = buildWorktreeContext(issue);
     const statusUpdates: MoveProjectItemStatusInput[] = [];
     const markers: string[] = [];
+    let cleanupCalls = 0;
 
     await assert.rejects(
       () =>
@@ -55,6 +56,9 @@ describe('workflow failure paths', function () {
               statusUpdates.push(input);
               calls.push(`moveProjectItemStatus:${input.projectItemId}`);
             },
+            async cleanupWorktree() {
+              cleanupCalls += 1;
+            },
           },
         }),
       (error: unknown) => assertWorkflowActivityFailure(error, /agent failed/),
@@ -77,6 +81,7 @@ describe('workflow failure paths', function () {
       buildStatusUpdateInput(issue, issue.blockedOptionId),
     ]);
     assert.deepStrictEqual(markers, ['workflow:phase-failure']);
+    assert.strictEqual(cleanupCalls, 0);
   });
 
   it('preserves the original workflow failure when commitAndPush fails after the gate passes', async () => {

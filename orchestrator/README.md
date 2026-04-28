@@ -2,23 +2,40 @@
 
 ## What it is
 
-This is a small Temporal-based automation service for GitHub Project v2 issue handling.
+This is a Temporal-based automation service for GitHub Project v2 issue handling.
 
-Today, its main job is to take the top `Ready` issue from a project, run a local coding agent against the target repository, and do the pull request plumbing around that work.
+Its steady-state model is a **deterministic phased workflow**:
+
+1. `Specify` turns a `Backlog` issue into an OpenSpec draft and waits for approval if needed.
+2. `Implement` applies an approved change in a stable per-ticket worktree and opens/updates a PR.
+3. `Review` evaluates the PR against the spec and either approves, requests fixes, or escalates.
+
+Shared intake (`pickup` or `manual`) decides whether a board item should **start**, **signal**, or **noop** based on the current board status plus any blocked workflow state.
 
 ## High-level workflow
 
-For each selected issue, the workflow currently does this:
+For each selected issue, the steady-state flow is:
 
-1. Query the GitHub Project v2 and pick the first issue in `Ready`
-2. Move that project item to `In progress`
-3. Create or reuse a stable local clone/worktree under `/tmp/orchestrator`
-4. Run local `codex exec` with the issue description as the task prompt
-5. Stage all worktree changes, commit them, and push the branch
-6. Open a pull request, or reuse an existing open PR for the same branch
-7. Comment on the GitHub issue with the PR URL
-8. Move the project item to `In review`
-9. Clean up the local worktree
+1. Intake scans `Backlog` and `Ready` items, or manually selects `Backlog` / `Ready` / `In review`
+2. Intake resolves one of:
+   - start `specify`
+   - start `implement`
+   - signal a blocked workflow
+   - noop
+3. The phased workflow keeps deterministic state under workflow id `ticket-<issueNumber>`
+4. Non-deterministic work stays in activities:
+   - GitHub reads/writes
+   - worktree/git operations under `/tmp/orchestrator`
+   - agent execution via `runAgentSequence`
+5. On full success (`Ready to merge`), the local per-ticket worktree is cleaned up
+6. On blocked or failing paths, the worktree is intentionally preserved for debugging/resume
+
+Operational defaults:
+
+- per-ticket branches/worktrees are stable and reusable across retries
+- automation uses a normal `git push -u origin <branch>` policy and does **not** force-push
+- corrupt pre-existing worktrees are recreated instead of being trusted blindly
+- the generic intake layer and generic `runAgentSequence` activity are intentional steady-state seams beneath the donor-style phase state machine
 
 ## Project board status model
 
@@ -67,10 +84,17 @@ You can pass the GitHub project owner/number directly:
 
 ```bash
 cd orchestrator
-npm run workflow -- <project-owner> <project-number>
+npm run workflow -- <project-owner> <project-number> [pickup|Backlog|Ready|"In review"] [max-actions]
 ```
 
-Or provide them through environment variables:
+Modes:
+
+- `pickup` (default): scan `Backlog` + `Ready`, merge by `createdAt`, and process up to `max-actions`
+- `Backlog`: manually intake one `Backlog` issue
+- `Ready`: manually intake one `Ready` issue
+- `In review`: manually intake one `In review` issue
+
+Or provide project coordinates through environment variables:
 
 - `GITHUB_PROJECT_OWNER`
 - `GITHUB_PROJECT_NUMBER`
@@ -79,8 +103,10 @@ Optional overrides:
 
 - `GITHUB_READY_STATUS`
 - `GITHUB_IN_REVIEW_STATUS`
+- `GITHUB_BLOCKED_STATUS`
 - `GITHUB_BRANCH_PREFIX`
 - `GITHUB_FILE_PATH_PREFIX`
+- `GITHUB_PICKUP_MAX_ACTIONS`
 
 ### Useful verification commands
 
@@ -94,8 +120,9 @@ npm run lint
 ## Small architecture map
 
 - `src/worker.ts` — starts the Temporal worker and registers activities
-- `src/client.ts` — starts a workflow execution from the command line
-- `src/workflows.ts` — defines the high-level orchestration flow
+- `src/client.ts` — runs shared pickup/manual intake from the command line
+- `src/intake.ts` — shared start/signal/noop trigger resolution and pickup batching
+- `src/workflows.ts` — deterministic phased workflow shell
 - `src/activities.ts` — contains GitHub API calls, local git/worktree logic, Codex invocation, PR creation, and cleanup
 - `src/shared.ts` — shared constants and types
 
@@ -104,6 +131,7 @@ npm run lint
 - Local repository state is cached under `/tmp/orchestrator`
 - Branches are stable per issue, using `orchestrator/issue-<number>` by default
 - Worktrees are also stable per issue, which helps with retries/recovery
+- Workflow ids are stable per issue, using `ticket-<issueNumber>`
 - `runAgent` uses local Codex with model `gpt-5.3-codex` and low reasoning effort
 - The issue body is used as the task description sent to Codex
 - The old dummy file writer still exists separately for future E2E testing

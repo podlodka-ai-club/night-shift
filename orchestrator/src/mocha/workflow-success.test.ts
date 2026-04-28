@@ -61,6 +61,7 @@ describe('workflow success paths', function () {
       'upsertPullRequestReviewComment:src/index.ts:1',
       'upsertIssueComment:review:summary',
       'moveProjectItemStatus:item-1',
+      'cleanupWorktree:orchestrator/issue-7',
     ]);
     assert.deepStrictEqual(statusUpdates, [
       buildStatusUpdateInput(issue, issue.inProgressOptionId),
@@ -198,6 +199,7 @@ function createImplementSuccessActivities({
   openPullRequest,
   upsertIssueComment,
   moveProjectItemStatus,
+  cleanupWorktree,
 }: {
   issue: ReturnType<typeof buildSelectedIssue>;
   worktree: ReturnType<typeof buildWorktreeContext>;
@@ -207,6 +209,7 @@ function createImplementSuccessActivities({
   openPullRequest?: (input: any) => Promise<any>;
   upsertIssueComment?: (input: any) => Promise<void>;
   moveProjectItemStatus?: (input: MoveProjectItemStatusInput) => Promise<void>;
+  cleanupWorktree?: (input: any) => Promise<void>;
 }) {
   let runAgentSequenceCallCount = 0;
 
@@ -339,6 +342,12 @@ function createImplementSuccessActivities({
       calls.push(`moveProjectItemStatus:${input.projectItemId}`);
       if (moveProjectItemStatus) {
         await moveProjectItemStatus(input);
+      }
+    },
+    async cleanupWorktree(input: any) {
+      calls.push(`cleanupWorktree:${input.worktree.branchName}`);
+      if (cleanupWorktree) {
+        await cleanupWorktree(input);
       }
     },
   };

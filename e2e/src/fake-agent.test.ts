@@ -1,7 +1,7 @@
 import assert from 'assert';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, mkdir, readdir, readFile, writeFile, appendFile, access } from 'node:fs/promises';
+import { access, appendFile, mkdtemp, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { describe, it } from 'mocha';
 import type { AgentActivityDeps, CommandResult } from '../../orchestrator/lib/activity-deps';
 import {
@@ -64,6 +64,8 @@ function buildBaseDeps(): AgentActivityDeps {
     mkdir,
     readdir,
     readFile,
+    realpath,
+    rm,
     appendFile: (targetPath, data, encoding) => appendFile(targetPath, data, encoding),
     writeFile: (targetPath, data, encoding) => writeFile(targetPath, data, encoding),
     execFile: async (): Promise<CommandResult> => {

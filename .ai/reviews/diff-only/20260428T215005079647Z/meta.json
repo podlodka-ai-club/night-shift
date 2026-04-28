@@ -1,0 +1,37 @@
+{
+  "artifactPath": null,
+  "previousReviewPath": null,
+  "artifactSlug": "diff-only",
+  "runId": "20260428T215005079647Z",
+  "repoRoot": "/Users/ich776/pocs/agent-orchestrator",
+  "branch": "feat/temporal-simplest-workflow",
+  "requestedScope": "Current uncommitted Task 9 changes after stale-worktree-registration fix and workflow test harness timeout hardening. Focus on final policy and cleanup semantics, success cleanup, failure preservation, corrupt worktree recovery, retry-safe non-forced push behavior, README/docs updates, and Makefile ordering. Assume make check is green. Report only material findings or no blockers.",
+  "extraInstructions": null,
+  "reviewMode": "branch-only",
+  "actualReviewMode": "branch-only",
+  "reviewer": "auggie",
+  "requiredModel": "opus4.6",
+  "reviewStatus": "completed_with_fallback",
+  "reviewLifecycleStatus": "full_review_completed",
+  "fallbackReason": "no authoritative artifact supplied",
+  "verification": {
+    "attempted": false,
+    "fixed": 0,
+    "partiallyFixed": 0,
+    "notFixed": 0,
+    "notApplicable": 0
+  },
+  "counts": {
+    "mustFix": 0,
+    "shouldFix": 1,
+    "outOfScope": 1,
+    "rejected": 4
+  },
+  "artifacts": {
+    "runDir": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T215005079647Z",
+    "review": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T215005079647Z/review.md",
+    "meta": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T215005079647Z/meta.json",
+    "techDebt": "/Users/ich776/pocs/agent-orchestrator/.ai/tech-debt.md",
+    "prompt": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T215005079647Z/auggie-review-prompt.md"
+  }
+}

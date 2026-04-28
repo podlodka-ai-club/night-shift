@@ -42,12 +42,16 @@ Runtime.install({
 export function createWorkflowTestRig() {
   let testEnv: TestWorkflowEnvironment;
 
-  before(async () => {
+  before(async function () {
+    this.timeout(30_000);
     testEnv = await TestWorkflowEnvironment.createLocal();
   });
 
-  after(async () => {
-    await testEnv.teardown();
+  after(async function () {
+    this.timeout(30_000);
+    if (testEnv) {
+      await testEnv.teardown();
+    }
   });
 
   async function runWorkflow(input: WorkflowRunInput) {
@@ -59,7 +63,7 @@ export function createWorkflowTestRig() {
         connection: testEnv.nativeConnection,
         taskQueue: TASK_QUEUE,
         workflowsPath: require.resolve('../workflows'),
-        activities: wrapActivitiesWithExpectedFailures(input.activities, currentExpectedWorkerWarnings),
+        activities: wrapActivitiesWithExpectedFailures(withDefaultWorkflowActivities(input.activities), currentExpectedWorkerWarnings),
       });
 
       return worker.runUntil(
@@ -87,7 +91,7 @@ export function createWorkflowTestRig() {
         connection: testEnv.nativeConnection,
         taskQueue: TASK_QUEUE,
         workflowsPath: require.resolve('../workflows'),
-        activities: wrapActivitiesWithExpectedFailures(input.activities, currentExpectedWorkerWarnings),
+        activities: wrapActivitiesWithExpectedFailures(withDefaultWorkflowActivities(input.activities), currentExpectedWorkerWarnings),
       });
 
       return worker.runUntil(async () => {
@@ -117,7 +121,7 @@ export function createWorkflowTestRig() {
         connection: testEnv.nativeConnection,
         taskQueue: TASK_QUEUE,
         workflowsPath: require.resolve('../workflows'),
-        activities: wrapActivitiesWithExpectedFailures(input.activities, currentExpectedWorkerWarnings),
+        activities: wrapActivitiesWithExpectedFailures(withDefaultWorkflowActivities(input.activities), currentExpectedWorkerWarnings),
       });
 
       return worker.runUntil(async () => callback(testEnv.client.workflow));
@@ -157,6 +161,13 @@ function wrapActivitiesWithExpectedFailures(
       },
     ]),
   );
+}
+
+function withDefaultWorkflowActivities(activities: WorkflowActivities): WorkflowActivities {
+  return {
+    cleanupWorktree: async () => undefined,
+    ...activities,
+  };
 }
 
 export function createExpectedWarningFilterLogger(

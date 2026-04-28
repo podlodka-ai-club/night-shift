@@ -2,6 +2,7 @@ import {
   condition,
   defineQuery,
   defineSignal,
+  log,
   proxyActivities,
   setCurrentDetails,
   setHandler,
@@ -22,6 +23,7 @@ import type {
   SelectedProjectIssue,
   WorkflowBlockedReason,
   WorkflowPhase,
+  WorktreeContext,
 } from './shared';
 
 const {
@@ -46,6 +48,7 @@ const {
   upsertIssueComment,
   addIssueLabels,
   moveProjectItemStatus,
+  cleanupWorktree,
 } = proxyActivities<typeof activities>({
   retry: {
     maximumAttempts: 3,
@@ -117,6 +120,17 @@ export async function automateTopReadyIssue(
       await handlePhaseFailure(phase, issue, error);
     } catch {
       // Best-effort cleanup must not replace the original phase failure.
+    }
+  };
+
+  const cleanupSuccessfulWorktree = async (worktree: WorktreeContext) => {
+    try {
+      await cleanupWorktree({ worktree });
+    } catch (cleanupError) {
+      log.warn('cleanupWorktree failed after successful phased workflow completion', {
+        cleanupError,
+        branchName: worktree.branchName,
+      });
     }
   };
 
@@ -343,7 +357,9 @@ export async function automateTopReadyIssue(
 
     shellState.latestActivity = `Review approved PR #${implementResult.pullRequest.pullRequestNumber}; issue moved to Ready to merge.`;
     syncCurrentDetails();
-    return buildAutomateReadyIssueResult(issue, implementResult.pullRequest, issue.readyToMergeStatusName);
+    const result = buildAutomateReadyIssueResult(issue, implementResult.pullRequest, issue.readyToMergeStatusName);
+    await cleanupSuccessfulWorktree(implementResult.worktree);
+    return result;
   }
 
   throw new Error('Workflow exited the implement phase unexpectedly.');

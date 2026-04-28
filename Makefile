@@ -1,4 +1,4 @@
-.PHONY: help install check test-all test test-orchestrator test-e2e build build-e2e lint format worker workflow e2e-live-fake e2e-live-real
+.PHONY: help install check test-all test test-orchestrator test-e2e build build-orchestrator build-e2e lint format worker workflow e2e-live-fake e2e-live-real
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*## "; print "Available targets:"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -15,12 +15,15 @@ test: test-orchestrator test-e2e ## Run all tests
 test-orchestrator: ## Run orchestrator tests
 	npm --workspace orchestrator test
 
-test-e2e: ## Run e2e tests
+test-e2e: build-orchestrator ## Run e2e tests
 	npm --workspace e2e test
 
 build: ## Build orchestrator and e2e
 	npm --workspace orchestrator run build
 	npm --workspace e2e run build
+
+build-orchestrator: ## Build orchestrator package
+	npm --workspace orchestrator run build
 
 build-e2e: ## Build e2e package
 	npm --workspace e2e run build
