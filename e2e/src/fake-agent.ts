@@ -3,6 +3,32 @@ import type { AgentActivityDeps, AgentSession, AgentTurnOptions, AgentTurnResult
 
 export const FAKE_AGENT_FILE_PATH = 'e2e/fake-agent-output.md';
 
+export function buildFakeAgentFileText(runMarker: string): string {
+  return ['# Fake E2E Change', '', `Run marker: ${runMarker}`].join('\n');
+}
+
+export function buildFakeAgentImplementResponse(runMarker: string) {
+  return {
+    filesWritten: [{ path: FAKE_AGENT_FILE_PATH, content: buildFakeAgentFileText(runMarker) }],
+    commitMessage: `test: fake e2e change for ${runMarker}`,
+    summary: `Deterministic fake e2e change for ${runMarker}.`,
+    followUps: [`Run marker: ${runMarker}`],
+  };
+}
+
+export function buildFakeAgentSpecifyResponse() {
+  return {
+    files: [
+      { path: 'proposal.md', content: '# Proposal\n\n## Why\n- Support deterministic phases in the live fake-agent harness.' },
+      { path: 'tasks.md', content: '# Tasks\n\n- [ ] Review and approve the proposed spec.' },
+      { path: 'specs/e2e/spec.md', content: '## ADDED Requirements\n### Requirement: Fake agent e2e validation\nThe fake-agent e2e path MUST prove the implement phase can execute from an approved spec bundle.' },
+    ],
+    openQuestions: [],
+    assumptions: [],
+    risks: [],
+  };
+}
+
 interface FakeAgentThreadState {
   id: string;
   worktreePath: string;
@@ -55,16 +81,13 @@ async function runFakeTurn(
   if (state.turnCount === 1) {
     if (options?.outputSchema && prompt.includes('OpenSpec proposal')) {
       return {
-        finalResponse: JSON.stringify({
-          files: [
-            { path: 'proposal.md', content: '# Proposal\n\n## Why\n- Support deterministic phases in the live fake-agent harness.' },
-            { path: 'tasks.md', content: '# Tasks\n\n- [ ] Review and approve the proposed spec.' },
-            { path: 'specs/e2e/spec.md', content: '## ADDED Requirements\n### Requirement: Fake agent e2e validation\nThe fake-agent e2e path MUST prove the specify gate can be approved and resumed.' },
-          ],
-          openQuestions: [],
-          assumptions: [],
-          risks: [],
-        }),
+        finalResponse: JSON.stringify(buildFakeAgentSpecifyResponse()),
+      };
+    }
+
+    if (options?.outputSchema) {
+      return {
+        finalResponse: JSON.stringify(buildFakeAgentImplementResponse(state.runMarker)),
       };
     }
 
@@ -96,11 +119,7 @@ async function writeDeterministicChange(
 ): Promise<void> {
   const absoluteFilePath = path.join(worktreePath, FAKE_AGENT_FILE_PATH);
   await baseDeps.mkdir(path.dirname(absoluteFilePath), { recursive: true });
-  await baseDeps.writeFile(
-    absoluteFilePath,
-    ['# Fake E2E Change', '', `Run marker: ${runMarker}`].join('\n'),
-    'utf8',
-  );
+  await baseDeps.writeFile(absoluteFilePath, buildFakeAgentFileText(runMarker), 'utf8');
 }
 
 function extractRunMarker(prompt: string): string | undefined {

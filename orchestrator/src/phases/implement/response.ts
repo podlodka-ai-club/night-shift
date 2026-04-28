@@ -1,11 +1,10 @@
-import path from 'node:path';
 import { z } from 'zod';
 import { z as zodV3 } from 'zod/v3';
 
 const RELATIVE_POSIX_PATH = /^(?!\/)(?!.*\\)(?!.*(^|\/)\.\.(\/|$))[^\s][^\r\n]*$/;
 
 function refineRelativePath(value: string, ctx: z.RefinementCtx | zodV3.RefinementCtx): void {
-  if (path.isAbsolute(value)) {
+  if (value.startsWith('/') || /^[A-Za-z]:/.test(value)) {
     ctx.addIssue({ code: 'custom', message: 'path must not be absolute' });
     return;
   }

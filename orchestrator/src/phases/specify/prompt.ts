@@ -1,5 +1,6 @@
 import { isNightShiftMarkerComment } from '../../comment-markers';
 import type { IssueComment, OpenSpecChangeFile, SelectedProjectIssue } from '../../shared';
+import { buildChangeName } from '../change-name';
 
 export interface BuildSpecifyPromptInput {
   issue: SelectedProjectIssue;
@@ -31,8 +32,7 @@ export function buildSpecifyPrompt(input: BuildSpecifyPromptInput): string {
 }
 
 export function buildSpecifyChangeName(issue: SelectedProjectIssue): string {
-  const slug = issue.issueTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'change';
-  return `${issue.issueNumber}-${slug}`;
+  return buildChangeName(issue);
 }
 
 function renderIssueComments(issueComments: readonly IssueComment[]): string {

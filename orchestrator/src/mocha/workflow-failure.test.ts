@@ -2,7 +2,6 @@ import { describe, it } from 'mocha';
 import assert from 'assert';
 import { type MoveProjectItemStatusInput } from '../shared';
 import {
-  buildGeneratedChangeMetadata,
   buildSelectedIssue,
   buildWorktreeContext,
 } from './activity-test-helpers';
@@ -17,7 +16,7 @@ const { runWorkflow } = createWorkflowTestRig();
 describe('workflow failure paths', function () {
   this.timeout(60_000);
 
-  it('moves exhausted agent failures to Blocked and preserves the original failure if cleanup also fails', async () => {
+  it('rethrows exhausted agent failures after moving the issue to In progress', async () => {
     const calls: string[] = [];
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
@@ -27,15 +26,24 @@ describe('workflow failure paths', function () {
       () =>
         runWorkflow({
           workflowId: 'automate-ready-issue-failure-test',
-          expectedWorkerWarnings: [/agent failed/, /cleanup failed/],
+          expectedWorkerWarnings: [/agent failed/],
           activities: {
             async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
             async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded:7'); return worktree; },
+            async listIssueComments() { calls.push('listIssueComments:7'); return []; },
+            async readOpenSpecChangeFiles() {
+              calls.push('readOpenSpecChangeFiles:7');
+              return [
+                { path: 'proposal.md', content: '# Proposal' },
+                { path: 'tasks.md', content: '# Tasks' },
+              ];
+            },
             async runAgentSequence() { calls.push('runAgentSequence:7'); throw new Error('agent failed'); },
+            async writeRepositoryFiles() { throw new Error('writeRepositoryFiles should not run after agent failure'); },
+            async runQualityGate() { throw new Error('runQualityGate should not run after agent failure'); },
             async commitAndPush() { throw new Error('commit should not run after agent failure'); },
             async openPullRequest() { throw new Error('openPullRequest should not run after agent failure'); },
-            async cleanupWorktree() { calls.push('cleanupWorktree:orchestrator/issue-7'); throw new Error('cleanup failed'); },
-            async commentOnIssue() { throw new Error('commentOnIssue should not run after agent failure'); },
+            async upsertIssueComment() { throw new Error('upsertIssueComment should not run after agent failure'); },
             async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
               statusUpdates.push(input);
               calls.push(`moveProjectItemStatus:${input.projectItemId}`);
@@ -47,96 +55,60 @@ describe('workflow failure paths', function () {
 
     assert.deepStrictEqual(calls, [
       'getTopReadyIssue',
-      'moveProjectItemStatus:item-1',
       'createWorktreeForIssueIfNeeded:7',
-      'runAgentSequence:7',
-      'runAgentSequence:7',
-      'runAgentSequence:7',
+      'listIssueComments:7',
+      'readOpenSpecChangeFiles:7',
       'moveProjectItemStatus:item-1',
-      'cleanupWorktree:orchestrator/issue-7',
+      'runAgentSequence:7',
+      'runAgentSequence:7',
+      'runAgentSequence:7',
     ]);
-    assert.deepStrictEqual(statusUpdates, [
-      buildStatusUpdateInput(issue, issue.inProgressOptionId),
-      buildStatusUpdateInput(issue, issue.blockedOptionId),
-    ]);
+    assert.deepStrictEqual(statusUpdates, [buildStatusUpdateInput(issue, issue.inProgressOptionId)]);
   });
 
-  it('preserves the original workflow failure when the failure-status update also fails', async () => {
+  it('preserves the original workflow failure when commitAndPush fails after the gate passes', async () => {
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
 
     await assert.rejects(
       () =>
         runWorkflow({
-          workflowId: 'automate-ready-issue-preserve-root-error-test',
-          expectedWorkerWarnings: [/agent failed/, /status update failed/],
+          workflowId: 'automate-ready-issue-commit-failure-test',
+          expectedWorkerWarnings: [/commit failed/],
           activities: {
             async getTopReadyIssue() { return issue; },
             async createWorktreeForIssueIfNeeded() { return worktree; },
-            async runAgentSequence() { throw new Error('agent failed'); },
-            async commitAndPush() { throw new Error('commit should not run after agent failure'); },
-            async openPullRequest() { throw new Error('openPullRequest should not run after agent failure'); },
-            async cleanupWorktree() { return undefined; },
-            async commentOnIssue() { throw new Error('commentOnIssue should not run after agent failure'); },
-            async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
-              if (input.statusOptionId === issue.blockedOptionId) throw new Error('status update failed');
+            async listIssueComments() { return []; },
+            async readOpenSpecChangeFiles() {
+              return [
+                { path: 'proposal.md', content: '# Proposal' },
+                { path: 'tasks.md', content: '# Tasks' },
+              ];
             },
-          },
-        }),
-      (error: unknown) => assertWorkflowActivityFailure(error, /agent failed/),
-    );
-  });
-
-  it('moves the issue to Blocked when a post-agent step fails', async () => {
-    const calls: string[] = [];
-    const issue = buildSelectedIssue();
-    const worktree = buildWorktreeContext(issue);
-    const statusUpdates: MoveProjectItemStatusInput[] = [];
-
-    await assert.rejects(
-      () =>
-        runWorkflow({
-          workflowId: 'automate-ready-issue-post-agent-failure-test',
-          expectedWorkerWarnings: [/commit failed/],
-          activities: {
-            async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
-            async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded:7'); return worktree; },
             async runAgentSequence() {
-              calls.push('runAgentSequence:7');
               return {
                 threadId: 'thread-123',
-                completedStepIds: ['edit', 'change-metadata'],
-                outputs: { changeMetadata: buildGeneratedChangeMetadata() },
-                finalResponse: JSON.stringify(buildGeneratedChangeMetadata()),
+                completedStepIds: ['implement'],
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implements the approved spec bundle.',
+                    followUps: [],
+                  },
+                },
+                finalResponse: JSON.stringify({ implemented: true }),
               };
             },
-            async commitAndPush() { calls.push('commitAndPush:orchestrator/issue-7'); throw new Error('commit failed'); },
+            async writeRepositoryFiles() { return undefined; },
+            async runQualityGate() { return { passed: true, summary: 'ok', logs: '' }; },
+            async commitAndPush() { throw new Error('commit failed'); },
             async openPullRequest() { throw new Error('openPullRequest should not run after commit failure'); },
-            async cleanupWorktree() { calls.push('cleanupWorktree:orchestrator/issue-7'); },
-            async commentOnIssue() { throw new Error('commentOnIssue should not run after commit failure'); },
-            async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
-              statusUpdates.push(input);
-              calls.push(`moveProjectItemStatus:${input.projectItemId}`);
-            },
+            async upsertIssueComment() { throw new Error('upsertIssueComment should not run after commit failure'); },
+            async moveProjectItemStatus() { return undefined; },
           },
         }),
       (error: unknown) => assertWorkflowActivityFailure(error, /commit failed/),
     );
-
-    assert.deepStrictEqual(calls, [
-      'getTopReadyIssue',
-      'moveProjectItemStatus:item-1',
-      'createWorktreeForIssueIfNeeded:7',
-      'runAgentSequence:7',
-      'commitAndPush:orchestrator/issue-7',
-      'commitAndPush:orchestrator/issue-7',
-      'commitAndPush:orchestrator/issue-7',
-      'moveProjectItemStatus:item-1',
-      'cleanupWorktree:orchestrator/issue-7',
-    ]);
-    assert.deepStrictEqual(statusUpdates, [
-      buildStatusUpdateInput(issue, issue.inProgressOptionId),
-      buildStatusUpdateInput(issue, issue.blockedOptionId),
-    ]);
   });
 });

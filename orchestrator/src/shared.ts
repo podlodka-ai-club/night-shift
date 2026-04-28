@@ -141,11 +141,12 @@ export interface AgentStructuredStep {
 }
 
 export type AgentStep = AgentPromptStep | AgentStructuredStep;
-export type AgentSchemaId = 'change-metadata-v1' | 'specify-response-v1';
+export type AgentSchemaId = 'change-metadata-v1' | 'specify-response-v1' | 'implement-response-v1';
 
 export const SPECIFY_RESPONSE_OUTPUT_KEY = 'specifyResponse';
+export const IMPLEMENT_RESPONSE_OUTPUT_KEY = 'implementResponse';
 export const CHANGE_METADATA_OUTPUT_KEY = 'changeMetadata';
-export const AGENT_OUTPUT_KEYS = [SPECIFY_RESPONSE_OUTPUT_KEY, CHANGE_METADATA_OUTPUT_KEY] as const;
+export const AGENT_OUTPUT_KEYS = [SPECIFY_RESPONSE_OUTPUT_KEY, IMPLEMENT_RESPONSE_OUTPUT_KEY, CHANGE_METADATA_OUTPUT_KEY] as const;
 
 export type AgentOutputKey = (typeof AGENT_OUTPUT_KEYS)[number];
 
@@ -226,6 +227,11 @@ export interface OpenSpecChangeFile {
   content: string;
 }
 
+export interface RepositoryFile {
+  path: string;
+  content: string;
+}
+
 export interface ReadOpenSpecChangeFilesInput {
   worktree: WorktreeContext;
   changeName: string;
@@ -238,6 +244,21 @@ export interface WriteOpenSpecChangeFilesInput extends ReadOpenSpecChangeFilesIn
 export interface ValidateOpenSpecChangeInput {
   worktree: WorktreeContext;
   changeName: string;
+}
+
+export interface WriteRepositoryFilesInput {
+  worktree: WorktreeContext;
+  files: RepositoryFile[];
+}
+
+export interface RunQualityGateInput {
+  worktree: WorktreeContext;
+}
+
+export interface QualityGateResult {
+  passed: boolean;
+  summary: string;
+  logs: string;
 }
 
 export interface MoveProjectItemStatusInput {

@@ -376,6 +376,40 @@ describe('worktree activities', () => {
     ]);
   });
 
+  it('writes repository files under the worktree root', async () => {
+    const worktree = buildWorktreeContext();
+    const mkdirCalls: MkdirCall[] = [];
+    const writeCalls: WriteCall[] = [];
+    const { writeRepositoryFiles } = createActivityTestRig({
+      worktree: {
+        mkdir: async (targetPath, options) => {
+          mkdirCalls.push({ path: String(targetPath), options });
+          return undefined;
+        },
+        writeFile: async (targetPath, data, encoding) => {
+          writeCalls.push({ path: String(targetPath), data, encoding });
+        },
+      },
+    });
+
+    await writeRepositoryFiles({
+      worktree,
+      files: [
+        { path: 'src/index.ts', content: 'export const ok = true;\n' },
+        { path: 'docs/summary.md', content: '# Summary' },
+      ],
+    });
+
+    assert.deepStrictEqual(mkdirCalls, [
+      { path: `${worktree.worktreePath}/src`, options: { recursive: true } },
+      { path: `${worktree.worktreePath}/docs`, options: { recursive: true } },
+    ]);
+    assert.deepStrictEqual(writeCalls, [
+      { path: `${worktree.worktreePath}/src/index.ts`, data: 'export const ok = true;\n', encoding: 'utf8' },
+      { path: `${worktree.worktreePath}/docs/summary.md`, data: '# Summary', encoding: 'utf8' },
+    ]);
+  });
+
   it('runs openspec validate from the worktree root', async () => {
     const worktree = buildWorktreeContext();
     const gitCalls: GitCall[] = [];
@@ -390,6 +424,30 @@ describe('worktree activities', () => {
     assert.deepStrictEqual(gitCalls, [
       { cwd: worktree.worktreePath, args: ['openspec', 'validate', '7-demo-change', '--strict'] },
     ]);
+  });
+
+  it('runs the quality gate from the worktree root and truncates long logs', async () => {
+    const worktree = buildWorktreeContext();
+    const gitCalls: GitCall[] = [];
+    const longLog = 'x'.repeat(5000);
+    const { runQualityGate } = createActivityTestRig({
+      worktree: {
+        execFile: async (file, args, options) => {
+          gitCalls.push({ cwd: options?.cwd, args: [String(file), ...args] });
+          return { stdout: longLog, stderr: 'tail', exitCode: 1 };
+        },
+      },
+    });
+
+    const result = await runQualityGate({ worktree });
+
+    assert.deepStrictEqual(gitCalls, [
+      { cwd: worktree.worktreePath, args: ['make', 'check'] },
+    ]);
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.summary, 'make check failed');
+    assert.match(result.logs, /tail|\.\.\.\[truncated\]/);
+    assert.ok(result.logs.length < 4200);
   });
 
   it('builds deterministic worktree helper values', () => {

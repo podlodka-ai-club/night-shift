@@ -3,9 +3,8 @@ import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { createActivities, createActivityDependencies } from '../../orchestrator/lib/activities';
 import type { ActivityRuntimes } from '../../orchestrator/lib/activity-deps';
-import { createGitHubActivities } from '../../orchestrator/lib/activity-github';
 import { TASK_QUEUE, type AutomateReadyIssueResult, type SelectedProjectIssue } from '../../orchestrator/lib/shared';
-import { automateTopReadyIssue, getBlockedReasonQuery, specReviewedSignal } from '../../orchestrator/lib/workflows';
+import { automateTopReadyIssue } from '../../orchestrator/lib/workflows';
 import { parseE2EConfig, type E2EConfig } from './config';
 import { createFakeAgentDeps } from './fake-agent';
 import {
@@ -18,6 +17,7 @@ import {
   assertWorkflowArtifacts,
   cleanupRunArtifacts,
   createGitHubDeps,
+  buildSelectedIssueChangeName,
   getProjectItemStatusName,
   seedIssueInProject,
   type CleanupReport,
@@ -25,6 +25,19 @@ import {
 } from './live-github';
 
 const STATUS_POLL_INTERVAL_MS = 1_000;
+
+export const FAKE_E2E_QUALITY_GATE_FILE = {
+  path: 'Makefile',
+  content: [
+    '.PHONY: check',
+    'check:',
+    '\t@echo "fake e2e quality gate passed"',
+  ].join('\n'),
+};
+
+export function resolveStartPhase(agentMode: E2EConfig['agentMode']): 'implement' | 'specify' {
+  return agentMode === 'fake' ? 'implement' : 'specify';
+}
 
 export interface E2ERunSummary {
   runId: string;
@@ -45,7 +58,7 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
   const branchPrefix = `orchestrator-e2e-${runId}`;
   const filePathPrefix = `orchestrator-e2e/${runId}`;
   const githubDeps = createGitHubDeps(config.githubToken);
-  const startPhase = config.agentMode === 'fake' ? 'specify' : 'implement';
+  const startPhase = resolveStartPhase(config.agentMode);
 
   let seededIssue: SeededIssue | undefined;
   let selectedIssue: SelectedProjectIssue | undefined;
@@ -61,7 +74,7 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
       runId,
       buildSeedIssueTitle(runId),
       buildSeedIssueBody(runId),
-      startPhase === 'specify' ? 'Backlog' : 'Ready',
+      'Ready',
     );
     selectedIssue = await assertSeededIssueWillBeSelected(githubDeps, config, seededIssue.issueNumber, startPhase);
 
@@ -72,7 +85,7 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
     try {
       const poller = startStatusPoller(githubDeps, seededIssue.projectItemId, observedStatuses);
       try {
-        workflowResult = await runWorkflowOnce(testEnv, config, workflowId, branchPrefix, filePathPrefix, startPhase, selectedIssue, observedStatuses);
+        workflowResult = await runWorkflowOnce(testEnv, config, workflowId, branchPrefix, filePathPrefix, startPhase, selectedIssue);
       } finally {
         observedStatuses = await poller.stop();
         await recordCurrentProjectItemStatus(githubDeps, seededIssue.projectItemId, observedStatuses);
@@ -149,7 +162,6 @@ async function runWorkflowOnce(
   filePathPrefix: string,
   startPhase: 'implement' | 'specify',
   selectedIssue: SelectedProjectIssue,
-  observedStatuses: string[],
 ): Promise<AutomateReadyIssueResult> {
   const baseDeps = createActivityDependencies();
   const agentDeps = config.agentMode === 'fake' ? createFakeAgentDeps(baseDeps) : baseDeps;
@@ -158,6 +170,10 @@ async function runWorkflowOnce(
     worktree: baseDeps,
     agent: agentDeps,
   };
+
+  if (config.agentMode === 'fake') {
+    await seedApprovedSpecBundle(createActivities(runtimes), selectedIssue, branchPrefix, filePathPrefix);
+  }
 
   const worker = await Worker.create({
     connection: testEnv.nativeConnection,
@@ -179,38 +195,39 @@ async function runWorkflowOnce(
       }],
     });
 
-    if (startPhase === 'specify') {
-      await driveSpecifyApprovalGate(handle, runtimes.github, selectedIssue, observedStatuses);
-    }
-
     return handle.result();
   });
 }
 
-async function driveSpecifyApprovalGate(
-  handle: Awaited<ReturnType<TestWorkflowEnvironment['client']['workflow']['start']>>,
-  githubDeps: ReturnType<typeof createGitHubDeps>,
+async function seedApprovedSpecBundle(
+  activities: ReturnType<typeof createActivities>,
   selectedIssue: SelectedProjectIssue,
-  observedStatuses: string[],
+  branchPrefix: string,
+  filePathPrefix: string,
 ): Promise<void> {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    const blockedReason = await handle.query(getBlockedReasonQuery);
-    if (blockedReason === 'awaiting_spec_review') {
-      recordObservedStatus(observedStatuses, await getProjectItemStatusName(githubDeps, selectedIssue.projectItemId));
-      await createGitHubActivities(githubDeps).moveProjectItemStatus({
-        projectId: selectedIssue.projectId,
-        projectItemId: selectedIssue.projectItemId,
-        statusFieldId: selectedIssue.statusFieldId,
-        statusOptionId: selectedIssue.readyOptionId,
-      });
-      recordObservedStatus(observedStatuses, selectedIssue.readyStatusName);
-      await handle.signal(specReviewedSignal);
-      return;
-    }
-    await sleep(STATUS_POLL_INTERVAL_MS);
-  }
-
-  throw new Error('Workflow did not reach awaiting_spec_review during the live fake-agent run.');
+  const worktree = await activities.createWorktreeForIssueIfNeeded({
+    issue: selectedIssue,
+    branchPrefix,
+    filePathPrefix,
+  });
+  const changeName = buildSelectedIssueChangeName(selectedIssue);
+  await activities.writeOpenSpecChangeFiles({
+    worktree,
+    changeName,
+    files: [
+      { path: 'proposal.md', content: '# Proposal\n\n## Why\n- Seed an approved spec bundle for the fake-agent e2e run.' },
+      { path: 'tasks.md', content: '# Tasks\n\n- [x] Approve the fake-agent e2e spec bundle.' },
+      { path: 'specs/e2e/spec.md', content: '## ADDED Requirements\n### Requirement: Fake agent e2e implement flow\nThe live fake-agent path MUST start from Ready with an approved spec bundle.' },
+    ],
+  });
+  await activities.writeRepositoryFiles({
+    worktree,
+    files: [FAKE_E2E_QUALITY_GATE_FILE],
+  });
+  await activities.commitAndPush({
+    worktree,
+    commitMessage: `test: seed approved spec bundle for ${selectedIssue.issueNumber}`,
+  });
 }
 
 function startStatusPoller(

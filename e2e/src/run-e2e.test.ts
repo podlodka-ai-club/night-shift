@@ -1,7 +1,7 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
 import type { E2EConfig } from './config';
-import { recordObservedStatus, shouldCleanup } from './run-e2e';
+import { FAKE_E2E_QUALITY_GATE_FILE, recordObservedStatus, resolveStartPhase, shouldCleanup } from './run-e2e';
 
 function createTestConfig(): E2EConfig {
   return {
@@ -43,5 +43,24 @@ describe('recordObservedStatus', () => {
     recordObservedStatus(observed, 'In review');
 
     assert.deepStrictEqual(observed, ['Ready', 'In progress', 'In review']);
+  });
+});
+
+describe('resolveStartPhase', () => {
+  it('starts fake-agent runs at Implement so the harness can seed an approved spec bundle', () => {
+    assert.strictEqual(resolveStartPhase('fake'), 'implement');
+  });
+
+  it('starts real-agent runs at Specify so they do not require a pre-seeded approved spec bundle', () => {
+    assert.strictEqual(resolveStartPhase('real'), 'specify');
+  });
+});
+
+describe('FAKE_E2E_QUALITY_GATE_FILE', () => {
+  it('seeds a deterministic make check target for the fake live harness', () => {
+    assert.strictEqual(FAKE_E2E_QUALITY_GATE_FILE.path, 'Makefile');
+    assert.match(FAKE_E2E_QUALITY_GATE_FILE.content, /^\.PHONY: check/m);
+    assert.match(FAKE_E2E_QUALITY_GATE_FILE.content, /^check:$/m);
+    assert.match(FAKE_E2E_QUALITY_GATE_FILE.content, /fake e2e quality gate passed/);
   });
 });

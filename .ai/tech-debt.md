@@ -24,3 +24,9 @@
 - `seedIssueInProject` parameter `initialStatusName` (`e2e/src/live-github.ts`) accepts untyped `string` instead of `ProjectStatusName`. Add the type annotation to catch invalid status names at compile time.
 - `isRetryableProjectSelectionError` (`e2e/src/live-github.ts`) only recognizes "Ready" and "Backlog" error messages. Future phases selecting from other statuses would not be retried. Consider a generic pattern match.
 - `updatePullRequest` (`activity-github-pull-request.ts`) falls back to dummy title/body defaults when none is provided. Currently all callers supply explicit values, but the fallback is misleading for future use. Consider requiring title/body or separating the update signature.
+
+## From Task 5 review (20260428T133031690060Z)
+
+- ~~`ImplementPhaseContractError` discards the original error cause when wrapping parse or `AgentContractError` failures. Pass `{ cause }` to preserve stack context for debugging.~~ **Fixed** in follow-up (20260428T134128583856Z): constructor now accepts and assigns `cause`.
+- Partial worktree recovery only checks directory existence (`pathExists`), not git state validity. A worktree left in a corrupted state (e.g., interrupted `git worktree add`) will be returned as valid and produce cryptic downstream failures. Add git state validation or cleanup-on-corruption when cleanup policy is finalized in Task 9.
+- Quality gate logs (up to 4 KB) are embedded verbatim in the implement retry prompt via `buildRetryFailureMessage`. Consider a secondary truncation or summarization step to avoid inflating prompt token usage on noisy build output.

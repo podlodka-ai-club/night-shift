@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { ApplicationFailure } from '@temporalio/common';
 import {
   applyPendingStepCompletion,
   assertCheckpointMatchesStepSequence,
@@ -9,7 +10,7 @@ import {
   readAgentCheckpoint,
   type PendingStepCompletion,
 } from './activity-agent-checkpoint';
-import { runAgentTurnWithHeartbeat, runStructuredAgentTurn } from './activity-agent-turn';
+import { AgentContractError, runAgentTurnWithHeartbeat, runStructuredAgentTurn } from './activity-agent-turn';
 import { buildTaskImplementationPrompt } from './agent-prompts';
 import { getAgentSchema } from './agent-schema-registry';
 import { type AgentSequenceResult, type AgentStep, type RunAgentLegacyInput, type RunAgentSequenceInput, type WorktreeContext } from './shared';
@@ -28,7 +29,14 @@ export function createAgentActivities(deps: AgentActivityDeps) {
         throw new Error('Agent step sequences must not be empty.');
       }
 
-      return runAgentSequenceSteps(deps, input.worktree, input.steps);
+      try {
+        return await runAgentSequenceSteps(deps, input.worktree, input.steps);
+      } catch (error) {
+        if (error instanceof AgentContractError) {
+          throw ApplicationFailure.fromError(error, { nonRetryable: true });
+        }
+        throw error;
+      }
     },
 
     async runDummyAgent(input: { worktree: WorktreeContext }): Promise<void> {

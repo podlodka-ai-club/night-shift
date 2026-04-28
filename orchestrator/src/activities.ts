@@ -41,6 +41,8 @@ export const {
   readOpenSpecChangeFiles,
   writeOpenSpecChangeFiles,
   validateOpenSpecChange,
+  writeRepositoryFiles,
+  runQualityGate,
   commitAndPush,
   cleanupWorktree,
   runAgentLegacy,

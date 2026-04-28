@@ -1,19 +1,19 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
 import type { AutomateReadyIssueResult } from '../shared';
-import { buildGeneratedChangeMetadata, buildSelectedIssue, buildWorktreeContext } from './activity-test-helpers';
-import { buildExpectedCreatedPullRequest } from './activity-test-helpers';
+import { buildExpectedCreatedPullRequest, buildSelectedIssue, buildWorktreeContext } from './activity-test-helpers';
 import { createWorkflowTestRig } from './workflow-test-helpers';
 import {
   activityProgressSignal,
   getBlockedReasonQuery,
+  implementRetrySignal,
   renderWorkflowCurrentDetails,
   resumeSignal,
   specifyRetrySignal,
   specReviewedSignal,
 } from '../workflows';
 
-const { runWorkflowWithHandle } = createWorkflowTestRig();
+const { runWorkflow, runWorkflowWithHandle } = createWorkflowTestRig();
 
 describe('workflow phased shell', function () {
   this.timeout(60_000);
@@ -31,19 +31,35 @@ describe('workflow phased shell', function () {
         activities: {
           async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
           async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
+          async listIssueComments() { calls.push('listIssueComments'); return []; },
+          async readOpenSpecChangeFiles() {
+            calls.push('readOpenSpecChangeFiles');
+            return [
+              { path: 'proposal.md', content: '# Proposal' },
+              { path: 'tasks.md', content: '# Tasks' },
+            ];
+          },
           async runAgentSequence() {
             calls.push('runAgentSequence');
             return {
               threadId: 'thread-123',
-              completedStepIds: ['edit', 'change-metadata'],
-              outputs: { changeMetadata: buildGeneratedChangeMetadata() },
-              finalResponse: JSON.stringify(buildGeneratedChangeMetadata()),
+              completedStepIds: ['implement'],
+              outputs: {
+                implementResponse: {
+                  filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                  commitMessage: 'feat: implement the approved spec',
+                  summary: 'Implements the approved spec bundle.',
+                  followUps: [],
+                },
+              },
+              finalResponse: JSON.stringify({ implemented: true }),
             };
           },
+          async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },
+          async runQualityGate() { calls.push('runQualityGate'); return { passed: true, summary: 'make check passed', logs: '' }; },
           async commitAndPush() { calls.push('commitAndPush'); },
           async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
-          async cleanupWorktree() { calls.push('cleanupWorktree'); },
-          async commentOnIssue() { calls.push('commentOnIssue'); },
+          async upsertIssueComment() { calls.push('upsertIssueComment'); },
           async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
         },
       },
@@ -53,14 +69,17 @@ describe('workflow phased shell', function () {
     assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
     assert.deepStrictEqual(calls, [
       'getTopReadyIssue',
-      'moveProjectItemStatus',
       'createWorktreeForIssueIfNeeded',
+      'listIssueComments',
+      'readOpenSpecChangeFiles',
+      'moveProjectItemStatus',
       'runAgentSequence',
+      'writeRepositoryFiles',
+      'runQualityGate',
       'commitAndPush',
       'openPullRequest',
-      'commentOnIssue',
+      'upsertIssueComment',
       'moveProjectItemStatus',
-      'cleanupWorktree',
     ]);
   });
 
@@ -77,9 +96,16 @@ describe('workflow phased shell', function () {
         workflowInput: { startPhase: 'specify' },
         activities: {
           async getTopBacklogIssue() { calls.push('getTopBacklogIssue'); return issue; },
-          async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
           async listIssueComments() { calls.push('listIssueComments'); return []; },
-          async readOpenSpecChangeFiles() { calls.push('readOpenSpecChangeFiles'); return []; },
+          async readOpenSpecChangeFiles() {
+            calls.push('readOpenSpecChangeFiles');
+            return runAgentSequenceCallCount >= 1
+              ? [
+                  { path: 'proposal.md', content: '# Proposal' },
+                  { path: 'tasks.md', content: '# Tasks' },
+                ]
+              : [];
+          },
           async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
           async runAgentSequence() {
             runAgentSequenceCallCount += 1;
@@ -105,18 +131,25 @@ describe('workflow phased shell', function () {
 
             return {
               threadId: 'implement-thread-123',
-              completedStepIds: ['edit', 'change-metadata'],
-              outputs: { changeMetadata: buildGeneratedChangeMetadata() },
-              finalResponse: JSON.stringify(buildGeneratedChangeMetadata()),
+              completedStepIds: ['implement'],
+              outputs: {
+                implementResponse: {
+                  filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                  commitMessage: 'feat: implement the approved spec',
+                  summary: 'Implements the approved spec bundle.',
+                  followUps: [],
+                },
+              },
+              finalResponse: JSON.stringify({ implemented: true }),
             };
           },
           async writeOpenSpecChangeFiles() { calls.push('writeOpenSpecChangeFiles'); },
           async validateOpenSpecChange() { calls.push('validateOpenSpecChange'); },
+          async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },
+          async runQualityGate() { calls.push('runQualityGate'); return { passed: true, summary: 'make check passed', logs: '' }; },
           async commitAndPush() { calls.push('commitAndPush'); },
           async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
           async upsertIssueComment() { calls.push('upsertIssueComment'); },
-          async cleanupWorktree() { calls.push('cleanupWorktree'); },
-          async commentOnIssue() { calls.push('commentOnIssue'); },
           async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
         },
       },
@@ -136,9 +169,9 @@ describe('workflow phased shell', function () {
     assert.ok(calls.includes('writeOpenSpecChangeFiles'));
     assert.ok(calls.includes('validateOpenSpecChange'));
     assert.ok(calls.includes('upsertIssueComment'));
-    assert.ok(calls.includes('getTopReadyIssue'));
-    assert.ok(calls.includes('commentOnIssue'));
-    assert.ok(calls.indexOf('upsertIssueComment') < calls.indexOf('getTopReadyIssue'));
+    assert.ok(calls.includes('writeRepositoryFiles'));
+    assert.ok(calls.includes('runQualityGate'));
+    assert.ok(!calls.includes('getTopReadyIssue'));
   });
 
   it('blocks on specify_needs_input for open questions and reruns specify after specifyRetry', async () => {
@@ -154,9 +187,16 @@ describe('workflow phased shell', function () {
         workflowInput: { startPhase: 'specify' },
         activities: {
           async getTopBacklogIssue() { calls.push('getTopBacklogIssue'); return issue; },
-          async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
           async listIssueComments() { calls.push('listIssueComments'); return []; },
-          async readOpenSpecChangeFiles() { calls.push('readOpenSpecChangeFiles'); return []; },
+          async readOpenSpecChangeFiles() {
+            calls.push('readOpenSpecChangeFiles');
+            return runAgentSequenceCallCount >= 2
+              ? [
+                  { path: 'proposal.md', content: '# Proposal' },
+                  { path: 'tasks.md', content: '# Tasks' },
+                ]
+              : [];
+          },
           async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
           async runAgentSequence() {
             runAgentSequenceCallCount += 1;
@@ -201,18 +241,25 @@ describe('workflow phased shell', function () {
 
             return {
               threadId: 'implement-thread-123',
-              completedStepIds: ['edit', 'change-metadata'],
-              outputs: { changeMetadata: buildGeneratedChangeMetadata() },
-              finalResponse: JSON.stringify(buildGeneratedChangeMetadata()),
+              completedStepIds: ['implement'],
+              outputs: {
+                implementResponse: {
+                  filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                  commitMessage: 'feat: implement the approved spec',
+                  summary: 'Implements the approved spec bundle.',
+                  followUps: [],
+                },
+              },
+              finalResponse: JSON.stringify({ implemented: true }),
             };
           },
           async writeOpenSpecChangeFiles() { calls.push('writeOpenSpecChangeFiles'); },
           async validateOpenSpecChange() { calls.push('validateOpenSpecChange'); },
+          async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },
+          async runQualityGate() { calls.push('runQualityGate'); return { passed: true, summary: 'make check passed', logs: '' }; },
           async commitAndPush() { calls.push('commitAndPush'); },
           async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
           async upsertIssueComment() { calls.push('upsertIssueComment'); },
-          async cleanupWorktree() { calls.push('cleanupWorktree'); },
-          async commentOnIssue() { calls.push('commentOnIssue'); },
           async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
         },
       },
@@ -230,43 +277,151 @@ describe('workflow phased shell', function () {
     assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
     assert.strictEqual(runAgentSequenceCallCount, 3);
     assert.strictEqual(calls.filter((call) => call === 'getTopBacklogIssue').length, 1);
-    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment').length, 2);
-    assert.ok(calls.includes('getTopReadyIssue'));
-    assert.ok(calls.includes('commentOnIssue'));
+    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment').length, 3);
+    assert.ok(calls.includes('writeRepositoryFiles'));
+    assert.ok(calls.includes('runQualityGate'));
+    assert.ok(!calls.includes('getTopReadyIssue'));
   });
 
-  it('surfaces implement-phase failure state before rethrowing the activity error', async () => {
+  it('rethrows runtime implement errors without opening a pull request', async () => {
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
-    const failureGate = createDeferred<void>();
-    let statusUpdateCallCount = 0;
 
     await runWorkflowWithHandle<void>(
       {
-        workflowId: 'workflow-shell-implement-failure-state-test',
+        workflowId: 'workflow-shell-implement-runtime-failure-test',
         workflowInput: { startPhase: 'implement' },
         activities: {
           async getTopReadyIssue() { return issue; },
           async createWorktreeForIssueIfNeeded() { return worktree; },
+          async listIssueComments() { return []; },
+          async readOpenSpecChangeFiles() {
+            return [
+              { path: 'proposal.md', content: '# Proposal' },
+              { path: 'tasks.md', content: '# Tasks' },
+            ];
+          },
           async runAgentSequence() { throw new Error('agent failed'); },
+          async writeRepositoryFiles() { return undefined; },
+          async runQualityGate() { return { passed: true, summary: 'ok', logs: '' }; },
           async commitAndPush() { return undefined; },
           async openPullRequest() { throw new Error('should not open pull request'); },
-          async cleanupWorktree() { return undefined; },
-          async commentOnIssue() { return undefined; },
-          async moveProjectItemStatus() {
-            statusUpdateCallCount += 1;
-            if (statusUpdateCallCount === 2) {
-              await failureGate.promise;
-            }
+          async upsertIssueComment() { return undefined; },
+          async moveProjectItemStatus() { return undefined; },
+        },
+      },
+      async (handle) => {
+        await assert.rejects(handle.result(), /Workflow execution failed/);
+      },
+    );
+  });
+
+  it('rethrows runtime implement errors whose message contains invalid without misclassifying them as needs_input', async () => {
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+
+    await assert.rejects(
+      () => runWorkflow({
+        workflowId: 'workflow-shell-implement-invalid-runtime-failure-test',
+        workflowInput: { startPhase: 'implement' },
+        expectedWorkerWarnings: [/invalid api credentials/],
+        activities: {
+          async getTopReadyIssue() { return issue; },
+          async createWorktreeForIssueIfNeeded() { return worktree; },
+          async listIssueComments() { return []; },
+          async readOpenSpecChangeFiles() {
+            return [
+              { path: 'proposal.md', content: '# Proposal' },
+              { path: 'tasks.md', content: '# Tasks' },
+            ];
           },
+          async runAgentSequence() { throw new Error('invalid api credentials'); },
+          async writeRepositoryFiles() { throw new Error('should not write files'); },
+          async runQualityGate() { throw new Error('should not run gate'); },
+          async commitAndPush() { throw new Error('should not commit'); },
+          async openPullRequest() { throw new Error('should not open pull request'); },
+          async upsertIssueComment() { throw new Error('should not comment'); },
+          async moveProjectItemStatus() { return undefined; },
+        },
+      }),
+      (error: unknown) => {
+        assert.match(describeErrorCauseChain(error), /invalid api credentials/i);
+        return true;
+      },
+    );
+  });
+
+  it('blocks on implement_needs_input and reruns implement after implementRetry without reselecting the issue', async () => {
+    const calls: string[] = [];
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let getTopReadyIssueCallCount = 0;
+    let readOpenSpecChangeFilesCallCount = 0;
+    let runAgentSequenceCallCount = 0;
+
+    const result = await runWorkflowWithHandle<AutomateReadyIssueResult>(
+      {
+        workflowId: 'workflow-shell-implement-retry-test',
+        workflowInput: { startPhase: 'implement' },
+        activities: {
+          async getTopReadyIssue() {
+            getTopReadyIssueCallCount += 1;
+            calls.push(`getTopReadyIssue:${getTopReadyIssueCallCount}`);
+            return issue;
+          },
+          async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
+          async listIssueComments() { calls.push('listIssueComments'); return []; },
+          async readOpenSpecChangeFiles() {
+            readOpenSpecChangeFilesCallCount += 1;
+            calls.push(`readOpenSpecChangeFiles:${readOpenSpecChangeFilesCallCount}`);
+            if (readOpenSpecChangeFilesCallCount === 1) {
+              return [];
+            }
+            return [
+              { path: 'proposal.md', content: '# Proposal' },
+              { path: 'tasks.md', content: '# Tasks' },
+            ];
+          },
+          async runAgentSequence() {
+            runAgentSequenceCallCount += 1;
+            calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+            return {
+              threadId: 'implement-thread-123',
+              completedStepIds: ['implement'],
+              outputs: {
+                implementResponse: {
+                  filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                  commitMessage: 'feat: implement the approved spec',
+                  summary: 'Implements the approved spec bundle.',
+                  followUps: [],
+                },
+              } as any,
+              finalResponse: JSON.stringify({ implemented: true }),
+            };
+          },
+          async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },
+          async runQualityGate() { calls.push('runQualityGate'); return { passed: true, summary: 'ok', logs: '' }; },
+          async commitAndPush() { calls.push('commitAndPush'); },
+          async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
+          async upsertIssueComment() { calls.push('upsertIssueComment'); },
+          async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
         },
       },
       async (handle) => {
         assert.strictEqual(await waitForBlockedReason(handle, 'implement_needs_input'), 'implement_needs_input');
-        failureGate.resolve();
-        await assert.rejects(handle.result(), /Workflow execution failed/);
+        await handle.signal(resumeSignal);
+        assert.strictEqual(await handle.query(getBlockedReasonQuery), 'implement_needs_input');
+        await handle.signal(implementRetrySignal);
+        return handle.result();
       },
     );
+
+    assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
+    assert.strictEqual(getTopReadyIssueCallCount, 1);
+    assert.strictEqual(runAgentSequenceCallCount, 1);
+    assert.ok(calls.includes('upsertIssueComment'));
+    assert.ok(calls.includes('openPullRequest'));
   });
 
   it('renders current details with phase, blocked reason, and recent activity', () => {
@@ -302,10 +457,19 @@ async function waitForBlockedReason(
   throw new assert.AssertionError({ message: `Timed out waiting for ${expectedBlockedReason} blocked reason.` });
 }
 
-function createDeferred<T>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
+function describeErrorCauseChain(error: unknown): string {
+  const visited = new Set<unknown>();
+  const parts: string[] = [];
+  let current = error;
+
+  while (current && typeof current === 'object' && !visited.has(current)) {
+    visited.add(current);
+    const candidate = current as { message?: unknown; cause?: unknown };
+    if (typeof candidate.message === 'string' && candidate.message.length > 0) {
+      parts.push(candidate.message);
+    }
+    current = candidate.cause;
+  }
+
+  return parts.join('\n');
 }

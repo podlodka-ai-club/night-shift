@@ -2,32 +2,25 @@ import {
   condition,
   defineQuery,
   defineSignal,
-  log,
   proxyActivities,
   setCurrentDetails,
   setHandler,
 } from '@temporalio/workflow';
-import { buildChangeMetadataPrompt, buildTaskImplementationPrompt } from './agent-prompts';
-import { explainChangeMetadataParseError, parseChangeMetadata } from './change-metadata';
 import {
-  CHANGE_METADATA_OUTPUT_KEY,
   WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME,
   WORKFLOW_SIGNAL_NAMES,
 } from './shared';
 import type * as activities from './activities';
+import { runImplementPhase } from './phases/implement/phase';
 import { runSpecifyPhase } from './phases/specify/phase';
 import type {
-  AgentSequenceResult,
   AgentStep,
   AutomateReadyIssueInput,
   AutomateReadyIssueResult,
   CreatedPullRequest,
-  IssueCommentInput,
-  MoveProjectItemStatusInput,
   SelectedProjectIssue,
   WorkflowBlockedReason,
   WorkflowPhase,
-  WorktreeContext,
 } from './shared';
 
 const {
@@ -36,23 +29,17 @@ const {
   createWorktreeForIssueIfNeeded,
   readOpenSpecChangeFiles,
   writeOpenSpecChangeFiles,
+  writeRepositoryFiles,
   validateOpenSpecChange,
+  runQualityGate,
   commitAndPush,
   openPullRequest,
   listIssueComments,
-  commentOnIssue,
   upsertIssueComment,
   moveProjectItemStatus,
 } = proxyActivities<typeof activities>({
   retry: {
     maximumAttempts: 3,
-  },
-  startToCloseTimeout: '2 minutes',
-});
-
-const { cleanupWorktree } = proxyActivities<typeof activities>({
-  retry: {
-    maximumAttempts: 1,
   },
   startToCloseTimeout: '2 minutes',
 });
@@ -83,10 +70,10 @@ export async function automateTopReadyIssue(
 ): Promise<AutomateReadyIssueResult> {
   const shellState = createWorkflowShellState(input);
   let selectedSpecifyIssue: SelectedProjectIssue | undefined;
+  let selectedImplementIssue: SelectedProjectIssue | undefined;
   let allowSpecReviewed = false;
   let allowSpecifyRetry = false;
-  // Placeholder scaffolding for later tasks that add implement/review retry loops.
-  const allowImplementRetry = false;
+  let allowImplementRetry = false;
   const allowResume = false;
   let pendingSpecReviewed = false;
   let pendingSpecifyRetry = false;
@@ -183,6 +170,7 @@ export async function automateTopReadyIssue(
     }
 
     pendingSpecReviewed = false;
+    selectedImplementIssue = issue;
     selectedSpecifyIssue = undefined;
     shellState.blockedReason = null;
     shellState.currentPhase = 'implement';
@@ -190,14 +178,65 @@ export async function automateTopReadyIssue(
     syncCurrentDetails();
   }
 
-  if (pendingImplementRetry) pendingImplementRetry = false;
   if (pendingResume) pendingResume = false;
-  shellState.currentPhase = 'implement';
-  shellState.blockedReason = null;
-  shellState.latestActivity = 'Running implement phase using the current Ready-path mechanics.';
-  syncCurrentDetails();
 
-  return runImplementPhase(input, shellState, syncCurrentDetails);
+  while (shellState.currentPhase === 'implement') {
+    selectedImplementIssue ??= await getTopReadyIssue(input);
+    const issue = selectedImplementIssue;
+    shellState.issueNumber = issue.issueNumber;
+    shellState.issueTitle = issue.issueTitle;
+    shellState.latestActivity = `Selected Ready issue #${issue.issueNumber} for Implement.`;
+    syncCurrentDetails();
+
+    const implementResult = await runImplementPhase(
+      {
+        issue,
+        branchPrefix: input.branchPrefix,
+        filePathPrefix: input.filePathPrefix,
+        onProgress: (message) => {
+          shellState.latestActivity = message;
+          syncCurrentDetails();
+        },
+      },
+      {
+        createWorktreeForIssueIfNeeded,
+        listIssueComments,
+        readOpenSpecChangeFiles,
+        runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+        writeRepositoryFiles,
+        runQualityGate,
+        commitAndPush,
+        openPullRequest,
+        upsertIssueComment,
+        moveProjectItemStatus,
+      },
+    );
+
+    if (implementResult.outcome === 'needs_input') {
+      shellState.blockedReason = 'implement_needs_input';
+      shellState.latestActivity = 'Implement phase is blocked on operator input.';
+      allowImplementRetry = true;
+      syncCurrentDetails();
+      await condition(() => pendingImplementRetry);
+      allowImplementRetry = false;
+      pendingImplementRetry = false;
+      shellState.blockedReason = null;
+      shellState.latestActivity = 'Implement retry requested; rerunning Implement phase.';
+      syncCurrentDetails();
+      continue;
+    }
+
+    shellState.blockedReason = null;
+    shellState.currentPhase = 'review';
+    shellState.latestActivity = `Opened PR #${implementResult.pullRequest?.pullRequestNumber} and moved the issue to In review.`;
+    syncCurrentDetails();
+    if (!implementResult.pullRequest) {
+      throw new Error('Implement phase did not return a pull request.');
+    }
+    return buildAutomateReadyIssueResult(issue, implementResult.pullRequest);
+  }
+
+  throw new Error('Workflow exited the implement phase unexpectedly.');
 }
 
 export function renderWorkflowCurrentDetails(state: WorkflowShellState): string {
@@ -224,129 +263,6 @@ function createWorkflowShellState(input: AutomateReadyIssueInput): WorkflowShell
   };
 }
 
-async function runImplementPhase(
-  input: AutomateReadyIssueInput,
-  shellState: WorkflowShellState,
-  syncCurrentDetails: () => void,
-): Promise<AutomateReadyIssueResult> {
-  const issue = await getTopReadyIssue(input);
-  shellState.issueNumber = issue.issueNumber;
-  shellState.issueTitle = issue.issueTitle;
-  shellState.latestActivity = `Selected Ready issue #${issue.issueNumber}.`;
-  syncCurrentDetails();
-
-  await moveProjectItemStatus(buildStatusUpdateInput(issue, issue.inProgressOptionId));
-  let worktree: WorktreeContext | undefined;
-  let pullRequest: CreatedPullRequest | undefined;
-  let workflowError: unknown;
-  let cleanupError: unknown;
-  let failureStatusUpdateError: unknown;
-
-  try {
-    worktree = await createWorktreeForIssueIfNeeded({
-      issue,
-      branchPrefix: input.branchPrefix,
-      filePathPrefix: input.filePathPrefix,
-    });
-    shellState.latestActivity = `Created or reused worktree for issue #${issue.issueNumber}.`;
-    syncCurrentDetails();
-
-    const agentSteps = buildAgentSteps(worktree);
-    const runAgentSequence = getRunAgentSequenceActivity(agentSteps);
-    const agentResult = await runAgentSequence({ worktree, steps: agentSteps });
-    const changeMetadata = extractChangeMetadata(agentResult);
-    shellState.latestActivity = 'Structured agent sequence completed.';
-    syncCurrentDetails();
-
-    await commitAndPush({ worktree, commitMessage: changeMetadata?.commitMessage });
-    pullRequest = await openPullRequest({
-      worktree,
-      title: changeMetadata?.pullRequestTitle,
-      body: changeMetadata?.pullRequestBody,
-      updateIfExists: true,
-    });
-
-    await commentOnIssue(buildIssueCommentInput(issue, pullRequest));
-    await moveProjectItemStatus(buildStatusUpdateInput(issue, issue.inReviewOptionId));
-    shellState.latestActivity = `Opened PR #${pullRequest.pullRequestNumber} and moved the issue to In review.`;
-    syncCurrentDetails();
-  } catch (error) {
-    workflowError = error;
-    const failureStatusOptionId = resolveFailureStatusOptionId(issue);
-    shellState.blockedReason = 'implement_needs_input';
-    shellState.latestActivity = `Implement phase failed: ${String(error)}`;
-    syncCurrentDetails();
-
-    try {
-      await moveProjectItemStatus(buildStatusUpdateInput(issue, failureStatusOptionId));
-    } catch (statusError) {
-      failureStatusUpdateError = statusError;
-    }
-  } finally {
-    if (worktree) {
-      try {
-        await cleanupWorktree({ worktree });
-      } catch (error) {
-        cleanupError = error;
-      }
-    }
-  }
-
-  if (workflowError) {
-    if (failureStatusUpdateError) {
-      log.warn('Failed to update project item status after workflow failure', { failureStatusUpdateError });
-    }
-
-    throw workflowError;
-  }
-
-  shellState.blockedReason = null;
-  shellState.currentPhase = 'review';
-  syncCurrentDetails();
-
-  if (cleanupError && !pullRequest) {
-    throw cleanupError;
-  }
-
-  if (cleanupError) {
-    log.warn('cleanupWorktree failed after a successful pull request', { cleanupError });
-  }
-
-  if (!pullRequest) {
-    throw new Error('Pull request creation did not complete.');
-  }
-
-  return buildAutomateReadyIssueResult(issue, pullRequest);
-}
-
-function resolveFailureStatusOptionId(issue: SelectedProjectIssue): string {
-  return issue.blockedOptionId;
-}
-
-function buildStatusUpdateInput(
-  issue: SelectedProjectIssue,
-  statusOptionId: string,
-): MoveProjectItemStatusInput {
-  return {
-    projectId: issue.projectId,
-    projectItemId: issue.projectItemId,
-    statusFieldId: issue.statusFieldId,
-    statusOptionId,
-  };
-}
-
-function buildIssueCommentInput(
-  issue: SelectedProjectIssue,
-  pullRequest: CreatedPullRequest,
-): IssueCommentInput {
-  return {
-    repoOwner: issue.repoOwner,
-    repoName: issue.repoName,
-    issueNumber: issue.issueNumber,
-    pullRequestUrl: pullRequest.pullRequestUrl,
-  };
-}
-
 function buildAutomateReadyIssueResult(
   issue: SelectedProjectIssue,
   pullRequest: CreatedPullRequest,
@@ -361,27 +277,6 @@ function buildAutomateReadyIssueResult(
     filePath: pullRequest.filePath,
     targetStatusName: issue.inReviewStatusName,
   };
-}
-
-function buildAgentSteps(worktree: WorktreeContext): [AgentStep, ...AgentStep[]] {
-  return [
-    {
-      id: 'edit',
-      kind: 'prompt',
-      prompt: buildEditPrompt(worktree),
-    },
-    {
-      id: 'change-metadata',
-      kind: 'structured',
-      prompt: buildMetadataPrompt(),
-      schemaId: 'change-metadata-v1',
-      resultKey: CHANGE_METADATA_OUTPUT_KEY,
-    },
-  ];
-}
-
-function getRunAgentSequenceActivity(steps: readonly AgentStep[]) {
-  return getRunAgentSequenceActivityWithRetry(steps);
 }
 
 function getRunAgentSequenceActivityWithRetry(
@@ -406,31 +301,4 @@ function buildRunAgentSequenceStartToCloseTimeout(steps: readonly AgentStep[]): 
     0,
   );
   return `${Math.max(MIN_AGENT_SEQUENCE_TIMEOUT_MINUTES, worstCaseTurnCount * MAX_AGENT_TURN_MINUTES)} minutes`;
-}
-
-function buildEditPrompt(worktree: WorktreeContext): string {
-  return buildTaskImplementationPrompt(worktree.taskDescription);
-}
-
-function buildMetadataPrompt(): string {
-  return buildChangeMetadataPrompt();
-}
-
-function extractChangeMetadata(agentResult: AgentSequenceResult) {
-  const rawChangeMetadata = agentResult.outputs[CHANGE_METADATA_OUTPUT_KEY];
-  if (rawChangeMetadata === undefined) {
-    return undefined;
-  }
-
-  const changeMetadata = parseChangeMetadata(rawChangeMetadata);
-  if (!changeMetadata) {
-    const detail = explainChangeMetadataParseError(rawChangeMetadata);
-    throw new Error(
-      detail
-        ? `Agent sequence produced invalid change metadata output: ${detail}`
-        : 'Agent sequence produced invalid change metadata output.',
-    );
-  }
-
-  return changeMetadata;
 }

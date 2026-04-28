@@ -4,11 +4,14 @@ import {
   DEFAULT_FILE_PATH_PREFIX,
   type CleanupWorktreeInput,
   type CommitAndPushInput,
+  type QualityGateResult,
   type CreateWorktreeForIssueIfNeededInput,
   type OpenSpecChangeFile,
   type ReadOpenSpecChangeFilesInput,
+  type RunQualityGateInput,
   type SelectedProjectIssue,
   type ValidateOpenSpecChangeInput,
+  type WriteRepositoryFilesInput,
   type WorktreeContext,
   type WriteOpenSpecChangeFilesInput,
 } from './shared';
@@ -18,6 +21,7 @@ import { git, pathExists, toErrorMessage } from './activity-deps';
 const LOCAL_REPOS_ROOT = '/tmp/orchestrator';
 const LOCAL_WORKTREES_DIR = '.worktrees';
 const LOCAL_WORKTREES_EXCLUDE_ENTRY = '.worktrees/';
+const QUALITY_GATE_LOG_LIMIT = 4 * 1024;
 
 interface LocalRepoPaths {
   repoRoot: string;
@@ -96,6 +100,24 @@ export function createWorktreeActivities(deps: WorktreeActivityDeps) {
 
     async validateOpenSpecChange(input: ValidateOpenSpecChangeInput): Promise<void> {
       await deps.execFile('openspec', ['validate', input.changeName, '--strict'], { cwd: input.worktree.worktreePath });
+    },
+
+    async writeRepositoryFiles(input: WriteRepositoryFilesInput): Promise<void> {
+      for (const file of input.files) {
+        const targetPath = path.join(input.worktree.worktreePath, file.path);
+        await deps.mkdir(path.dirname(targetPath), { recursive: true });
+        await deps.writeFile(targetPath, file.content, 'utf8');
+      }
+    },
+
+    async runQualityGate(input: RunQualityGateInput): Promise<QualityGateResult> {
+      const result = await deps.execFile('make', ['check'], { cwd: input.worktree.worktreePath });
+      const combinedLogs = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+      return {
+        passed: result.exitCode === 0,
+        summary: result.exitCode === 0 ? 'make check passed' : 'make check failed',
+        logs: truncateQualityGateLogs(combinedLogs),
+      };
     },
 
     async cleanupWorktree(input: CleanupWorktreeInput): Promise<void> {
@@ -205,6 +227,13 @@ function buildCommitMessage(worktree: WorktreeContext, commitMessage?: string): 
 
 function resolveOpenSpecChangeRoot(worktree: WorktreeContext, changeName: string): string {
   return path.join(worktree.worktreePath, 'openspec', 'changes', changeName);
+}
+
+function truncateQualityGateLogs(logs: string): string {
+  if (logs.length <= QUALITY_GATE_LOG_LIMIT) {
+    return logs;
+  }
+  return `${logs.slice(0, QUALITY_GATE_LOG_LIMIT)}\n...[truncated]`;
 }
 
 async function readOpenSpecFilesRecursively(

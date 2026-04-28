@@ -82,8 +82,14 @@ For each task from Task 1 to Task 9:
 
 ### Task 5
 
-- Status: not started
+- Status: complete
 - Notes:
+  - [Origin: Task 5 | Relevant to: Tasks 6-8] The real Implement slice now lives under `orchestrator/src/phases/implement/` with dedicated prompt, response parser, contract/runtime error boundaries, and a shared `phases/change-name.ts` helper for deterministic `openspec/changes/<changeName>` folder names. Extend those boundaries for later Review/Merge work instead of re-embedding Ready-path logic in `workflows.ts`.
+  - [Origin: Task 5 | Relevant to: Tasks 6-8] Implement now owns `writeRepositoryFiles`, `runQualityGate`, the typed retry-feedback loop, and `implement:summary` side effects. Later phases should keep using the current worktree/PR activities while leaving quality-gate/prompt semantics phase-local.
+  - [Origin: Task 5 | Relevant to: Tasks 6-8] Repair-exhausted structured-output failures are now wrapped in `activity-agent-sequence.ts` as non-retryable `AgentContractError` application failures, and the Implement phase only treats `/invalid/` as contract feedback when parsing the returned Implement payload locally. Reuse that split for later Review structured contracts instead of broad message matching.
+  - [Origin: Task 5 | Relevant to: Tasks 6-8] Workflow tests now pin retry-safe windows after push/PR/comment/status updates (`workflow-success.test.ts`) and `implementRetry` continues to reuse the same selected Ready issue/worktree until the operator unblocks the phase. Preserve that reuse model unless a later task explicitly changes branch/worktree policy.
+  - [Origin: Task 5 | Relevant to: Tasks 6-8] The fake-agent live E2E harness now starts fake runs directly in Implement by pre-seeding the approved spec bundle plus a deterministic `Makefile` `check` target, while `live:real` still starts in Specify via `resolveStartPhase(...)`. Keep that split so fake Ready-start validation remains cheap without breaking real-agent paths.
+  - [Origin: Task 5 | Relevant to: Tasks 6-8] Task 5 verification is green via focused orchestrator/E2E suites, final `make check`, and a live fake-agent E2E run on 2026-04-28 against `Mugenor/orchestrator-testing` + Project `Mugenor/1` (`runId=8cfeaa91`, issue `#30`, PR `#31`, statuses `Ready -> In progress -> In review`, cleanup succeeded). An earlier blocked run (`#29`, `runId=5a142140`) exposed the missing `make check` target in the test repo and was cleaned after the harness fix landed.
 
 ### Task 6
 

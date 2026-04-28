@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { CancelledFailure } from '@temporalio/common';
+import { ApplicationFailure, CancelledFailure } from '@temporalio/common';
 import { describe, it } from 'mocha';
 import { buildChangeMetadataPrompt, buildTaskImplementationPrompt } from '../agent-prompts';
 import { CHANGE_METADATA_OUTPUT_KEY, SPECIFY_RESPONSE_OUTPUT_KEY, type AgentStep, type WorktreeContext } from '../shared';
@@ -190,6 +190,40 @@ describe('agent sequence activities', () => {
     });
 
     await assert.rejects(() => runAgentSequence({ worktree: buildWorktreeContext(), steps: buildStructuredAgentSteps(buildWorktreeContext()) }), /did not satisfy schema/);
+  });
+
+  it('rethrows repair-exhausted schema failures as non-retryable AgentContractError application failures', async () => {
+    let runCount = 0;
+    const worktree = buildWorktreeContext();
+    const { runAgentSequence } = createActivityTestRig({
+      agent: {
+        createCodexThread: () => ({
+          id: 'thread-123',
+          run: async () => {
+            runCount += 1;
+            return runCount === 1
+              ? { items: [], finalResponse: 'Implemented the requested change.', usage: null }
+              : { items: [], finalResponse: '{"commitMessage":42}', usage: null };
+          },
+        }),
+        resumeCodexThread: () => {
+          throw new Error('resume should not be used without a checkpoint');
+        },
+        getHeartbeatDetails: () => undefined,
+        heartbeat: () => undefined,
+      },
+    });
+
+    await assert.rejects(
+      () => runAgentSequence({ worktree, steps: buildStructuredAgentSteps(worktree) }),
+      (error: unknown) => {
+        assert.ok(error instanceof ApplicationFailure);
+        assert.strictEqual(error.type, 'AgentContractError');
+        assert.strictEqual(error.nonRetryable, true);
+        assert.match(error.message, /did not satisfy schema/i);
+        return true;
+      },
+    );
   });
 
   it('passes the Temporal cancellation signal to the structured agent path', async () => {
