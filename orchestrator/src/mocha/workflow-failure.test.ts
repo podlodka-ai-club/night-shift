@@ -21,6 +21,7 @@ describe('workflow failure paths', function () {
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
     const statusUpdates: MoveProjectItemStatusInput[] = [];
+    const markers: string[] = [];
 
     await assert.rejects(
       () =>
@@ -43,7 +44,13 @@ describe('workflow failure paths', function () {
             async runQualityGate() { throw new Error('runQualityGate should not run after agent failure'); },
             async commitAndPush() { throw new Error('commit should not run after agent failure'); },
             async openPullRequest() { throw new Error('openPullRequest should not run after agent failure'); },
-            async upsertIssueComment() { throw new Error('upsertIssueComment should not run after agent failure'); },
+            async upsertIssueComment(input: { marker: string; body: string }) {
+              markers.push(input.marker);
+              calls.push(`upsertIssueComment:${input.marker}`);
+              assert.match(input.body, /implement/i);
+              assert.match(input.body, /agent failed/i);
+              assert.match(input.body, /Ready/i);
+            },
             async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
               statusUpdates.push(input);
               calls.push(`moveProjectItemStatus:${input.projectItemId}`);
@@ -62,13 +69,21 @@ describe('workflow failure paths', function () {
       'runAgentSequence:7',
       'runAgentSequence:7',
       'runAgentSequence:7',
+      'moveProjectItemStatus:item-1',
+      'upsertIssueComment:workflow:phase-failure',
     ]);
-    assert.deepStrictEqual(statusUpdates, [buildStatusUpdateInput(issue, issue.inProgressOptionId)]);
+    assert.deepStrictEqual(statusUpdates, [
+      buildStatusUpdateInput(issue, issue.inProgressOptionId),
+      buildStatusUpdateInput(issue, issue.blockedOptionId),
+    ]);
+    assert.deepStrictEqual(markers, ['workflow:phase-failure']);
   });
 
   it('preserves the original workflow failure when commitAndPush fails after the gate passes', async () => {
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
+    const statusUpdates: MoveProjectItemStatusInput[] = [];
+    const markers: string[] = [];
 
     await assert.rejects(
       () =>
@@ -104,11 +119,24 @@ describe('workflow failure paths', function () {
             async runQualityGate() { return { passed: true, summary: 'ok', logs: '' }; },
             async commitAndPush() { throw new Error('commit failed'); },
             async openPullRequest() { throw new Error('openPullRequest should not run after commit failure'); },
-            async upsertIssueComment() { throw new Error('upsertIssueComment should not run after commit failure'); },
-            async moveProjectItemStatus() { return undefined; },
+            async upsertIssueComment(input: { marker: string; body: string }) {
+              markers.push(input.marker);
+              assert.match(input.body, /implement/i);
+              assert.match(input.body, /commit failed/i);
+              assert.match(input.body, /Ready/i);
+            },
+            async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
+              statusUpdates.push(input);
+            },
           },
         }),
       (error: unknown) => assertWorkflowActivityFailure(error, /commit failed/),
     );
+
+    assert.deepStrictEqual(statusUpdates, [
+      buildStatusUpdateInput(issue, issue.inProgressOptionId),
+      buildStatusUpdateInput(issue, issue.blockedOptionId),
+    ]);
+    assert.deepStrictEqual(markers, ['workflow:phase-failure']);
   });
 });

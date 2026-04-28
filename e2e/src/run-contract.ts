@@ -1,6 +1,7 @@
 import { CANONICAL_PROJECT_STATUS_NAMES, READY_ISSUE_STATUS_SEQUENCE } from '../../orchestrator/lib/shared';
 
 export const REQUIRED_STATUS_SEQUENCE = READY_ISSUE_STATUS_SEQUENCE;
+export const REQUIRED_REVIEW_RERUN_STATUS_SEQUENCE = ['Ready', 'In progress', 'In review', 'Ready', 'In progress', 'In review', 'Ready to merge'] as const;
 const CANONICAL_PROJECT_STATUS_NAME_SET = new Set<string>(CANONICAL_PROJECT_STATUS_NAMES);
 
 export function buildSeedIssueTitle(runId: string): string {
@@ -25,21 +26,33 @@ export function assertObservedStatusSequence(observedStatuses: string[]): void {
     throw new Error(`Observed non-canonical board statuses: ${nonCanonicalStatuses.join(', ')}`);
   }
 
+  if (includesRequiredSequence(observedStatuses, REQUIRED_STATUS_SEQUENCE)) {
+    return;
+  }
+
+  if (includesRequiredSequence(observedStatuses, REQUIRED_REVIEW_RERUN_STATUS_SEQUENCE)) {
+    return;
+  }
+
+  throw new Error(
+    `Observed statuses did not include an allowed ready-flow sequence: ${REQUIRED_STATUS_SEQUENCE.join(' -> ')} OR ${REQUIRED_REVIEW_RERUN_STATUS_SEQUENCE.join(' -> ')}. Got: ${observedStatuses.join(', ') || '(none)'}`,
+  );
+}
+
+function includesRequiredSequence(observedStatuses: readonly string[], requiredSequence: readonly string[]): boolean {
   let nextRequiredStatusIndex = 0;
 
   for (const observedStatus of observedStatuses) {
-    const requiredStatus = REQUIRED_STATUS_SEQUENCE[nextRequiredStatusIndex];
+    const requiredStatus = requiredSequence[nextRequiredStatusIndex];
     if (observedStatus !== requiredStatus) {
       continue;
     }
 
     nextRequiredStatusIndex += 1;
-    if (nextRequiredStatusIndex === REQUIRED_STATUS_SEQUENCE.length) {
-      return;
+    if (nextRequiredStatusIndex === requiredSequence.length) {
+      return true;
     }
   }
 
-  throw new Error(
-    `Observed statuses did not include the required sequence: ${REQUIRED_STATUS_SEQUENCE.join(' -> ')}. Got: ${observedStatuses.join(', ') || '(none)'}`,
-  );
+  return false;
 }

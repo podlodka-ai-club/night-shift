@@ -6,6 +6,7 @@ import { buildReviewPrompt } from './prompt';
 import { parseReviewerResponse, type Finding, type ReviewerResponse } from './response';
 
 const DEFAULT_MAX_REVIEW_ITERATIONS = 3;
+const REVIEW_ESCALATION_LABEL = 'night-shift:escalation';
 
 export type ReviewVerdict = 'ready-to-merge' | 'needs-fix' | 'escalate';
 
@@ -28,6 +29,7 @@ export interface RunReviewPhaseDeps {
   createPullRequestReview: (input: { repoOwner: string; repoName: string; pullRequestNumber: number; event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'; body: string }) => Promise<void>;
   upsertPullRequestReviewComment: (input: { repoOwner: string; repoName: string; pullRequestNumber: number; commitId: string; marker: string; body: string; path: string; line: number }) => Promise<void>;
   upsertIssueComment: (input: { repoOwner: string; repoName: string; issueNumber: number; marker: string; body: string }) => Promise<void>;
+  addIssueLabels: (input: { repoOwner: string; repoName: string; issueNumber: number; labels: string[] }) => Promise<void>;
   moveProjectItemStatus: (input: MoveProjectItemStatusInput) => Promise<void>;
 }
 
@@ -59,6 +61,9 @@ export async function runReviewPhase(input: RunReviewPhaseInput, deps: RunReview
   }
   await submitPullRequestReview(deps, input.issue, pullRequestDetails, verdict, normalizedResponse, reviewIteration);
   await upsertInlineReviewComments(deps, input.issue, pullRequestDetails, normalizedResponse.findings);
+  if (verdict === 'escalate') {
+    await deps.addIssueLabels({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, issueNumber: input.issue.issueNumber, labels: [REVIEW_ESCALATION_LABEL] });
+  }
   const marker = verdict === 'escalate' ? 'review:escalation' : 'review:summary';
   await deps.upsertIssueComment({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, issueNumber: input.issue.issueNumber, marker, body: summaryCommentBody });
   await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, verdict));

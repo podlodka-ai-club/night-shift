@@ -33,6 +33,7 @@ export const {
   getTopBacklogIssue,
   getTopReadyIssue,
   openPullRequest,
+  addIssueLabels,
   listIssueComments,
   getPullRequestDetails,
   getPullRequestDiff,

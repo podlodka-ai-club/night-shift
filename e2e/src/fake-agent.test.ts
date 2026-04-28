@@ -43,13 +43,18 @@ describe('createFakeAgentDeps', () => {
   it('returns a deterministic Review response for the review structured turn', async () => {
     const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
     const deps = createFakeAgentDeps(buildBaseDeps());
-    const thread = deps.createCodexThread(worktreePath);
+    const firstThread = deps.createCodexThread(worktreePath);
+    const secondThread = deps.createCodexThread(worktreePath);
 
-    const response = await thread.run('Review the PR.\n## PR Diff\n```diff\n+ok\n```\nE2E_RUN_MARKER: run-123', {
+    const firstResponse = await firstThread.run('Review the PR.\n## PR Diff\n```diff\n+ok\n```\nE2E_RUN_MARKER: run-123', {
+      outputSchema: { type: 'object' },
+    });
+    const secondResponse = await secondThread.run('Review the PR.\n## PR Diff\n```diff\n+ok\n```\nE2E_RUN_MARKER: run-123', {
       outputSchema: { type: 'object' },
     });
 
-    assert.deepStrictEqual(JSON.parse(response.finalResponse), buildFakeAgentReviewResponse('run-123'));
+    assert.deepStrictEqual(JSON.parse(firstResponse.finalResponse), buildFakeAgentReviewResponse('run-123', 1));
+    assert.deepStrictEqual(JSON.parse(secondResponse.finalResponse), buildFakeAgentReviewResponse('run-123', 2));
   });
 });
 

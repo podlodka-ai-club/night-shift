@@ -24,6 +24,12 @@ describe('run contract helpers', () => {
     assert.deepStrictEqual(REQUIRED_STATUS_SEQUENCE, ['Ready', 'In progress', 'In review', 'Ready to merge']);
   });
 
+  it('accepts a fake-agent review rerun sequence before Ready to merge', () => {
+    assert.doesNotThrow(() => {
+      assertObservedStatusSequence(['Ready', 'In progress', 'In review', 'Ready', 'In progress', 'In review', 'Ready to merge']);
+    });
+  });
+
   it('accepts richer donor-compatible board lifecycles around the current ready flow', () => {
     assert.doesNotThrow(() => {
       assertObservedStatusSequence(['Backlog', 'Refinement', 'Refined', 'Ready', 'In progress', 'In review', 'Ready to merge']);
@@ -33,7 +39,7 @@ describe('run contract helpers', () => {
   it('rejects a status sequence that skips In progress', () => {
     assert.throws(
       () => assertObservedStatusSequence(['Ready', 'In review']),
-      /observed statuses did not include the required sequence/i,
+      /observed statuses did not include an allowed ready-flow sequence/i,
     );
   });
 

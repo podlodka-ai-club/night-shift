@@ -1,4 +1,5 @@
 import type {
+  AddIssueLabelsInput,
   AutomateReadyIssueInput,
   CreatePullRequestReviewInput,
   CreatedPullRequest,
@@ -21,6 +22,7 @@ import type {
 } from './shared';
 import type { GitHubActivityDeps } from './activity-deps';
 import {
+  addIssueLabelsActivity,
   commentOnIssueActivity,
   createPullRequestReviewActivity,
   getPullRequestDetailsActivity,
@@ -59,6 +61,10 @@ export function createGitHubActivities(deps: GitHubActivityDeps) {
 
     async openPullRequest(input: OpenPullRequestInput): Promise<CreatedPullRequest> {
       return openPullRequestActivity(deps, input);
+    },
+
+    async addIssueLabels(input: AddIssueLabelsInput): Promise<void> {
+      return addIssueLabelsActivity(deps, input);
     },
 
     async listIssueComments(input: ListIssueCommentsInput): Promise<IssueComment[]> {

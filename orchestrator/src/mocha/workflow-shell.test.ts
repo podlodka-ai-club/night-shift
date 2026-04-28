@@ -395,6 +395,8 @@ describe('workflow phased shell', function () {
   it('rethrows runtime implement errors whose message contains invalid without misclassifying them as needs_input', async () => {
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
+    const markers: string[] = [];
+    const statusUpdates: string[] = [];
 
     await assert.rejects(
       () => runWorkflow({
@@ -416,8 +418,15 @@ describe('workflow phased shell', function () {
           async runQualityGate() { throw new Error('should not run gate'); },
           async commitAndPush() { throw new Error('should not commit'); },
           async openPullRequest() { throw new Error('should not open pull request'); },
-          async upsertIssueComment() { throw new Error('should not comment'); },
-          async moveProjectItemStatus() { return undefined; },
+          async upsertIssueComment(input: { marker: string; body: string }) {
+            markers.push(input.marker);
+            assert.match(input.body, /implement/i);
+            assert.match(input.body, /invalid api credentials/i);
+            assert.match(input.body, /Ready/i);
+          },
+          async moveProjectItemStatus(input: { statusOptionId: string }) {
+            statusUpdates.push(input.statusOptionId);
+          },
         },
       }),
       (error: unknown) => {
@@ -425,6 +434,9 @@ describe('workflow phased shell', function () {
         return true;
       },
     );
+
+    assert.deepStrictEqual(markers, ['workflow:phase-failure']);
+    assert.deepStrictEqual(statusUpdates, [issue.inProgressOptionId, issue.blockedOptionId]);
   });
 
   it('blocks on implement_needs_input and reruns implement after implementRetry without reselecting the issue', async () => {
@@ -521,6 +533,265 @@ describe('workflow phased shell', function () {
     assert.ok(calls.includes('createPullRequestReview'));
   });
 
+  it('loops implement-review on needs-fix without reselecting the Ready issue', async () => {
+    const calls: string[] = [];
+    const statusUpdates: string[] = [];
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let getTopReadyIssueCallCount = 0;
+    let runAgentSequenceCallCount = 0;
+
+    const result = await runWorkflowWithHandle<AutomateReadyIssueResult>(
+      {
+        workflowId: 'workflow-shell-review-needs-fix-loop-test',
+        workflowInput: { startPhase: 'implement' },
+        activities: {
+          async getTopReadyIssue() {
+            getTopReadyIssueCallCount += 1;
+            calls.push(`getTopReadyIssue:${getTopReadyIssueCallCount}`);
+            return issue;
+          },
+          async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
+          async listIssueComments() { calls.push('listIssueComments'); return []; },
+          async readOpenSpecChangeFiles() {
+            calls.push('readOpenSpecChangeFiles');
+            return [{ path: 'proposal.md', content: '# Proposal' }, { path: 'tasks.md', content: '# Tasks' }];
+          },
+          async runAgentSequence() {
+            runAgentSequenceCallCount += 1;
+            calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+            if (runAgentSequenceCallCount === 1 || runAgentSequenceCallCount === 3) {
+              return {
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: `export const attempt${runAgentSequenceCallCount} = true;\n` }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implemented the approved spec bundle.',
+                    followUps: [],
+                  },
+                },
+              };
+            }
+            return {
+              outputs: {
+                reviewerResponse: runAgentSequenceCallCount === 2
+                  ? { summary: 'Fix the implementation and rerun review.', findings: [{ severity: 'error', message: 'Missing validation.', location: { file: 'src/index.ts', line: 1 } }] }
+                  : { summary: 'Looks ready to merge.', findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: 'src/index.ts', line: 1 } }] },
+              },
+            };
+          },
+          async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },
+          async runQualityGate() { calls.push('runQualityGate'); return { passed: true, summary: 'make check passed', logs: '' }; },
+          async commitAndPush() { calls.push('commitAndPush'); },
+          async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
+          async upsertIssueComment(input: { marker: string }) { calls.push(`upsertIssueComment:${input.marker}`); },
+          async getPullRequestDetails() { calls.push('getPullRequestDetails'); return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+          async getPullRequestDiff() { calls.push('getPullRequestDiff'); return 'diff --git a/src/index.ts b/src/index.ts'; },
+          async listPullRequestFiles() { calls.push('listPullRequestFiles'); return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
+          async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return []; },
+          async setPullRequestReady() { calls.push('setPullRequestReady'); },
+          async createPullRequestReview(input: { event: string; body: string }) { calls.push(`createPullRequestReview:${input.event}:${/Iteration: ([0-9]+)/.exec(input.body)?.[1] ?? 'unknown'}`); },
+          async upsertPullRequestReviewComment(input: { path: string; line: number }) { calls.push(`upsertPullRequestReviewComment:${input.path}:${input.line}`); },
+          async moveProjectItemStatus(input: { statusOptionId: string }) {
+            statusUpdates.push(input.statusOptionId);
+            calls.push(`moveProjectItemStatus:${input.statusOptionId}`);
+          },
+        },
+      },
+      async (handle) => awaitResultOrTerminate(handle, 5_000),
+    );
+
+    assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
+    assert.strictEqual(getTopReadyIssueCallCount, 1);
+    assert.strictEqual(runAgentSequenceCallCount, 4);
+    assert.deepStrictEqual(statusUpdates, [
+      issue.inProgressOptionId,
+      issue.inReviewOptionId,
+      issue.readyOptionId,
+      issue.inProgressOptionId,
+      issue.inReviewOptionId,
+      issue.readyToMergeOptionId,
+    ]);
+    assert.deepStrictEqual(
+      calls.filter((call) => call.startsWith('createPullRequestReview:')),
+      ['createPullRequestReview:REQUEST_CHANGES:1', 'createPullRequestReview:APPROVE:2'],
+    );
+  });
+
+  it('ignores stale resume signals, blocks on review_escalation, then reruns implement and restarts review iteration after resume', async () => {
+    const calls: string[] = [];
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let getTopReadyIssueCallCount = 0;
+    let runAgentSequenceCallCount = 0;
+
+    const result = await runWorkflowWithHandle<AutomateReadyIssueResult>(
+      {
+        workflowId: 'workflow-shell-review-escalation-resume-test',
+        workflowInput: { startPhase: 'implement' },
+        activities: {
+          async getTopReadyIssue() {
+            getTopReadyIssueCallCount += 1;
+            calls.push(`getTopReadyIssue:${getTopReadyIssueCallCount}`);
+            return issue;
+          },
+          async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
+          async listIssueComments() { calls.push('listIssueComments'); return []; },
+          async readOpenSpecChangeFiles() {
+            calls.push('readOpenSpecChangeFiles');
+            return [{ path: 'proposal.md', content: '# Proposal' }, { path: 'tasks.md', content: '# Tasks' }];
+          },
+          async runAgentSequence() {
+            runAgentSequenceCallCount += 1;
+            calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+            if (runAgentSequenceCallCount === 1 || runAgentSequenceCallCount === 3 || runAgentSequenceCallCount === 5 || runAgentSequenceCallCount === 7) {
+              return {
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: `export const pass${runAgentSequenceCallCount} = true;\n` }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implemented the approved spec bundle.',
+                    followUps: [],
+                  },
+                },
+              };
+            }
+            if (runAgentSequenceCallCount === 2 || runAgentSequenceCallCount === 4 || runAgentSequenceCallCount === 6) {
+              return {
+                outputs: {
+                  reviewerResponse: {
+                    summary: 'Still failing review.',
+                    findings: [{ severity: 'error', message: 'Still missing validation.', location: { file: 'src/index.ts', line: 1 } }],
+                  },
+                },
+              };
+            }
+            return {
+              outputs: {
+                reviewerResponse: {
+                  summary: 'Looks ready after the human escalation.',
+                  findings: [{ severity: 'warning', message: 'Add one comment.', location: { file: 'src/index.ts', line: 1 } }],
+                },
+              },
+            };
+          },
+          async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },
+          async runQualityGate() { calls.push('runQualityGate'); return { passed: true, summary: 'make check passed', logs: '' }; },
+          async commitAndPush() { calls.push('commitAndPush'); },
+          async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
+          async upsertIssueComment(input: { marker: string; body: string }) { calls.push(`upsertIssueComment:${input.marker}:${/Iteration: ([0-9]+)/.exec(input.body)?.[1] ?? 'na'}`); },
+          async getPullRequestDetails() { calls.push('getPullRequestDetails'); return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+          async getPullRequestDiff() { calls.push('getPullRequestDiff'); return 'diff --git a/src/index.ts b/src/index.ts'; },
+          async listPullRequestFiles() { calls.push('listPullRequestFiles'); return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
+          async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return []; },
+          async setPullRequestReady() { calls.push('setPullRequestReady'); },
+          async createPullRequestReview(input: { event: string; body: string }) { calls.push(`createPullRequestReview:${input.event}:${/Iteration: ([0-9]+)/.exec(input.body)?.[1] ?? 'unknown'}`); },
+          async upsertPullRequestReviewComment(input: { path: string; line: number }) { calls.push(`upsertPullRequestReviewComment:${input.path}:${input.line}`); },
+          async addIssueLabels(input: { labels: string[] }) { calls.push(`addIssueLabels:${input.labels.join(',')}`); },
+          async moveProjectItemStatus(input: { statusOptionId: string }) { calls.push(`moveProjectItemStatus:${input.statusOptionId}`); },
+        },
+      },
+      async (handle) => {
+        await handle.signal(resumeSignal);
+        assert.strictEqual(await waitForBlockedReason(handle, 'review_escalation'), 'review_escalation');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.strictEqual(await handle.query(getBlockedReasonQuery), 'review_escalation');
+        assert.deepStrictEqual(
+          calls.filter((call) => call.startsWith('createPullRequestReview:')),
+          [
+            'createPullRequestReview:REQUEST_CHANGES:1',
+            'createPullRequestReview:REQUEST_CHANGES:2',
+            'createPullRequestReview:COMMENT:3',
+          ],
+        );
+        await handle.signal(resumeSignal);
+        return awaitResultOrTerminate(handle, 8_000);
+      },
+    );
+
+    assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
+    assert.strictEqual(getTopReadyIssueCallCount, 1);
+    assert.strictEqual(runAgentSequenceCallCount, 8);
+    assert.deepStrictEqual(
+      calls.filter((call) => call.startsWith('createPullRequestReview:')),
+      [
+        'createPullRequestReview:REQUEST_CHANGES:1',
+        'createPullRequestReview:REQUEST_CHANGES:2',
+        'createPullRequestReview:COMMENT:3',
+        'createPullRequestReview:APPROVE:1',
+      ],
+    );
+  });
+
+  it('upserts workflow:phase-failure and blocks the item when review throws, then ends the attempt', async () => {
+    const markers: string[] = [];
+    const statusUpdates: string[] = [];
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let runAgentSequenceCallCount = 0;
+
+    await assert.rejects(
+      () => runWorkflow({
+        workflowId: 'workflow-shell-review-phase-failure-comment-test',
+        expectedWorkerWarnings: [/review runtime exploded/],
+        workflowInput: { startPhase: 'implement' },
+        activities: {
+          async getTopReadyIssue() { return issue; },
+          async createWorktreeForIssueIfNeeded() { return worktree; },
+          async listIssueComments() { return []; },
+          async readOpenSpecChangeFiles() { return [{ path: 'proposal.md', content: '# Proposal' }, { path: 'tasks.md', content: '# Tasks' }]; },
+          async runAgentSequence() {
+            runAgentSequenceCallCount += 1;
+            if (runAgentSequenceCallCount === 1) {
+              return {
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implemented the approved spec bundle.',
+                    followUps: [],
+                  },
+                },
+              };
+            }
+            throw new Error('review runtime exploded');
+          },
+          async writeRepositoryFiles() { return undefined; },
+          async runQualityGate() { return { passed: true, summary: 'make check passed', logs: '' }; },
+          async commitAndPush() { return undefined; },
+          async openPullRequest() { return pullRequest; },
+          async upsertIssueComment(input: { marker: string; body: string }) {
+            markers.push(input.marker);
+            if (input.marker === 'workflow:phase-failure') {
+              assert.match(input.body, /review/i);
+              assert.match(input.body, /Ready/i);
+              assert.match(input.body, /review runtime exploded/i);
+            }
+          },
+          async getPullRequestDetails() { return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+          async getPullRequestDiff() { return 'diff --git a/src/index.ts b/src/index.ts'; },
+          async listPullRequestFiles() { return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
+          async listPullRequestReviewComments() { return []; },
+          async setPullRequestReady() { return undefined; },
+          async createPullRequestReview() { return undefined; },
+          async upsertPullRequestReviewComment() { return undefined; },
+          async moveProjectItemStatus(input: { statusOptionId: string }) { statusUpdates.push(input.statusOptionId); },
+        },
+      }),
+      (error: unknown) => {
+        assert.match(describeErrorCauseChain(error), /review runtime exploded/i);
+        return true;
+      },
+    );
+
+    assert.strictEqual(runAgentSequenceCallCount, 4);
+    assert.deepStrictEqual(markers, ['implement:summary', 'workflow:phase-failure']);
+    assert.deepStrictEqual(statusUpdates, [issue.inProgressOptionId, issue.inReviewOptionId, issue.blockedOptionId]);
+  });
+
   it('renders current details with phase, blocked reason, and recent activity', () => {
     const rendered = renderWorkflowCurrentDetails({
       startPhase: 'implement',
@@ -543,15 +814,57 @@ async function waitForBlockedReason(
   handle: Parameters<typeof runWorkflowWithHandle>[1] extends (handle: infer T) => Promise<unknown> ? T : never,
   expectedBlockedReason: string,
 ): Promise<string> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    const blockedReason = await handle.query(getBlockedReasonQuery);
+  for (let attempt = 0; attempt < 320; attempt += 1) {
+    let blockedReason: string | null;
+    try {
+      blockedReason = await handle.query(getBlockedReasonQuery);
+    } catch (error) {
+      await terminateWorkflowForTest(handle, `Query failed while waiting for blocked reason ${expectedBlockedReason}.`);
+      throw new assert.AssertionError({ message: `Workflow became unavailable while waiting for ${expectedBlockedReason}: ${String(error)}` });
+    }
     if (blockedReason === expectedBlockedReason) {
       return blockedReason;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
+  await terminateWorkflowForTest(handle, `Timed out waiting for blocked reason ${expectedBlockedReason}.`);
   throw new assert.AssertionError({ message: `Timed out waiting for ${expectedBlockedReason} blocked reason.` });
+}
+
+async function awaitResultOrTerminate<T>(
+  handle: Parameters<typeof runWorkflowWithHandle>[1] extends (handle: infer THandle) => Promise<unknown> ? THandle : never,
+  maxMilliseconds: number,
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      handle.result() as Promise<T>,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new assert.AssertionError({ message: `Timed out waiting ${maxMilliseconds}ms for workflow result.` }));
+        }, maxMilliseconds);
+      }),
+    ]);
+  } catch (error) {
+    if (error instanceof assert.AssertionError) {
+      await terminateWorkflowForTest(handle, error.message);
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
+async function terminateWorkflowForTest(
+  handle: Parameters<typeof runWorkflowWithHandle>[1] extends (handle: infer THandle) => Promise<unknown> ? THandle : never,
+  reason: string,
+): Promise<void> {
+  try {
+    await handle.terminate(reason);
+  } catch {
+    // Ignore termination failures in tests; the original assertion/error should win.
+  }
 }
 
 function describeErrorCauseChain(error: unknown): string {

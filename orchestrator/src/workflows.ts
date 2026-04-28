@@ -44,6 +44,7 @@ const {
   createPullRequestReview,
   upsertPullRequestReviewComment,
   upsertIssueComment,
+  addIssueLabels,
   moveProjectItemStatus,
 } = proxyActivities<typeof activities>({
   retry: {
@@ -82,7 +83,7 @@ export async function automateTopReadyIssue(
   let allowSpecReviewed = false;
   let allowSpecifyRetry = false;
   let allowImplementRetry = false;
-  const allowResume = false;
+  let allowResume = false;
   let pendingSpecReviewed = false;
   let pendingSpecifyRetry = false;
   let pendingImplementRetry = false;
@@ -90,6 +91,25 @@ export async function automateTopReadyIssue(
 
   const syncCurrentDetails = () => {
     setCurrentDetails(renderWorkflowCurrentDetails(shellState));
+  };
+
+  const handlePhaseFailure = async (phase: WorkflowPhase, issue: SelectedProjectIssue, error: unknown) => {
+    shellState.blockedReason = null;
+    shellState.latestActivity = `${capitalizePhaseName(phase)} phase failed; issue moved to Blocked.`;
+    syncCurrentDetails();
+    await moveProjectItemStatus({
+      projectId: issue.projectId,
+      projectItemId: issue.projectItemId,
+      statusFieldId: issue.statusFieldId,
+      statusOptionId: issue.blockedOptionId,
+    });
+    await upsertIssueComment({
+      repoOwner: issue.repoOwner,
+      repoName: issue.repoName,
+      issueNumber: issue.issueNumber,
+      marker: 'workflow:phase-failure',
+      body: buildPhaseFailureComment(phase, issue, error),
+    });
   };
 
   setHandler(getBlockedReasonQuery, () => shellState.blockedReason);
@@ -120,29 +140,35 @@ export async function automateTopReadyIssue(
     shellState.latestActivity = `Selected Backlog issue #${issue.issueNumber} for Specify.`;
     syncCurrentDetails();
 
-    const specifyResult = await runSpecifyPhase(
-      {
-        issue,
-        branchPrefix: input.branchPrefix,
-        filePathPrefix: input.filePathPrefix,
-        onProgress: (message) => {
-          shellState.latestActivity = message;
-          syncCurrentDetails();
+    let specifyResult;
+    try {
+      specifyResult = await runSpecifyPhase(
+        {
+          issue,
+          branchPrefix: input.branchPrefix,
+          filePathPrefix: input.filePathPrefix,
+          onProgress: (message) => {
+            shellState.latestActivity = message;
+            syncCurrentDetails();
+          },
         },
-      },
-      {
-        createWorktreeForIssueIfNeeded,
-        listIssueComments,
-        readOpenSpecChangeFiles,
-        writeOpenSpecChangeFiles,
-        validateOpenSpecChange,
-        runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
-        commitAndPush,
-        openPullRequest,
-        upsertIssueComment,
-        moveProjectItemStatus,
-      },
-    );
+        {
+          createWorktreeForIssueIfNeeded,
+          listIssueComments,
+          readOpenSpecChangeFiles,
+          writeOpenSpecChangeFiles,
+          validateOpenSpecChange,
+          runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+          commitAndPush,
+          openPullRequest,
+          upsertIssueComment,
+          moveProjectItemStatus,
+        },
+      );
+    } catch (error) {
+      await handlePhaseFailure('specify', issue, error);
+      throw error;
+    }
 
     if (specifyResult.outcome === 'needs_input') {
       shellState.blockedReason = 'specify_needs_input';
@@ -196,29 +222,35 @@ export async function automateTopReadyIssue(
     shellState.latestActivity = `Selected Ready issue #${issue.issueNumber} for Implement.`;
     syncCurrentDetails();
 
-    const implementResult = await runImplementPhase(
-      {
-        issue,
-        branchPrefix: input.branchPrefix,
-        filePathPrefix: input.filePathPrefix,
-        onProgress: (message) => {
-          shellState.latestActivity = message;
-          syncCurrentDetails();
+    let implementResult;
+    try {
+      implementResult = await runImplementPhase(
+        {
+          issue,
+          branchPrefix: input.branchPrefix,
+          filePathPrefix: input.filePathPrefix,
+          onProgress: (message) => {
+            shellState.latestActivity = message;
+            syncCurrentDetails();
+          },
         },
-      },
-      {
-        createWorktreeForIssueIfNeeded,
-        listIssueComments,
-        readOpenSpecChangeFiles,
-        runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
-        writeRepositoryFiles,
-        runQualityGate,
-        commitAndPush,
-        openPullRequest,
-        upsertIssueComment,
-        moveProjectItemStatus,
-      },
-    );
+        {
+          createWorktreeForIssueIfNeeded,
+          listIssueComments,
+          readOpenSpecChangeFiles,
+          runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+          writeRepositoryFiles,
+          runQualityGate,
+          commitAndPush,
+          openPullRequest,
+          upsertIssueComment,
+          moveProjectItemStatus,
+        },
+      );
+    } catch (error) {
+      await handlePhaseFailure('implement', issue, error);
+      throw error;
+    }
 
     if (implementResult.outcome === 'needs_input') {
       shellState.blockedReason = 'implement_needs_input';
@@ -242,35 +274,65 @@ export async function automateTopReadyIssue(
       throw new Error('Implement phase did not return a pull request.');
     }
 
-    const reviewResult = await runReviewPhase(
-      {
-        issue,
-        worktree: implementResult.worktree,
-        pullRequest: implementResult.pullRequest,
-        reviewIteration: shellState.reviewIteration,
-        onProgress: (message) => {
-          shellState.latestActivity = message;
-          syncCurrentDetails();
+    let reviewResult;
+    try {
+      reviewResult = await runReviewPhase(
+        {
+          issue,
+          worktree: implementResult.worktree,
+          pullRequest: implementResult.pullRequest,
+          reviewIteration: shellState.reviewIteration,
+          onProgress: (message) => {
+            shellState.latestActivity = message;
+            syncCurrentDetails();
+          },
         },
-      },
-      {
-        readOpenSpecChangeFiles,
-        getPullRequestDetails,
-        getPullRequestDiff,
-        listPullRequestFiles,
-        listPullRequestReviewComments,
-        runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
-        setPullRequestReady,
-        createPullRequestReview,
-        upsertPullRequestReviewComment,
-        upsertIssueComment,
-        moveProjectItemStatus,
-      },
-    );
-
-    if (reviewResult.outcome !== 'ready_to_merge') {
-      throw new Error(`Review verdict ${reviewResult.verdict} is deferred until Task 7 workflow wiring.`);
+        {
+          readOpenSpecChangeFiles,
+          getPullRequestDetails,
+          getPullRequestDiff,
+          listPullRequestFiles,
+          listPullRequestReviewComments,
+          runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+          setPullRequestReady,
+          createPullRequestReview,
+          upsertPullRequestReviewComment,
+          upsertIssueComment,
+          addIssueLabels,
+          moveProjectItemStatus,
+        },
+      );
+    } catch (error) {
+      await handlePhaseFailure('review', issue, error);
+      throw error;
     }
+
+    if (reviewResult.outcome === 'needs_fix') {
+      shellState.reviewIteration += 1;
+      shellState.currentPhase = 'implement';
+      shellState.latestActivity = `Review requested fixes for PR #${implementResult.pullRequest.pullRequestNumber}; rerunning Implement for review iteration ${shellState.reviewIteration + 1}.`;
+      syncCurrentDetails();
+      continue;
+    }
+
+    if (reviewResult.outcome === 'escalated') {
+      pendingResume = false;
+      shellState.blockedReason = 'review_escalation';
+      shellState.currentPhase = 'review';
+      shellState.latestActivity = 'Review escalated; waiting for operator resume.';
+      allowResume = true;
+      syncCurrentDetails();
+      await condition(() => pendingResume);
+      allowResume = false;
+      pendingResume = false;
+      shellState.blockedReason = null;
+      shellState.reviewIteration = 0;
+      shellState.currentPhase = 'implement';
+      shellState.latestActivity = 'Resume received; rerunning Implement and restarting the review loop.';
+      syncCurrentDetails();
+      continue;
+    }
+
     shellState.latestActivity = `Review approved PR #${implementResult.pullRequest.pullRequestNumber}; issue moved to Ready to merge.`;
     syncCurrentDetails();
     return buildAutomateReadyIssueResult(issue, implementResult.pullRequest, issue.readyToMergeStatusName);
@@ -342,4 +404,36 @@ function buildRunAgentSequenceStartToCloseTimeout(steps: readonly AgentStep[]): 
     0,
   );
   return `${Math.max(MIN_AGENT_SEQUENCE_TIMEOUT_MINUTES, worstCaseTurnCount * MAX_AGENT_TURN_MINUTES)} minutes`;
+}
+
+function buildPhaseFailureComment(phase: WorkflowPhase, issue: SelectedProjectIssue, error: unknown): string {
+  const suggestedStatus = phase === 'specify' ? issue.backlogStatusName : issue.readyStatusName;
+  return [
+    `## Workflow phase failure for #${issue.issueNumber}`,
+    `- Phase: ${phase}`,
+    `- Root cause: ${describeWorkflowError(error)}`,
+    `- Suggested next action: move the item to ${suggestedStatus} after fixing the issue, then retry the workflow from that phase gate.`,
+  ].join('\n');
+}
+
+function describeWorkflowError(error: unknown): string {
+  const visited = new Set<unknown>();
+  const parts: string[] = [];
+  let current = error;
+
+  while (current && typeof current === 'object' && !visited.has(current)) {
+    visited.add(current);
+    const candidate = current as { message?: unknown; cause?: unknown };
+    if (typeof candidate.message === 'string' && candidate.message.length > 0) {
+      parts.push(candidate.message);
+    }
+    current = candidate.cause;
+  }
+
+  if (parts.length > 0) return parts.join('\n');
+  return error instanceof Error ? error.message : String(error);
+}
+
+function capitalizePhaseName(phase: WorkflowPhase): string {
+  return `${phase.slice(0, 1).toUpperCase()}${phase.slice(1)}`;
 }

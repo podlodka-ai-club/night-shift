@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { AgentActivityDeps, AgentSession, AgentTurnOptions, AgentTurnResult } from '../../orchestrator/lib/activity-deps';
 
 export const FAKE_AGENT_FILE_PATH = 'e2e/fake-agent-output.md';
+const FAKE_AGENT_REVIEW_STATE_PATH = '.orchestrator-fake-agent-review-attempt';
 
 export function buildFakeAgentFileText(runMarker: string): string {
   return ['# Fake E2E Change', '', `Run marker: ${runMarker}`].join('\n');
@@ -16,9 +17,22 @@ export function buildFakeAgentImplementResponse(runMarker: string) {
   };
 }
 
-export function buildFakeAgentReviewResponse(runMarker: string) {
+export function buildFakeAgentReviewResponse(runMarker: string, attempt = 1) {
+  if (attempt === 1) {
+    return {
+      summary: `Review requires one deterministic rerun for ${runMarker}.`,
+      findings: [
+        {
+          severity: 'error',
+          message: `Run marker ${runMarker} intentionally triggers one review rerun before ready-to-merge.`,
+          location: { file: FAKE_AGENT_FILE_PATH, line: 3 },
+        },
+      ],
+    };
+  }
+
   return {
-    summary: `Review looks good for ${runMarker}.`,
+    summary: `Review looks good for ${runMarker} after one rerun.`,
     findings: [
       {
         severity: 'warning',
@@ -99,8 +113,9 @@ async function runFakeTurn(
     }
 
     if (options?.outputSchema && prompt.includes('## PR Diff')) {
+      const reviewAttempt = await nextFakeReviewAttempt(baseDeps, state.worktreePath);
       return {
-        finalResponse: JSON.stringify(buildFakeAgentReviewResponse(state.runMarker)),
+        finalResponse: JSON.stringify(buildFakeAgentReviewResponse(state.runMarker, reviewAttempt)),
       };
     }
 
@@ -144,4 +159,22 @@ async function writeDeterministicChange(
 function extractRunMarker(prompt: string): string | undefined {
   const match = prompt.match(/E2E_RUN_MARKER:\s*([^\n\r]+)/);
   return match?.[1]?.trim();
+}
+
+async function nextFakeReviewAttempt(baseDeps: AgentActivityDeps, worktreePath: string): Promise<number> {
+  const statePath = path.join(worktreePath, FAKE_AGENT_REVIEW_STATE_PATH);
+  const currentAttempt = await readFakeReviewAttempt(baseDeps, statePath);
+  const nextAttempt = currentAttempt + 1;
+  await baseDeps.writeFile(statePath, String(nextAttempt), 'utf8');
+  return nextAttempt;
+}
+
+async function readFakeReviewAttempt(baseDeps: AgentActivityDeps, statePath: string): Promise<number> {
+  try {
+    const rawValue = await baseDeps.readFile(statePath, 'utf8');
+    const parsedValue = Number.parseInt(rawValue, 10);
+    return Number.isFinite(parsedValue) ? parsedValue : 0;
+  } catch {
+    return 0;
+  }
 }

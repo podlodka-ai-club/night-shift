@@ -51,6 +51,7 @@ describe('review phase', () => {
         async createPullRequestReview(input) { calls.push(`createPullRequestReview:${input.event}`); if (input.event === 'APPROVE') throw new Error('422 cannot approve your own pull request'); },
         async upsertPullRequestReviewComment(input) { calls.push(`upsertPullRequestReviewComment:${input.path}:${input.line}`); },
         async upsertIssueComment(input) { calls.push(`upsertIssueComment:${input.marker}`); assert.match(input.body, /ready-to-merge/i); },
+        async addIssueLabels() { calls.push('addIssueLabels'); },
         async moveProjectItemStatus(input) { calls.push(`move:${input.statusOptionId}`); },
       },
     );
@@ -60,6 +61,54 @@ describe('review phase', () => {
     assert.deepStrictEqual(calls, [
       'getPullRequestDetails', 'readOpenSpecChangeFiles', 'getPullRequestDiff', 'listPullRequestFiles', 'listPullRequestReviewComments', 'runAgentSequence',
       'setPullRequestReady', 'createPullRequestReview:APPROVE', 'createPullRequestReview:COMMENT', 'upsertPullRequestReviewComment:src/index.ts:1', 'upsertIssueComment:review:summary', `move:${issue.readyToMergeOptionId}`,
+    ]);
+  });
+
+  it('adds the escalation label, upserts escalation artifacts, and blocks the item on a final-iteration escalate verdict', async () => {
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    const calls: string[] = [];
+    const deps: any = {
+      async readOpenSpecChangeFiles() { calls.push('readOpenSpecChangeFiles'); return [{ path: 'proposal.md', content: '# Proposal' }]; },
+      async getPullRequestDetails() { calls.push('getPullRequestDetails'); return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+      async getPullRequestDiff() { calls.push('getPullRequestDiff'); return 'diff --git a/src/index.ts b/src/index.ts'; },
+      async listPullRequestFiles() { calls.push('listPullRequestFiles'); return [{ path: 'src/index.ts', patch: '@@\n+throw new Error();' }]; },
+      async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return []; },
+      async runAgentSequence() {
+        calls.push('runAgentSequence');
+        return { outputs: { [REVIEWER_RESPONSE_OUTPUT_KEY]: { summary: 'Still needs help from a human reviewer.', findings: [{ severity: 'error', message: 'The implementation still violates the approved contract.', location: { file: 'src/index.ts', line: 1 } }] } } };
+      },
+      async setPullRequestReady() { calls.push('setPullRequestReady'); },
+      async createPullRequestReview(input: { event: string }) { calls.push(`createPullRequestReview:${input.event}`); },
+      async upsertPullRequestReviewComment(input: { path: string; line: number }) { calls.push(`upsertPullRequestReviewComment:${input.path}:${input.line}`); },
+      async upsertIssueComment(input: { marker: string; body: string }) {
+        calls.push(`upsertIssueComment:${input.marker}`);
+        assert.match(input.body, /escalate/i);
+      },
+      async moveProjectItemStatus(input: { statusOptionId: string }) { calls.push(`move:${input.statusOptionId}`); },
+      async addIssueLabels(input: { labels: string[] }) { calls.push(`addIssueLabels:${input.labels.join(',')}`); },
+    };
+
+    const result = await runReviewPhase(
+      { issue, worktree, pullRequest, reviewIteration: 2 },
+      deps,
+    );
+
+    assert.strictEqual(result.outcome, 'escalated');
+    assert.strictEqual(result.verdict, 'escalate');
+    assert.deepStrictEqual(calls, [
+      'getPullRequestDetails',
+      'readOpenSpecChangeFiles',
+      'getPullRequestDiff',
+      'listPullRequestFiles',
+      'listPullRequestReviewComments',
+      'runAgentSequence',
+      'createPullRequestReview:COMMENT',
+      'upsertPullRequestReviewComment:src/index.ts:1',
+      'addIssueLabels:night-shift:escalation',
+      'upsertIssueComment:review:escalation',
+      `move:${issue.blockedOptionId}`,
     ]);
   });
 
@@ -82,6 +131,7 @@ describe('review phase', () => {
           async createPullRequestReview() { return undefined; },
           async upsertPullRequestReviewComment() { return undefined; },
           async upsertIssueComment() { return undefined; },
+          async addIssueLabels() { return undefined; },
           async moveProjectItemStatus() { return undefined; },
         },
       ),

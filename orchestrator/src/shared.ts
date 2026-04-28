@@ -278,6 +278,13 @@ export interface UpsertIssueCommentInput {
   body: string;
 }
 
+export interface AddIssueLabelsInput {
+  repoOwner: string;
+  repoName: string;
+  issueNumber: number;
+  labels: string[];
+}
+
 export interface OpenSpecChangeFile {
   path: string;
   content: string;

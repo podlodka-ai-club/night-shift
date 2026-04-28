@@ -1,6 +1,7 @@
 import type { GitHubActivityDeps } from './activity-deps';
 import { buildNightShiftMarker } from './comment-markers';
 import type {
+  AddIssueLabelsInput,
   CreatePullRequestReviewInput,
   CreatedPullRequest,
   GetPullRequestDetailsInput,
@@ -66,6 +67,14 @@ export async function listIssueCommentsActivity(deps: GitHubActivityDeps, input:
   const repoPath = buildRepoApiPath(input.repoOwner, input.repoName);
   const comments = await githubRest<Array<{ id: number; body: string }>>(deps, `${repoPath}/issues/${input.issueNumber}/comments`);
   return comments.map((comment) => ({ id: comment.id, body: comment.body }));
+}
+
+export async function addIssueLabelsActivity(deps: GitHubActivityDeps, input: AddIssueLabelsInput): Promise<void> {
+  const repoPath = buildRepoApiPath(input.repoOwner, input.repoName);
+  await githubRest(deps, `${repoPath}/issues/${input.issueNumber}/labels`, {
+    method: 'POST',
+    body: JSON.stringify({ labels: input.labels }),
+  });
 }
 
 export async function getPullRequestDetailsActivity(

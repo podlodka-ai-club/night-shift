@@ -103,8 +103,13 @@ For each task from Task 1 to Task 9:
 
 ### Task 7
 
-- Status: not started
+- Status: complete
 - Notes:
+  - [Origin: Task 7 | Relevant to: Tasks 8-9] The workflow shell now owns bounded review looping directly: `needs-fix` increments `reviewIteration` and immediately reruns `Implement`, while final-iteration `escalate` blocks on `review_escalation` until `resumeSignal` resets the loop back to `Implement` iteration 1. Future intake automation should reuse these existing signals instead of adding phase-local bypasses.
+  - [Origin: Task 7 | Relevant to: Tasks 8-9] Review escalation now adds the `night-shift:escalation` issue label, upserts `review:escalation`, and preserves retry-safe marker semantics for both review summaries and workflow failures. Later board/pickup automation should surface these markers/labels rather than introducing parallel operator-notification paths.
+  - [Origin: Task 7 | Relevant to: Tasks 8-9] All thrown Specify/Implement/Review failures now funnel through a shared `workflow:phase-failure` blocked-comment path that names the failed phase, root cause, and suggested board reset status (`Backlog` for Specify, `Ready` for Implement/Review). Keep later recovery/intake work aligned with that UX instead of silently failing or inventing new comment formats.
+  - [Origin: Task 7 | Relevant to: Task 8] The fake-agent harness now deterministically exercises one review rerun before `Ready to merge`, and the run-contract accepts either the original happy path or the rerun sequence (`Ready -> In progress -> In review -> Ready -> In progress -> In review -> Ready to merge`). Task 8 intake automation should preserve that no-webhook scope and continue using pickup/manual triggers only.
+  - [Origin: Task 7 | Relevant to: Tasks 8-9] Task 7 verification is green via focused orchestrator/E2E suites, final `make check`, a live fake-agent E2E run on 2026-04-28 against `Mugenor/orchestrator-testing` + Project `Mugenor/1` (`runId=49d4743e`, issue `#48`, PR `#49`, statuses `Ready -> In progress -> In review -> Ready -> In progress -> In review -> Ready to merge`, cleanup succeeded), and a final `review-code` rerun with no material findings. Remaining should-fix cleanup (phase error `cause` consistency + duplicated cause-chain helpers) is captured in `.ai/tech-debt.md`.
 
 ### Task 8
 

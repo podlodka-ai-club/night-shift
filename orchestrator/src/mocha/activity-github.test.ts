@@ -413,6 +413,41 @@ describe('github activities', () => {
     ]);
   });
 
+  it('adds escalation labels to an issue', async () => {
+    const fetchCalls: FetchCall[] = [];
+    const activities = createActivityTestRig({
+      github: { fetch: createFetchSequenceMock([jsonResponse({ labels: [{ name: 'night-shift:escalation' }] })], fetchCalls) },
+    }) as ReturnType<typeof createActivityTestRig> & {
+      addIssueLabels?: (input: { repoOwner: string; repoName: string; issueNumber: number; labels: string[] }) => Promise<void>;
+    };
+
+    assert.strictEqual(typeof activities.addIssueLabels, 'function');
+    if (!activities.addIssueLabels) return;
+
+    await activities.addIssueLabels({
+      repoOwner: 'Mugenor',
+      repoName: 'orchestrator-testing',
+      issueNumber: 7,
+      labels: ['night-shift:escalation'],
+    });
+
+    assert.deepStrictEqual(fetchCalls, [
+      {
+        url: 'https://api.github.com/repos/Mugenor/orchestrator-testing/issues/7/labels',
+        init: {
+          method: 'POST',
+          body: JSON.stringify({ labels: ['night-shift:escalation'] }),
+          headers: {
+            Authorization: 'Bearer test-token',
+            Accept: 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+        },
+      },
+    ]);
+  });
+
   it('upserts a marker comment instead of creating duplicates', async () => {
     const fetchCalls: FetchCall[] = [];
     const { upsertIssueComment } = createActivityTestRig({
