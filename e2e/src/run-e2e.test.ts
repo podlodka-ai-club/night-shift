@@ -1,7 +1,7 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
 import type { E2EConfig } from './config';
-import { FAKE_E2E_QUALITY_GATE_FILE, recordObservedStatus, resolveStartPhase, shouldCleanup } from './run-e2e';
+import { FAKE_E2E_QUALITY_GATE_FILE, recordObservedStatus, resolveSeedStatus, resolveStartPhase, shouldCleanup } from './run-e2e';
 
 function createTestConfig(): E2EConfig {
   return {
@@ -54,6 +54,16 @@ describe('resolveStartPhase', () => {
 
   it('starts real-agent runs at Specify so they do not require a pre-seeded approved spec bundle', () => {
     assert.strictEqual(resolveStartPhase('real'), 'specify');
+  });
+});
+
+describe('resolveSeedStatus', () => {
+  it('seeds fake-agent runs in Ready so shared intake starts Implement', () => {
+    assert.strictEqual(resolveSeedStatus('fake'), 'Ready');
+  });
+
+  it('seeds real-agent runs in Backlog so shared intake starts Specify', () => {
+    assert.strictEqual(resolveSeedStatus('real'), 'Backlog');
   });
 });
 

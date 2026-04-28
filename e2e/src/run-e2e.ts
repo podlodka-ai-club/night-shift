@@ -2,9 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { createActivities, createActivityDependencies } from '../../orchestrator/lib/activities';
+import { createGitHubActivities } from '../../orchestrator/lib/activity-github';
 import type { ActivityRuntimes } from '../../orchestrator/lib/activity-deps';
-import { TASK_QUEUE, type AutomateReadyIssueResult, type SelectedProjectIssue } from '../../orchestrator/lib/shared';
-import { automateTopReadyIssue } from '../../orchestrator/lib/workflows';
+import { TASK_QUEUE, type AutomateReadyIssueResult, type ProjectStatusName, type SelectedProjectIssue } from '../../orchestrator/lib/shared';
+import {
+  buildIssueWorkflowId,
+  createTemporalWorkflowTriggerDeps,
+  handleWorkflowTrigger,
+  loadManualCandidate,
+} from '../../orchestrator/lib/intake';
 import { parseE2EConfig, type E2EConfig } from './config';
 import { createFakeAgentDeps } from './fake-agent';
 import {
@@ -39,6 +45,10 @@ export function resolveStartPhase(agentMode: E2EConfig['agentMode']): 'implement
   return agentMode === 'fake' ? 'implement' : 'specify';
 }
 
+export function resolveSeedStatus(agentMode: E2EConfig['agentMode']): ProjectStatusName {
+  return resolveStartPhase(agentMode) === 'specify' ? 'Backlog' : 'Ready';
+}
+
 export interface E2ERunSummary {
   runId: string;
   workflowId: string;
@@ -54,15 +64,16 @@ export interface E2ERunSummary {
 export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ERunSummary> {
   const config = parseE2EConfig(env);
   const runId = randomUUID().slice(0, 8);
-  const workflowId = `orchestrator-live-e2e-${runId}`;
   const branchPrefix = `orchestrator-e2e-${runId}`;
   const filePathPrefix = `orchestrator-e2e/${runId}`;
   const githubDeps = createGitHubDeps(config.githubToken);
   const startPhase = resolveStartPhase(config.agentMode);
+  const seedStatus = resolveSeedStatus(config.agentMode);
 
   let seededIssue: SeededIssue | undefined;
   let selectedIssue: SelectedProjectIssue | undefined;
   let workflowResult: AutomateReadyIssueResult | undefined;
+  let workflowId: string | undefined;
   let observedStatuses: string[] = [];
   let cleanupReport: CleanupReport | undefined;
   let failure: unknown;
@@ -74,9 +85,10 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
       runId,
       buildSeedIssueTitle(runId),
       buildSeedIssueBody(runId),
-      'Ready',
+      seedStatus,
     );
     selectedIssue = await assertSeededIssueWillBeSelected(githubDeps, config, seededIssue.issueNumber, startPhase);
+    workflowId = buildIssueWorkflowId(selectedIssue.issueNumber);
 
     observedStatuses = [];
     await recordCurrentProjectItemStatus(githubDeps, seededIssue.projectItemId, observedStatuses);
@@ -85,7 +97,7 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
     try {
       const poller = startStatusPoller(githubDeps, seededIssue.projectItemId, observedStatuses);
       try {
-        workflowResult = await runWorkflowOnce(testEnv, config, workflowId, branchPrefix, filePathPrefix, startPhase, selectedIssue);
+        workflowResult = await runWorkflowOnce(testEnv, config, branchPrefix, filePathPrefix, startPhase, selectedIssue);
       } finally {
         observedStatuses = await poller.stop();
         await recordCurrentProjectItemStatus(githubDeps, seededIssue.projectItemId, observedStatuses);
@@ -108,7 +120,7 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
 
   const summary: E2ERunSummary = {
     runId,
-    workflowId,
+    workflowId: workflowId ?? `unresolved-${runId}`,
     agentMode: config.agentMode,
     issueUrl: seededIssue?.issueUrl,
     pullRequestUrl: workflowResult?.pullRequestUrl,
@@ -157,7 +169,6 @@ async function recordCurrentProjectItemStatus(
 async function runWorkflowOnce(
   testEnv: TestWorkflowEnvironment,
   config: E2EConfig,
-  workflowId: string,
   branchPrefix: string,
   filePathPrefix: string,
   startPhase: 'implement' | 'specify',
@@ -183,18 +194,29 @@ async function runWorkflowOnce(
   });
 
   return worker.runUntil(async () => {
-    const handle = await testEnv.client.workflow.start(automateTopReadyIssue, {
-      taskQueue: TASK_QUEUE,
-      workflowId,
-      args: [{
-        projectOwner: config.projectOwner,
-        projectNumber: config.projectNumber,
-        branchPrefix,
-        filePathPrefix,
-        startPhase,
-      }],
-    });
-
+    const workflowInput = {
+      projectOwner: config.projectOwner,
+      projectNumber: config.projectNumber,
+      branchPrefix,
+      filePathPrefix,
+    };
+    const candidate = await loadManualCandidate(
+      createGitHubActivities(runtimes.github),
+      workflowInput,
+      startPhase === 'specify' ? 'Backlog' : 'Ready',
+    );
+    if (!candidate) {
+      throw new Error(`Could not resolve a ${startPhase === 'specify' ? 'Backlog' : 'Ready'} intake candidate for the e2e run.`);
+    }
+    const action = await handleWorkflowTrigger(
+      createTemporalWorkflowTriggerDeps(testEnv.client.workflow),
+      { ...workflowInput, startPhase },
+      candidate,
+    );
+    if (action.type === 'noop') {
+      throw new Error(`E2E intake unexpectedly became a no-op (${action.reason}) for workflow ${action.workflowId}.`);
+    }
+    const handle = testEnv.client.workflow.getHandle(action.workflowId);
     return handle.result();
   });
 }

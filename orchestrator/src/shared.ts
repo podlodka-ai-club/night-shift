@@ -82,6 +82,10 @@ export interface AutomateReadyIssueInput {
   filePathPrefix?: string;
 }
 
+export interface ListProjectIssuesByStatusInput extends AutomateReadyIssueInput {
+  statusNames: ProjectStatusName[];
+}
+
 export interface SelectedProjectIssue {
   projectId: string;
   projectItemId: string;
@@ -107,6 +111,11 @@ export interface SelectedProjectIssue {
   readyStatusName: string;
   inReviewStatusName: string;
   readyToMergeStatusName: string;
+}
+
+export interface ListedProjectIssue extends SelectedProjectIssue {
+  currentStatusName: ProjectStatusName;
+  createdAt: string;
 }
 
 export interface CreateWorktreeForIssueIfNeededInput {

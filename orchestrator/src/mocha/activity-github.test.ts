@@ -89,6 +89,88 @@ describe('github activities', () => {
     assert.deepStrictEqual(JSON.parse(String(fetchCalls[1].init?.body)).variables.itemsAfter, 'cursor-1');
   });
 
+  it('lists matching project issues sorted by createdAt and selects the oldest Ready item', async () => {
+    const newerReady = buildSelectedIssue();
+    const olderReady = {
+      ...buildSelectedIssue(),
+      projectItemId: 'item-5',
+      issueNumber: 5,
+      issueTitle: 'Older ready issue',
+      taskDescription: 'Older ready task',
+      issueUrl: 'https://github.com/Mugenor/orchestrator-testing/issues/5',
+    };
+    const backlogIssue = {
+      ...buildSelectedIssue(),
+      projectItemId: 'item-3',
+      issueNumber: 3,
+      issueTitle: 'Backlog issue',
+      taskDescription: 'Backlog task',
+      issueUrl: 'https://github.com/Mugenor/orchestrator-testing/issues/3',
+    };
+    const fetchCalls: FetchCall[] = [];
+    const { getTopReadyIssue, listProjectIssuesByStatus } = createActivityTestRig({
+      github: {
+        fetch: createFetchSequenceMock([
+          jsonResponse(
+            buildProjectQueryResponse(newerReady, {
+              items: [
+                buildProjectItemNode(newerReady, {
+                  id: 'item-7',
+                  statusName: 'Ready',
+                  createdAt: '2026-04-28T11:00:00.000Z',
+                }),
+                buildProjectItemNode(backlogIssue, {
+                  id: 'item-3',
+                  statusName: 'Backlog',
+                  createdAt: '2026-04-28T09:00:00.000Z',
+                }),
+                buildProjectItemNode(olderReady, {
+                  id: 'item-5',
+                  statusName: 'Ready',
+                  createdAt: '2026-04-28T08:00:00.000Z',
+                }),
+              ],
+            }),
+          ),
+          jsonResponse(
+            buildProjectQueryResponse(newerReady, {
+              items: [
+                buildProjectItemNode(newerReady, {
+                  id: 'item-7',
+                  statusName: 'Ready',
+                  createdAt: '2026-04-28T11:00:00.000Z',
+                }),
+                buildProjectItemNode(olderReady, {
+                  id: 'item-5',
+                  statusName: 'Ready',
+                  createdAt: '2026-04-28T08:00:00.000Z',
+                }),
+              ],
+            }),
+          ),
+        ], fetchCalls),
+      },
+    });
+
+    const listedIssues = await listProjectIssuesByStatus({
+      projectOwner: 'Mugenor',
+      projectNumber: 1,
+      statusNames: ['Backlog', 'Ready'],
+    });
+    const selectedIssue = await getTopReadyIssue({ projectOwner: 'Mugenor', projectNumber: 1 });
+
+    assert.deepStrictEqual(
+      listedIssues.map((issue) => [issue.issueNumber, issue.currentStatusName, issue.createdAt]),
+      [
+        [5, 'Ready', '2026-04-28T08:00:00.000Z'],
+        [3, 'Backlog', '2026-04-28T09:00:00.000Z'],
+        [7, 'Ready', '2026-04-28T11:00:00.000Z'],
+      ],
+    );
+    assert.strictEqual(selectedIssue.issueNumber, 5);
+    assert.strictEqual(fetchCalls.length, 2);
+  });
+
   it('creates missing canonical project status options before selecting the Ready issue', async () => {
     const selectedIssue = buildSelectedIssue();
     const fetchCalls: FetchCall[] = [];

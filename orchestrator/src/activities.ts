@@ -32,6 +32,9 @@ export const {
   ensureProjectStatusOptions,
   getTopBacklogIssue,
   getTopReadyIssue,
+  // Client-side intake uses this activity directly; workflows intentionally keep selection inside
+  // their existing phase-specific `getTopBacklogIssue` / `getTopReadyIssue` activity boundaries.
+  listProjectIssuesByStatus,
   openPullRequest,
   addIssueLabels,
   listIssueComments,

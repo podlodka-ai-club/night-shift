@@ -9,6 +9,8 @@ import {
   DEFAULT_READY_STATUS,
   type AutomateReadyIssueInput,
   type EnsureProjectStatusOptionsInput,
+  type ListedProjectIssue,
+  type ListProjectIssuesByStatusInput,
   type MoveProjectItemStatusInput,
   type ProjectStatusName,
   type ResolvedProjectStatusOptions,
@@ -54,6 +56,7 @@ interface ProjectItemNode {
         title: string;
         body: string;
         url: string;
+        createdAt: string;
         repository: { name: string; owner: { login: string }; defaultBranchRef: null | { name: string } };
       }
     | { __typename: string };
@@ -127,6 +130,7 @@ const PROJECT_FIELDS_FRAGMENT = `
             title
             body
             url
+            createdAt
             repository {
               name
               owner {
@@ -227,6 +231,15 @@ export async function getTopBacklogIssueActivity(
   input: AutomateReadyIssueInput,
 ): Promise<SelectedProjectIssue> {
   return getTopProjectIssueForStatusActivity(deps, input, input.backlogStatusName ?? DEFAULT_BACKLOG_STATUS);
+}
+
+export async function listProjectIssuesByStatusActivity(
+  deps: GitHubActivityDeps,
+  input: ListProjectIssuesByStatusInput,
+): Promise<ListedProjectIssue[]> {
+  const project = await lookupProject(deps, input.projectOwner, input.projectNumber);
+  const statusField = await ensureCanonicalProjectStatusOptions(deps, getProjectStatusField(project));
+  return listProjectIssuesForStatuses(project, statusField, input, input.statusNames);
 }
 
 export async function moveProjectItemStatusActivity(
@@ -408,36 +421,63 @@ function buildResolvedStatusField(statusField: ProjectStatusField): ResolvedStat
   };
 }
 
-function getReadyIssueItem(
-  project: ProjectData,
-  readyStatusName: string,
-  projectOwner: string,
-  projectNumber: number,
-): ReadyProjectItem {
-  const readyItem = project.items.nodes.find(
-    (item): item is ReadyProjectItem => item.fieldValueByName?.name === readyStatusName && isProjectIssueContent(item.content),
-  );
-  if (!readyItem) {
-    throw new Error(`Could not find a Ready issue in GitHub Project ${projectOwner}/${projectNumber}.`);
-  }
-  return readyItem;
-}
-
 async function getTopProjectIssueForStatusActivity(
   deps: GitHubActivityDeps,
   input: AutomateReadyIssueInput,
   targetStatusName: string,
 ): Promise<SelectedProjectIssue> {
+  const issues = await listProjectIssuesByStatusActivity(deps, {
+    ...input,
+    statusNames: [targetStatusName as ProjectStatusName],
+  });
+  const issue = issues[0];
+  if (!issue) {
+    throw new Error(`Could not find a ${targetStatusName} issue in GitHub Project ${input.projectOwner}/${input.projectNumber}.`);
+  }
+  const { currentStatusName: _currentStatusName, createdAt: _createdAt, ...selectedIssue } = issue;
+  return selectedIssue;
+}
+
+function listProjectIssuesForStatuses(
+  project: ProjectData,
+  statusField: ResolvedStatusField,
+  input: AutomateReadyIssueInput,
+  targetStatusNames: readonly ProjectStatusName[],
+): ListedProjectIssue[] {
+  const targetStatuses = new Set(targetStatusNames);
+  return project.items.nodes
+    .filter(
+      (item): item is ReadyProjectItem => {
+        const statusName = item.fieldValueByName?.name;
+        return typeof statusName === 'string' && targetStatuses.has(statusName as ProjectStatusName) && isProjectIssueContent(item.content);
+      },
+    )
+    .sort((left, right) => compareProjectIssueItems(left, right))
+    .map((projectItem) => buildListedProjectIssue(project, statusField, input, projectItem));
+}
+
+function compareProjectIssueItems(left: ReadyProjectItem, right: ReadyProjectItem): number {
+  return left.content.createdAt.localeCompare(right.content.createdAt)
+    || left.content.number - right.content.number;
+}
+
+function buildListedProjectIssue(
+  project: ProjectData,
+  statusField: ResolvedStatusField,
+  input: AutomateReadyIssueInput,
+  projectItem: ReadyProjectItem,
+): ListedProjectIssue {
   const backlogStatusName = input.backlogStatusName ?? DEFAULT_BACKLOG_STATUS;
   const refinementStatusName = input.refinementStatusName ?? DEFAULT_REFINEMENT_STATUS;
   const refinedStatusName = input.refinedStatusName ?? DEFAULT_REFINED_STATUS;
   const readyStatusName = input.readyStatusName ?? DEFAULT_READY_STATUS;
   const inReviewStatusName = input.inReviewStatusName ?? DEFAULT_IN_REVIEW_STATUS;
   const blockedStatusName = input.blockedStatusName ?? DEFAULT_BLOCKED_STATUS;
-  const project = await lookupProject(deps, input.projectOwner, input.projectNumber);
-  const statusField = await ensureCanonicalProjectStatusOptions(deps, getProjectStatusField(project));
-  const projectItem = getProjectIssueItem(project, targetStatusName, input.projectOwner, input.projectNumber);
   const issue = projectItem.content;
+  const currentStatusName = projectItem.fieldValueByName?.name;
+  if (!currentStatusName || !isProjectStatusName(currentStatusName)) {
+    throw new Error(`Could not determine the project status for issue #${issue.number}.`);
+  }
 
   return {
     projectId: project.id,
@@ -464,26 +504,9 @@ async function getTopProjectIssueForStatusActivity(
     readyStatusName,
     inReviewStatusName,
     readyToMergeStatusName: 'Ready to merge',
+    currentStatusName,
+    createdAt: issue.createdAt,
   };
-}
-
-function getProjectIssueItem(
-  project: ProjectData,
-  targetStatusName: string,
-  projectOwner: string,
-  projectNumber: number,
-): ReadyProjectItem {
-  if (targetStatusName === DEFAULT_READY_STATUS) {
-    return getReadyIssueItem(project, targetStatusName, projectOwner, projectNumber);
-  }
-
-  const projectItem = project.items.nodes.find(
-    (item): item is ReadyProjectItem => item.fieldValueByName?.name === targetStatusName && isProjectIssueContent(item.content),
-  );
-  if (!projectItem) {
-    throw new Error(`Could not find a ${targetStatusName} issue in GitHub Project ${projectOwner}/${projectNumber}.`);
-  }
-  return projectItem;
 }
 
 function buildTaskDescription(issueTitle: string, issueBody: string): string {

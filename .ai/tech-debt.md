@@ -3,7 +3,7 @@
 ## From Task 1 review (20260427T221936203486Z)
 
 - `ensureProjectStatusOptions` is exported but not called independently from the workflow — only embedded inside `getTopReadyIssue` and E2E seeding. Later tasks should wire it as an explicit, independently retriable workflow step or pickup entry point.
-- `BLOCKED_REASON_BOARD_SIGNAL_RULES` is defined and frozen but no runtime code consumes it yet. Wire into webhook/signal dispatch logic in Task 2+.
+- ~~`BLOCKED_REASON_BOARD_SIGNAL_RULES` is defined and frozen but no runtime code consumes it yet. Wire into webhook/signal dispatch logic in Task 2+.~~ **Resolved** in Task 8: `resolveWorkflowTriggerAction` in `intake.ts` now consumes the rules table at runtime.
 
 ## From Task 2 review (20260427T231034353018Z)
 
@@ -16,7 +16,7 @@
 ## From Task 3 review (20260428T080019719244Z)
 
 - ~~Review phase is a terminal no-op: `currentPhase` transitions to `'review'` then the workflow returns immediately. Wire the review-phase retry loop when review-phase activities are implemented.~~ **Resolved** in Task 6: review phase now runs the full happy path to Ready to merge.
-- `implementRetry` and `resume` signal handlers are registered but permanently gated off (`const false`). Activate them with their respective phase loops when implement/review retry logic is added.
+- ~~`implementRetry` and `resume` signal handlers are registered but permanently gated off (`const false`). Activate them with their respective phase loops when implement/review retry logic is added.~~ **Resolved** in Tasks 5–7: all signal handlers are now active and gated by `allow*` flags.
 
 ## From Task 4 review (20260428T094730759513Z)
 
@@ -44,3 +44,21 @@
 - `SpecifyPhaseContractError` (`phases/specify/errors.ts`) discards original error cause — constructor accepts no `cause` parameter. Add a `cause` parameter consistent with `ImplementPhaseContractError` and `ReviewPhaseContractError`.
 - `ImplementPhaseContractError` (`phases/implement/errors.ts`) manually assigns `cause` instead of using `super(message, { cause })`. Same pattern as `ReviewPhaseContractError` (already tracked in Task 6 tech-debt). Both should use the ES2022 `Error` cause mechanism.
 - Duplicated `findErrorInCauseChain` / `describeErrorCauseChain` / `describeWorkflowError` helper functions across `workflows.ts`, `review/phase.ts`, `implement/phase.ts`, and `workflow-shell.test.ts`. Extract to a shared utility module to reduce drift risk.
+
+## From Task 8 review (20260428T192303284223Z)
+
+- Webhook bridge/event ingestion is explicitly excluded from task 8. Should be addressed in a future task per the migration map Stage 10.
+- E2E repeated-intake deduplication test: the orchestrator unit/integration tests prove idempotency, but the E2E suite (`run-e2e.test.ts`) lacks a test proving repeated intake for the same issue avoids workflow duplication in the live harness context.
+- `buildManualCandidate` (`intake.ts`) leaves `startPhase` as `undefined` when `currentStatusName` is `In review`. This is correct for the signal path but semantically incomplete. Document explicitly or add a guard if `In review` items should never trigger a start.
+- ~~`buildManualCandidate` has no unit tests. Add tests verifying `Backlog`→specify, `Ready`→implement, `In review`→undefined startPhase mappings.~~ **Resolved** in follow-up: `intake.test.ts` now covers all three `buildManualCandidate` mappings.
+- `parseClientArgs` (`client.ts`) hardcodes 3 of 8 canonical status names (`Backlog`, `Ready`, `In review`) for manual intake. Document why only these are supported or extend when more statuses become relevant.
+- Environment-variable status-name overrides (`client.ts:76-81`) are not validated against `CANONICAL_PROJECT_STATUS_NAMES`. Invalid custom status names are silently accepted and only fail at workflow runtime.
+
+## From Task 8 final review (20260428T194428344120Z)
+
+- ~~`handlePhaseFailure` (`workflows.ts:96-113`) cleanup error can replace the original phase error.~~ **Resolved** in final-final pass: `preserveOriginalPhaseFailure` (workflows.ts:115-121) wraps cleanup in try-catch with empty catch, preserving the original error.
+- ~~`handleWorkflowTrigger` signal path (`intake.ts:117, 128`) does not catch `WorkflowNotFoundError`.~~ **Resolved** in final-final pass: both signal paths (intake.ts:122, 141) now catch `WorkflowNotFoundError` and return noop.
+- Signal handlers (`workflows.ts:120-131`) silently discard signals when guard flags are false. Operators get no feedback. Consider updating `shellState.latestActivity` on discard for observability.
+- `client.ts` top-level error handler (`console.error(err)`) does not unwind the `.cause` chain. Temporal's `WorkflowFailedError` wraps the actual cause; operators see only the outermost message.
+- `buildPhaseFailureComment` (`workflows.ts:418`) suggests `readyStatusName` for review phase failures where a PR already exists. Consider suggesting `inReviewStatusName` for review failures.
+- `CleanupWorktreeInput` and `cleanupWorktree` activity are declared in `shared.ts` and `activity-worktree.ts` but never wired into any phase or workflow. Remove or wire into Task 9 cleanup policy.

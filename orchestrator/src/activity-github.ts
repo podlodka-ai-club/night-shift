@@ -7,7 +7,9 @@ import type {
   EnsureProjectStatusOptionsInput,
   IssueComment,
   IssueCommentInput,
+  ListedProjectIssue,
   ListIssueCommentsInput,
+  ListProjectIssuesByStatusInput,
   MoveProjectItemStatusInput,
   OpenPullRequestInput,
   PullRequestChangedFile,
@@ -39,6 +41,7 @@ import {
   ensureProjectStatusOptionsActivity,
   getTopBacklogIssueActivity,
   getTopReadyIssueActivity,
+  listProjectIssuesByStatusActivity,
   moveProjectItemStatusActivity,
 } from './activity-github-project';
 
@@ -57,6 +60,10 @@ export function createGitHubActivities(deps: GitHubActivityDeps) {
 
     async getTopBacklogIssue(input: AutomateReadyIssueInput): Promise<SelectedProjectIssue> {
       return getTopBacklogIssueActivity(deps, input);
+    },
+
+    async listProjectIssuesByStatus(input: ListProjectIssuesByStatusInput): Promise<ListedProjectIssue[]> {
+      return listProjectIssuesByStatusActivity(deps, input);
     },
 
     async openPullRequest(input: OpenPullRequestInput): Promise<CreatedPullRequest> {

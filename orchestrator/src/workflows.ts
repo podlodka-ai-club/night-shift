@@ -112,6 +112,14 @@ export async function automateTopReadyIssue(
     });
   };
 
+  const preserveOriginalPhaseFailure = async (phase: WorkflowPhase, issue: SelectedProjectIssue, error: unknown) => {
+    try {
+      await handlePhaseFailure(phase, issue, error);
+    } catch {
+      // Best-effort cleanup must not replace the original phase failure.
+    }
+  };
+
   setHandler(getBlockedReasonQuery, () => shellState.blockedReason);
   setHandler(activityProgressSignal, (message) => {
     shellState.latestActivity = message;
@@ -166,7 +174,7 @@ export async function automateTopReadyIssue(
         },
       );
     } catch (error) {
-      await handlePhaseFailure('specify', issue, error);
+      await preserveOriginalPhaseFailure('specify', issue, error);
       throw error;
     }
 
@@ -248,7 +256,7 @@ export async function automateTopReadyIssue(
         },
       );
     } catch (error) {
-      await handlePhaseFailure('implement', issue, error);
+      await preserveOriginalPhaseFailure('implement', issue, error);
       throw error;
     }
 
@@ -303,7 +311,7 @@ export async function automateTopReadyIssue(
         },
       );
     } catch (error) {
-      await handlePhaseFailure('review', issue, error);
+      await preserveOriginalPhaseFailure('review', issue, error);
       throw error;
     }
 

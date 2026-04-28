@@ -113,8 +113,14 @@ For each task from Task 1 to Task 9:
 
 ### Task 8
 
-- Status: not started
+- Status: complete
 - Notes:
+  - [Origin: Task 8 | Relevant to: Task 9] Shared pickup/manual intake now lives in `orchestrator/src/intake.ts`. It owns deterministic per-issue workflow ids (`ticket-<issueNumber>`), `start|signal|noop` trigger resolution from `BLOCKED_REASON_BOARD_SIGNAL_RULES`, pickup candidate merging/sorting, manual candidate mapping, duplicate-start race recovery, and signal-race guards that noop on `WorkflowNotFoundError`.
+  - [Origin: Task 8 | Relevant to: Task 9] GitHub project intake selection now has a generic `listProjectIssuesByStatus` activity that returns issues sorted by `createdAt`; client-side intake uses it directly while workflow phases intentionally keep the narrower `getTopBacklogIssue` / `getTopReadyIssue` boundaries. Preserve that split unless a later task deliberately moves intake into workflow scope.
+  - [Origin: Task 8 | Relevant to: Task 9] `client.ts` is now a manual intake runner rather than a direct random-workflow starter: default mode is `pickup` with a bounded action cap, and retained manual intake supports only `Backlog`, `Ready`, and `In review` because those are the only donor-contract statuses that map to shared start/signal decisions. Webhook support remains explicitly out of scope.
+  - [Origin: Task 8 | Relevant to: Task 9] The E2E harness now drives workflow start through the shared intake path. Fake runs seed `Ready`, real runs seed `Backlog`, and the harness resolves the deterministic workflow id from the selected issue instead of starting a bespoke workflow id directly. Keep future live proofs on the intake path rather than test-only workflow starts.
+  - [Origin: Task 8 | Relevant to: Task 9] Workflow cleanup now preserves original phase failures even when blocked-comment/status cleanup also fails (`preserveOriginalPhaseFailure` in `workflows.ts`), and intake signal races now degrade to noop instead of crashing the pickup tick. Later recovery work should preserve those invariants.
+  - [Origin: Task 8 | Relevant to: Task 9] Task 8 verification is green via focused/new intake suites, final `make check`, a live fake-agent E2E run on 2026-04-28 against `Mugenor/orchestrator-testing` + Project `Mugenor/1` (`runId=ee902473`, issue `#52`, PR `#53`, statuses `Ready -> In progress -> In review -> Ready -> In progress -> In review -> Ready to merge`, cleanup succeeded), and a final `review-code` rerun with no blockers. Remaining low-priority follow-ups (`buildPhaseFailureComment` review suggestion, signal-discard observability, client cause-chain logging, cleanupWorktree dead code) are captured in `.ai/tech-debt.md`.
 
 ### Task 9
 

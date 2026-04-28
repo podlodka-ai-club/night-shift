@@ -201,7 +201,10 @@ export function buildProjectQueryResponse(
   };
 }
 
-export function buildProjectItemNode(issue: SelectedProjectIssue, options?: { id?: string; statusName?: string }): unknown {
+export function buildProjectItemNode(
+  issue: SelectedProjectIssue,
+  options?: { id?: string; statusName?: string; createdAt?: string },
+): unknown {
   return {
     id: options?.id ?? issue.projectItemId,
     fieldValueByName: {
@@ -214,6 +217,7 @@ export function buildProjectItemNode(issue: SelectedProjectIssue, options?: { id
       title: issue.issueTitle,
       body: issue.taskDescription,
       url: issue.issueUrl,
+      createdAt: options?.createdAt ?? '2026-04-28T09:00:00.000Z',
       repository: {
         name: issue.repoName,
         owner: { login: issue.repoOwner },

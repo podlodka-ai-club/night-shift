@@ -1,0 +1,37 @@
+{
+  "artifactPath": null,
+  "previousReviewPath": null,
+  "artifactSlug": "diff-only",
+  "runId": "20260428T192303284223Z",
+  "repoRoot": "/Users/ich776/pocs/agent-orchestrator",
+  "branch": "feat/temporal-simplest-workflow",
+  "requestedScope": "Task 8 deterministic phases migration: pickup/manual intake only (no webhook support). Review shared intake trigger resolution, deterministic per-issue workflow ids, project item createdAt ordering, client/manual path delegation, workflow-level signal-vs-noop behavior, and fake-agent e2e intake-driven start proof. Assume focused suites, make check, and live fake-agent E2E are green; report only remaining material findings.",
+  "extraInstructions": null,
+  "reviewMode": "branch-only",
+  "actualReviewMode": "branch-only",
+  "reviewer": "auggie",
+  "requiredModel": "opus4.6",
+  "reviewStatus": "completed_with_fallback",
+  "reviewLifecycleStatus": "full_review_completed",
+  "fallbackReason": "no external authoritative artifact supplied beyond the task plan",
+  "verification": {
+    "attempted": false,
+    "fixed": 0,
+    "partiallyFixed": 0,
+    "notFixed": 0,
+    "notApplicable": 0
+  },
+  "counts": {
+    "mustFix": 0,
+    "shouldFix": 3,
+    "outOfScope": 3,
+    "rejected": 4
+  },
+  "artifacts": {
+    "runDir": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T192303284223Z",
+    "review": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T192303284223Z/review.md",
+    "meta": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T192303284223Z/meta.json",
+    "techDebt": "/Users/ich776/pocs/agent-orchestrator/.ai/tech-debt.md",
+    "prompt": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T192303284223Z/auggie-review-prompt.md"
+  }
+}

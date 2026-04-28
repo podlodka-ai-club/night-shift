@@ -105,7 +105,29 @@ export function createWorkflowTestRig() {
     }
   }
 
-  return { runWorkflow, runWorkflowWithHandle };
+  async function runWithWorkflowClient<T>(
+    input: WorkflowRunInput,
+    callback: (workflowClient: typeof testEnv.client.workflow) => Promise<T>,
+  ): Promise<T> {
+    const previousExpectedWarnings = currentExpectedWorkerWarnings;
+    currentExpectedWorkerWarnings = input.expectedWorkerWarnings ?? [];
+
+    try {
+      const worker = await Worker.create({
+        connection: testEnv.nativeConnection,
+        taskQueue: TASK_QUEUE,
+        workflowsPath: require.resolve('../workflows'),
+        activities: wrapActivitiesWithExpectedFailures(input.activities, currentExpectedWorkerWarnings),
+      });
+
+      return worker.runUntil(async () => callback(testEnv.client.workflow));
+    } finally {
+      await settleExpectedWarningLogging();
+      currentExpectedWorkerWarnings = previousExpectedWarnings;
+    }
+  }
+
+  return { runWorkflow, runWorkflowWithHandle, runWithWorkflowClient };
 }
 
 function buildWorkflowInput(overrides: Partial<AutomateReadyIssueInput> | undefined): AutomateReadyIssueInput {
