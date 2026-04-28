@@ -15,7 +15,7 @@
 
 ## From Task 3 review (20260428T080019719244Z)
 
-- Review phase is a terminal no-op: `currentPhase` transitions to `'review'` then the workflow returns immediately. Wire the review-phase retry loop when review-phase activities are implemented.
+- ~~Review phase is a terminal no-op: `currentPhase` transitions to `'review'` then the workflow returns immediately. Wire the review-phase retry loop when review-phase activities are implemented.~~ **Resolved** in Task 6: review phase now runs the full happy path to Ready to merge.
 - `implementRetry` and `resume` signal handlers are registered but permanently gated off (`const false`). Activate them with their respective phase loops when implement/review retry logic is added.
 
 ## From Task 4 review (20260428T094730759513Z)
@@ -30,3 +30,11 @@
 - ~~`ImplementPhaseContractError` discards the original error cause when wrapping parse or `AgentContractError` failures. Pass `{ cause }` to preserve stack context for debugging.~~ **Fixed** in follow-up (20260428T134128583856Z): constructor now accepts and assigns `cause`.
 - Partial worktree recovery only checks directory existence (`pathExists`), not git state validity. A worktree left in a corrupted state (e.g., interrupted `git worktree add`) will be returned as valid and produce cryptic downstream failures. Add git state validation or cleanup-on-corruption when cleanup policy is finalized in Task 9.
 - Quality gate logs (up to 4 KB) are embedded verbatim in the implement retry prompt via `buildRetryFailureMessage`. Consider a secondary truncation or summarization step to avoid inflating prompt token usage on noisy build output.
+
+## From Task 6 review (20260428T151352596798Z)
+
+- ~~`createPullRequestReviewComment` (`activity-github-pull-request.ts:236-239`) omits `commit_id` from the POST body. GitHub documents this as required. Without it, new inline comments fail with 422 errors that are silently swallowed by `isUnresolvableInlineCommentError`. Thread `pullRequestDetails.headSha` through `UpsertPullRequestReviewCommentInput` and include it as `commit_id`.~~ **Fixed** in follow-up: `commit_id: input.commitId` now included in the POST body; `UpsertPullRequestReviewCommentInput` includes `commitId` field.
+- ~~`reviewerResponseJsonSchemaSource` (`response.ts:40`) allows empty string for `location.file` while the parser requires `.min(1)`. Add `.min(1)` to the JSON schema source to align with the parser.~~ **Fixed** in follow-up: JSON schema source now uses `zodV3.string().min(1)` for `location.file`.
+- `ReviewPhaseContractError` (`errors.ts`) manually assigns `cause` instead of using `super(message, { cause })`. Update to use the standard ES2022 Error cause mechanism, consistent with the task-5 fix for `ImplementPhaseContractError`.
+- `reviewIteration` (`workflows.ts:297`) is initialized to 0 and never incremented. The escalation path in `decideReviewVerdict` is dead code until Task 7 wires the needs-fix retry loop and increments the iteration counter.
+- ~~Missing `reviewerResponseJsonSchemaSource` alignment test in `phase-response-contracts.test.ts`. The specify and implement schemas have alignment tests; the reviewer schema does not.~~ **Fixed** in follow-up: `phase-response-contracts.test.ts` now includes a ReviewerResponse alignment test.

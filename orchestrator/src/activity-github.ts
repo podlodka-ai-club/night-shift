@@ -1,21 +1,36 @@
 import type {
   AutomateReadyIssueInput,
+  CreatePullRequestReviewInput,
   CreatedPullRequest,
+  GetPullRequestDetailsInput,
   EnsureProjectStatusOptionsInput,
   IssueComment,
   IssueCommentInput,
   ListIssueCommentsInput,
   MoveProjectItemStatusInput,
   OpenPullRequestInput,
+  PullRequestChangedFile,
+  PullRequestDetails,
+  PullRequestReviewComment,
+  PullRequestReviewContextInput,
   ResolvedProjectStatusOptions,
+  SetPullRequestReadyInput,
   SelectedProjectIssue,
+  UpsertPullRequestReviewCommentInput,
   UpsertIssueCommentInput,
 } from './shared';
 import type { GitHubActivityDeps } from './activity-deps';
 import {
   commentOnIssueActivity,
+  createPullRequestReviewActivity,
+  getPullRequestDetailsActivity,
+  getPullRequestDiffActivity,
+  listPullRequestFilesActivity,
+  listPullRequestReviewCommentsActivity,
   listIssueCommentsActivity,
   openPullRequestActivity,
+  setPullRequestReadyActivity,
+  upsertPullRequestReviewCommentActivity,
   upsertIssueCommentActivity,
 } from './activity-github-pull-request';
 import {
@@ -48,6 +63,34 @@ export function createGitHubActivities(deps: GitHubActivityDeps) {
 
     async listIssueComments(input: ListIssueCommentsInput): Promise<IssueComment[]> {
       return listIssueCommentsActivity(deps, input);
+    },
+
+    async getPullRequestDetails(input: GetPullRequestDetailsInput): Promise<PullRequestDetails> {
+      return getPullRequestDetailsActivity(deps, input);
+    },
+
+    async getPullRequestDiff(input: PullRequestReviewContextInput): Promise<string> {
+      return getPullRequestDiffActivity(deps, input);
+    },
+
+    async listPullRequestFiles(input: PullRequestReviewContextInput): Promise<PullRequestChangedFile[]> {
+      return listPullRequestFilesActivity(deps, input);
+    },
+
+    async listPullRequestReviewComments(input: PullRequestReviewContextInput): Promise<PullRequestReviewComment[]> {
+      return listPullRequestReviewCommentsActivity(deps, input);
+    },
+
+    async setPullRequestReady(input: SetPullRequestReadyInput): Promise<void> {
+      return setPullRequestReadyActivity(deps, input);
+    },
+
+    async createPullRequestReview(input: CreatePullRequestReviewInput): Promise<void> {
+      return createPullRequestReviewActivity(deps, input);
+    },
+
+    async upsertPullRequestReviewComment(input: UpsertPullRequestReviewCommentInput): Promise<void> {
+      return upsertPullRequestReviewCommentActivity(deps, input);
     },
 
     async commentOnIssue(input: IssueCommentInput): Promise<void> {

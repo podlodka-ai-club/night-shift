@@ -41,8 +41,9 @@ describe('recordObservedStatus', () => {
     recordObservedStatus(observed, 'In progress');
     recordObservedStatus(observed, 'In progress');
     recordObservedStatus(observed, 'In review');
+    recordObservedStatus(observed, 'Ready to merge');
 
-    assert.deepStrictEqual(observed, ['Ready', 'In progress', 'In review']);
+    assert.deepStrictEqual(observed, ['Ready', 'In progress', 'In review', 'Ready to merge']);
   });
 });
 

@@ -114,6 +114,7 @@ export function buildSelectedIssue(): SelectedProjectIssue {
     readyOptionId: 'ready-option',
     inProgressOptionId: 'progress-option',
     inReviewOptionId: 'review-option',
+    readyToMergeOptionId: 'ready-to-merge-option',
     blockedOptionId: 'blocked-option',
     issueNumber: 7,
     issueTitle: 'Create a dummy PR',
@@ -127,6 +128,7 @@ export function buildSelectedIssue(): SelectedProjectIssue {
     refinedStatusName: 'Refined',
     readyStatusName: 'Ready',
     inReviewStatusName: 'In review',
+    readyToMergeStatusName: 'Ready to merge',
   };
 }
 

@@ -1,7 +1,7 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
 import { implementResponseJsonSchemaSource, implementResponseSchema, parseImplementResponse } from '../phases/implement/response';
-import { parseReviewerResponse } from '../phases/review/response';
+import { parseReviewerResponse, reviewerResponseJsonSchemaSource, reviewerResponseSchema } from '../phases/review/response';
 import { parseSpecifyResponse, specifyResponseJsonSchemaSource, specifyResponseSchema } from '../phases/specify/response';
 
 describe('phase response contracts', () => {
@@ -197,6 +197,19 @@ describe('phase response contracts', () => {
         }),
         /invalid value|error|warning/i,
       );
+    });
+
+    it('keeps the parser and json-schema source aligned on representative cases', () => {
+      const cases: Array<{ label: string; input: unknown }> = [
+        { label: 'valid response', input: { summary: 'Looks good.', findings: [{ severity: 'warning', message: 'note', location: { file: 'src/index.ts', line: 1 } }] } },
+        { label: 'empty location file', input: { summary: 'Bad.', findings: [{ severity: 'error', message: 'missing path', location: { file: '', line: 1 } }] } },
+      ];
+
+      for (const testCase of cases) {
+        const parseResult = reviewerResponseSchema.safeParse(testCase.input);
+        const jsonSourceResult = reviewerResponseJsonSchemaSource.safeParse(testCase.input);
+        assert.strictEqual(parseResult.success, jsonSourceResult.success, testCase.label);
+      }
     });
   });
 });

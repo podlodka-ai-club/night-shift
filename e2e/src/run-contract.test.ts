@@ -19,9 +19,9 @@ describe('run contract helpers', () => {
 
   it('accepts an observed status sequence that includes the required progression', () => {
     assert.doesNotThrow(() => {
-      assertObservedStatusSequence(['Ready', 'In progress', 'In review']);
+      assertObservedStatusSequence(['Ready', 'In progress', 'In review', 'Ready to merge']);
     });
-    assert.deepStrictEqual(REQUIRED_STATUS_SEQUENCE, ['Ready', 'In progress', 'In review']);
+    assert.deepStrictEqual(REQUIRED_STATUS_SEQUENCE, ['Ready', 'In progress', 'In review', 'Ready to merge']);
   });
 
   it('accepts richer donor-compatible board lifecycles around the current ready flow', () => {

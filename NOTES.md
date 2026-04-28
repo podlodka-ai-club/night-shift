@@ -93,8 +93,13 @@ For each task from Task 1 to Task 9:
 
 ### Task 6
 
-- Status: not started
+- Status: complete
 - Notes:
+  - [Origin: Task 6 | Relevant to: Tasks 7-8] The real Review slice now lives under `orchestrator/src/phases/review/` with a dedicated prompt builder, response parser, verdict helper, summary rendering, and `ReviewPhaseContractError`. Extend those boundaries for needs-fix/escalation work instead of re-embedding review semantics in `workflows.ts`.
+  - [Origin: Task 6 | Relevant to: Tasks 7-8] Review now owns PR-head context gathering (`getPullRequestDetails`, diff/files/comment fetches), APPROVE→COMMENT fallback for self-review/API restrictions, `review:summary` issue-comment upserts, and best-effort inline review comments keyed by `review:finding`. Task 7 should reuse those helpers while wiring the retry/escalation loop.
+  - [Origin: Task 6 | Relevant to: Tasks 7-8] `SelectedProjectIssue` now carries `readyToMergeOptionId`/`readyToMergeStatusName`, and the shell happy path is pinned as `Ready -> In progress -> In review -> Ready to merge`. Preserve that canonical end-state in later workflow/E2E assertions unless a later task intentionally broadens the board lifecycle.
+  - [Origin: Task 6 | Relevant to: Tasks 7-8] The fake-agent harness now emits a deterministic Review response and the live GitHub harness validates `review:summary` artifacts plus `Ready to merge`. The seeding helper also tolerates GitHub/project automation already adding the issue to the project by resolving the existing project item id instead of failing the run.
+  - [Origin: Task 6 | Relevant to: Tasks 7-8] Task 6 verification is green via focused orchestrator/E2E suites, final `make check`, a live fake-agent E2E run on 2026-04-28 against `Mugenor/orchestrator-testing` + Project `Mugenor/1` (`runId=9fd97d77`, issue `#43`, PR `#44`, statuses `Ready -> In progress -> In review -> Ready to merge`, cleanup succeeded), and a final `review-code` rerun with no material findings. One minor should-fix (`ReviewPhaseContractError` cause assignment consistency) remains captured in `.ai/tech-debt.md`.
 
 ### Task 7
 

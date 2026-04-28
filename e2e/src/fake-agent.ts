@@ -16,6 +16,19 @@ export function buildFakeAgentImplementResponse(runMarker: string) {
   };
 }
 
+export function buildFakeAgentReviewResponse(runMarker: string) {
+  return {
+    summary: `Review looks good for ${runMarker}.`,
+    findings: [
+      {
+        severity: 'warning',
+        message: `Run marker ${runMarker} is embedded in the fake E2E artifact for traceability.`,
+        location: { file: FAKE_AGENT_FILE_PATH, line: 3 },
+      },
+    ],
+  };
+}
+
 export function buildFakeAgentSpecifyResponse() {
   return {
     files: [
@@ -82,6 +95,12 @@ async function runFakeTurn(
     if (options?.outputSchema && prompt.includes('OpenSpec proposal')) {
       return {
         finalResponse: JSON.stringify(buildFakeAgentSpecifyResponse()),
+      };
+    }
+
+    if (options?.outputSchema && prompt.includes('## PR Diff')) {
+      return {
+        finalResponse: JSON.stringify(buildFakeAgentReviewResponse(state.runMarker)),
       };
     }
 

@@ -12,6 +12,7 @@ import {
 } from './shared';
 import type * as activities from './activities';
 import { runImplementPhase } from './phases/implement/phase';
+import { runReviewPhase } from './phases/review/phase';
 import { runSpecifyPhase } from './phases/specify/phase';
 import type {
   AgentStep,
@@ -35,6 +36,13 @@ const {
   commitAndPush,
   openPullRequest,
   listIssueComments,
+  getPullRequestDetails,
+  getPullRequestDiff,
+  listPullRequestFiles,
+  listPullRequestReviewComments,
+  setPullRequestReady,
+  createPullRequestReview,
+  upsertPullRequestReviewComment,
   upsertIssueComment,
   moveProjectItemStatus,
 } = proxyActivities<typeof activities>({
@@ -233,7 +241,39 @@ export async function automateTopReadyIssue(
     if (!implementResult.pullRequest) {
       throw new Error('Implement phase did not return a pull request.');
     }
-    return buildAutomateReadyIssueResult(issue, implementResult.pullRequest);
+
+    const reviewResult = await runReviewPhase(
+      {
+        issue,
+        worktree: implementResult.worktree,
+        pullRequest: implementResult.pullRequest,
+        reviewIteration: shellState.reviewIteration,
+        onProgress: (message) => {
+          shellState.latestActivity = message;
+          syncCurrentDetails();
+        },
+      },
+      {
+        readOpenSpecChangeFiles,
+        getPullRequestDetails,
+        getPullRequestDiff,
+        listPullRequestFiles,
+        listPullRequestReviewComments,
+        runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+        setPullRequestReady,
+        createPullRequestReview,
+        upsertPullRequestReviewComment,
+        upsertIssueComment,
+        moveProjectItemStatus,
+      },
+    );
+
+    if (reviewResult.outcome !== 'ready_to_merge') {
+      throw new Error(`Review verdict ${reviewResult.verdict} is deferred until Task 7 workflow wiring.`);
+    }
+    shellState.latestActivity = `Review approved PR #${implementResult.pullRequest.pullRequestNumber}; issue moved to Ready to merge.`;
+    syncCurrentDetails();
+    return buildAutomateReadyIssueResult(issue, implementResult.pullRequest, issue.readyToMergeStatusName);
   }
 
   throw new Error('Workflow exited the implement phase unexpectedly.');
@@ -266,6 +306,7 @@ function createWorkflowShellState(input: AutomateReadyIssueInput): WorkflowShell
 function buildAutomateReadyIssueResult(
   issue: SelectedProjectIssue,
   pullRequest: CreatedPullRequest,
+  targetStatusName: string,
 ): AutomateReadyIssueResult {
   return {
     issueNumber: issue.issueNumber,
@@ -275,7 +316,7 @@ function buildAutomateReadyIssueResult(
     pullRequestUrl: pullRequest.pullRequestUrl,
     branchName: pullRequest.branchName,
     filePath: pullRequest.filePath,
-    targetStatusName: issue.inReviewStatusName,
+    targetStatusName,
   };
 }
 

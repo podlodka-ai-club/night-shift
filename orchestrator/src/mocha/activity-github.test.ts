@@ -308,6 +308,79 @@ describe('github activities', () => {
     );
   });
 
+  it('reads pull request review context from GitHub', async () => {
+    const fetchCalls: FetchCall[] = [];
+    const { getPullRequestDetails, getPullRequestDiff, listPullRequestFiles, listPullRequestReviewComments } = createActivityTestRig({
+      github: { fetch: createFetchSequenceMock([
+        jsonResponse({ number: 42, html_url: 'https://github.com/Mugenor/orchestrator-testing/pull/42', draft: true, head: { sha: 'abc123' } }),
+        new Response('diff --git a/src/index.ts b/src/index.ts', { status: 200 }),
+        jsonResponse([{ filename: 'src/index.ts', patch: '@@\n+export const ok = true;' }]),
+        jsonResponse([{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }]),
+      ], fetchCalls) },
+    });
+
+    assert.deepStrictEqual(await getPullRequestDetails({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), {
+      pullRequestNumber: 42,
+      pullRequestUrl: 'https://github.com/Mugenor/orchestrator-testing/pull/42',
+      headSha: 'abc123',
+      isDraft: true,
+    });
+    assert.strictEqual(await getPullRequestDiff({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), 'diff --git a/src/index.ts b/src/index.ts');
+    assert.deepStrictEqual(await listPullRequestFiles({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]);
+    assert.deepStrictEqual(await listPullRequestReviewComments({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), [{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }]);
+    assert.strictEqual(String(fetchCalls[1].init?.headers && (fetchCalls[1].init?.headers as Record<string, string>).Accept), 'application/vnd.github.v3.diff');
+  });
+
+  it('marks a draft pull request ready and upserts inline review comments', async () => {
+    const fetchCalls: FetchCall[] = [];
+    const { setPullRequestReady, upsertPullRequestReviewComment } = createActivityTestRig({
+      github: { fetch: createFetchSequenceMock([
+        jsonResponse({ number: 42, html_url: 'https://github.com/Mugenor/orchestrator-testing/pull/42', draft: true, node_id: 'PR_node_42' }),
+        jsonResponse({ data: { markPullRequestReadyForReview: { pullRequest: { id: 'PR_node_42' } } } }),
+        jsonResponse([]),
+        jsonResponse({ id: 55 }),
+      ], fetchCalls) },
+    });
+
+    await setPullRequestReady({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42, ready: true });
+    await upsertPullRequestReviewComment({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42, commitId: 'abc123', marker: 'review:finding', body: 'New body', path: 'src/index.ts', line: 1 });
+
+    assert.match(String(fetchCalls[1].init?.body), /markPullRequestReadyForReview/);
+    assert.deepStrictEqual(
+      fetchCalls.slice(2).map((call) => ({ url: call.url, method: call.init?.method ?? 'GET' })),
+      [
+        { url: 'https://api.github.com/repos/Mugenor/orchestrator-testing/pulls/42/comments?per_page=100', method: 'GET' },
+        { url: 'https://api.github.com/repos/Mugenor/orchestrator-testing/pulls/42/comments', method: 'POST' },
+      ],
+    );
+    assert.deepStrictEqual(JSON.parse(String(fetchCalls[3].init?.body)), { body: '<!-- night-shift:review:finding -->\nNew body', commit_id: 'abc123', path: 'src/index.ts', line: 1, side: 'RIGHT' });
+  });
+
+  it('submits a top-level pull request review', async () => {
+    const fetchCalls: FetchCall[] = [];
+    const { createPullRequestReview } = createActivityTestRig({
+      github: { fetch: createFetchSequenceMock([jsonResponse({ id: 99 })], fetchCalls) },
+    });
+
+    await createPullRequestReview({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42, event: 'APPROVE', body: 'LGTM' });
+
+    assert.deepStrictEqual(fetchCalls, [
+      {
+        url: 'https://api.github.com/repos/Mugenor/orchestrator-testing/pulls/42/reviews',
+        init: {
+          method: 'POST',
+          body: JSON.stringify({ event: 'APPROVE', body: 'LGTM' }),
+          headers: {
+            Authorization: 'Bearer test-token',
+            Accept: 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+        },
+      },
+    ]);
+  });
+
   it('comments on the issue with the opened pull request URL', async () => {
     const fetchCalls: FetchCall[] = [];
     const { commentOnIssue } = createActivityTestRig({

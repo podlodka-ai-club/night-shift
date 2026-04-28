@@ -6,6 +6,7 @@ import { describe, it } from 'mocha';
 import type { AgentActivityDeps, CommandResult } from '../../orchestrator/lib/activity-deps';
 import {
   buildFakeAgentImplementResponse,
+    buildFakeAgentReviewResponse,
   buildFakeAgentSpecifyResponse,
   createFakeAgentDeps,
 } from './fake-agent';
@@ -37,6 +38,18 @@ describe('createFakeAgentDeps', () => {
     });
 
     assert.deepStrictEqual(JSON.parse(response.finalResponse), buildFakeAgentSpecifyResponse());
+  });
+
+  it('returns a deterministic Review response for the review structured turn', async () => {
+    const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
+    const deps = createFakeAgentDeps(buildBaseDeps());
+    const thread = deps.createCodexThread(worktreePath);
+
+    const response = await thread.run('Review the PR.\n## PR Diff\n```diff\n+ok\n```\nE2E_RUN_MARKER: run-123', {
+      outputSchema: { type: 'object' },
+    });
+
+    assert.deepStrictEqual(JSON.parse(response.finalResponse), buildFakeAgentReviewResponse('run-123'));
   });
 });
 

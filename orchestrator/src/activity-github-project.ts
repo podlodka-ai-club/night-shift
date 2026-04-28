@@ -449,6 +449,7 @@ async function getTopProjectIssueForStatusActivity(
     readyOptionId: getRequiredStatusOption(statusField, readyStatusName).id,
     inProgressOptionId: getRequiredStatusOption(statusField, DEFAULT_IN_PROGRESS_STATUS).id,
     inReviewOptionId: getRequiredStatusOption(statusField, inReviewStatusName).id,
+    readyToMergeOptionId: getRequiredStatusOption(statusField, 'Ready to merge').id,
     blockedOptionId: getRequiredStatusOption(statusField, blockedStatusName).id,
     issueNumber: issue.number,
     issueTitle: issue.title,
@@ -462,6 +463,7 @@ async function getTopProjectIssueForStatusActivity(
     refinedStatusName,
     readyStatusName,
     inReviewStatusName,
+    readyToMergeStatusName: 'Ready to merge',
   };
 }
 

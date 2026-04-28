@@ -23,6 +23,7 @@ describe('workflow phased shell', function () {
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
     const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let runAgentSequenceCallCount = 0;
 
     const result = await runWorkflowWithHandle<AutomateReadyIssueResult>(
       {
@@ -40,19 +41,33 @@ describe('workflow phased shell', function () {
             ];
           },
           async runAgentSequence() {
-            calls.push('runAgentSequence');
+            runAgentSequenceCallCount += 1;
+            calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+            if (runAgentSequenceCallCount === 1) {
+              return {
+                threadId: 'thread-123',
+                completedStepIds: ['implement'],
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implements the approved spec bundle.',
+                    followUps: [],
+                  },
+                },
+                finalResponse: JSON.stringify({ implemented: true }),
+              };
+            }
             return {
-              threadId: 'thread-123',
-              completedStepIds: ['implement'],
+              threadId: 'review-thread-123',
+              completedStepIds: ['review'],
               outputs: {
-                implementResponse: {
-                  filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
-                  commitMessage: 'feat: implement the approved spec',
-                  summary: 'Implements the approved spec bundle.',
-                  followUps: [],
+                reviewerResponse: {
+                  summary: 'Looks ready to merge.',
+                  findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: 'src/index.ts', line: 1 } }],
                 },
               },
-              finalResponse: JSON.stringify({ implemented: true }),
+              finalResponse: JSON.stringify({ reviewed: true }),
             };
           },
           async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },
@@ -60,6 +75,13 @@ describe('workflow phased shell', function () {
           async commitAndPush() { calls.push('commitAndPush'); },
           async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
           async upsertIssueComment() { calls.push('upsertIssueComment'); },
+          async getPullRequestDetails() { calls.push('getPullRequestDetails'); return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+          async getPullRequestDiff() { calls.push('getPullRequestDiff'); return 'diff --git a/src/index.ts b/src/index.ts'; },
+          async listPullRequestFiles() { calls.push('listPullRequestFiles'); return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
+          async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return []; },
+          async setPullRequestReady() { calls.push('setPullRequestReady'); },
+          async createPullRequestReview() { calls.push('createPullRequestReview'); },
+          async upsertPullRequestReviewComment() { calls.push('upsertPullRequestReviewComment'); },
           async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
         },
       },
@@ -73,11 +95,21 @@ describe('workflow phased shell', function () {
       'listIssueComments',
       'readOpenSpecChangeFiles',
       'moveProjectItemStatus',
-      'runAgentSequence',
+      'runAgentSequence:1',
       'writeRepositoryFiles',
       'runQualityGate',
       'commitAndPush',
       'openPullRequest',
+      'upsertIssueComment',
+      'moveProjectItemStatus',
+      'getPullRequestDetails',
+      'readOpenSpecChangeFiles',
+      'getPullRequestDiff',
+      'listPullRequestFiles',
+      'listPullRequestReviewComments',
+      'runAgentSequence:2',
+      'createPullRequestReview',
+      'upsertPullRequestReviewComment',
       'upsertIssueComment',
       'moveProjectItemStatus',
     ]);
@@ -129,18 +161,32 @@ describe('workflow phased shell', function () {
               };
             }
 
-            return {
-              threadId: 'implement-thread-123',
-              completedStepIds: ['implement'],
-              outputs: {
-                implementResponse: {
-                  filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
-                  commitMessage: 'feat: implement the approved spec',
-                  summary: 'Implements the approved spec bundle.',
-                  followUps: [],
+            if (runAgentSequenceCallCount === 2) {
+              return {
+                threadId: 'implement-thread-123',
+                completedStepIds: ['implement'],
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implements the approved spec bundle.',
+                    followUps: [],
+                  },
                 },
-              },
-              finalResponse: JSON.stringify({ implemented: true }),
+                finalResponse: JSON.stringify({ implemented: true }),
+              };
+            }
+
+            return {
+              threadId: 'review-thread-123',
+              completedStepIds: ['review'],
+              outputs: {
+                reviewerResponse: {
+                  summary: 'Looks ready to merge.',
+                  findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: 'src/index.ts', line: 1 } }],
+                },
+              } as any,
+              finalResponse: JSON.stringify({ reviewed: true }),
             };
           },
           async writeOpenSpecChangeFiles() { calls.push('writeOpenSpecChangeFiles'); },
@@ -150,6 +196,13 @@ describe('workflow phased shell', function () {
           async commitAndPush() { calls.push('commitAndPush'); },
           async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
           async upsertIssueComment() { calls.push('upsertIssueComment'); },
+          async getPullRequestDetails() { calls.push('getPullRequestDetails'); return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+          async getPullRequestDiff() { calls.push('getPullRequestDiff'); return 'diff --git a/src/index.ts b/src/index.ts'; },
+          async listPullRequestFiles() { calls.push('listPullRequestFiles'); return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
+          async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return []; },
+          async setPullRequestReady() { calls.push('setPullRequestReady'); },
+          async createPullRequestReview() { calls.push('createPullRequestReview'); },
+          async upsertPullRequestReviewComment() { calls.push('upsertPullRequestReviewComment'); },
           async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
         },
       },
@@ -164,13 +217,14 @@ describe('workflow phased shell', function () {
     );
 
     assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
-    assert.strictEqual(runAgentSequenceCallCount, 2);
+    assert.strictEqual(runAgentSequenceCallCount, 3);
     assert.ok(calls.includes('getTopBacklogIssue'));
     assert.ok(calls.includes('writeOpenSpecChangeFiles'));
     assert.ok(calls.includes('validateOpenSpecChange'));
     assert.ok(calls.includes('upsertIssueComment'));
     assert.ok(calls.includes('writeRepositoryFiles'));
     assert.ok(calls.includes('runQualityGate'));
+    assert.ok(calls.includes('createPullRequestReview'));
     assert.ok(!calls.includes('getTopReadyIssue'));
   });
 
@@ -239,18 +293,32 @@ describe('workflow phased shell', function () {
               };
             }
 
-            return {
-              threadId: 'implement-thread-123',
-              completedStepIds: ['implement'],
-              outputs: {
-                implementResponse: {
-                  filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
-                  commitMessage: 'feat: implement the approved spec',
-                  summary: 'Implements the approved spec bundle.',
-                  followUps: [],
+            if (runAgentSequenceCallCount === 3) {
+              return {
+                threadId: 'implement-thread-123',
+                completedStepIds: ['implement'],
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implements the approved spec bundle.',
+                    followUps: [],
+                  },
                 },
-              },
-              finalResponse: JSON.stringify({ implemented: true }),
+                finalResponse: JSON.stringify({ implemented: true }),
+              };
+            }
+
+            return {
+              threadId: 'review-thread-123',
+              completedStepIds: ['review'],
+              outputs: {
+                reviewerResponse: {
+                  summary: 'Looks ready to merge.',
+                  findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: 'src/index.ts', line: 1 } }],
+                },
+              } as any,
+              finalResponse: JSON.stringify({ reviewed: true }),
             };
           },
           async writeOpenSpecChangeFiles() { calls.push('writeOpenSpecChangeFiles'); },
@@ -260,6 +328,13 @@ describe('workflow phased shell', function () {
           async commitAndPush() { calls.push('commitAndPush'); },
           async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
           async upsertIssueComment() { calls.push('upsertIssueComment'); },
+          async getPullRequestDetails() { calls.push('getPullRequestDetails'); return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+          async getPullRequestDiff() { calls.push('getPullRequestDiff'); return 'diff --git a/src/index.ts b/src/index.ts'; },
+          async listPullRequestFiles() { calls.push('listPullRequestFiles'); return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
+          async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return []; },
+          async setPullRequestReady() { calls.push('setPullRequestReady'); },
+          async createPullRequestReview() { calls.push('createPullRequestReview'); },
+          async upsertPullRequestReviewComment() { calls.push('upsertPullRequestReviewComment'); },
           async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
         },
       },
@@ -275,11 +350,12 @@ describe('workflow phased shell', function () {
     );
 
     assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
-    assert.strictEqual(runAgentSequenceCallCount, 3);
+    assert.strictEqual(runAgentSequenceCallCount, 4);
     assert.strictEqual(calls.filter((call) => call === 'getTopBacklogIssue').length, 1);
-    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment').length, 3);
+    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment').length, 4);
     assert.ok(calls.includes('writeRepositoryFiles'));
     assert.ok(calls.includes('runQualityGate'));
+    assert.ok(calls.includes('createPullRequestReview'));
     assert.ok(!calls.includes('getTopReadyIssue'));
   });
 
@@ -386,18 +462,31 @@ describe('workflow phased shell', function () {
           async runAgentSequence() {
             runAgentSequenceCallCount += 1;
             calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+            if (runAgentSequenceCallCount === 1) {
+              return {
+                threadId: 'implement-thread-123',
+                completedStepIds: ['implement'],
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implements the approved spec bundle.',
+                    followUps: [],
+                  },
+                } as any,
+                finalResponse: JSON.stringify({ implemented: true }),
+              };
+            }
             return {
-              threadId: 'implement-thread-123',
-              completedStepIds: ['implement'],
+              threadId: 'review-thread-123',
+              completedStepIds: ['review'],
               outputs: {
-                implementResponse: {
-                  filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
-                  commitMessage: 'feat: implement the approved spec',
-                  summary: 'Implements the approved spec bundle.',
-                  followUps: [],
+                reviewerResponse: {
+                  summary: 'Looks ready to merge.',
+                  findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: 'src/index.ts', line: 1 } }],
                 },
               } as any,
-              finalResponse: JSON.stringify({ implemented: true }),
+              finalResponse: JSON.stringify({ reviewed: true }),
             };
           },
           async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },
@@ -405,6 +494,13 @@ describe('workflow phased shell', function () {
           async commitAndPush() { calls.push('commitAndPush'); },
           async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
           async upsertIssueComment() { calls.push('upsertIssueComment'); },
+          async getPullRequestDetails() { calls.push('getPullRequestDetails'); return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+          async getPullRequestDiff() { calls.push('getPullRequestDiff'); return 'diff --git a/src/index.ts b/src/index.ts'; },
+          async listPullRequestFiles() { calls.push('listPullRequestFiles'); return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
+          async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return []; },
+          async setPullRequestReady() { calls.push('setPullRequestReady'); },
+          async createPullRequestReview() { calls.push('createPullRequestReview'); },
+          async upsertPullRequestReviewComment() { calls.push('upsertPullRequestReviewComment'); },
           async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
         },
       },
@@ -419,9 +515,10 @@ describe('workflow phased shell', function () {
 
     assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
     assert.strictEqual(getTopReadyIssueCallCount, 1);
-    assert.strictEqual(runAgentSequenceCallCount, 1);
+    assert.strictEqual(runAgentSequenceCallCount, 2);
     assert.ok(calls.includes('upsertIssueComment'));
     assert.ok(calls.includes('openPullRequest'));
+    assert.ok(calls.includes('createPullRequestReview'));
   });
 
   it('renders current details with phase, blocked reason, and recent activity', () => {

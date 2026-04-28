@@ -2,6 +2,7 @@ import type { ZodTypeAny as ZodTypeAnyV3 } from 'zod/v3';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { changeMetadataJsonSchemaSource, changeMetadataSchema } from './change-metadata';
 import { implementResponseJsonSchemaSource, implementResponseSchema } from './phases/implement/response';
+import { reviewerResponseJsonSchemaSource, reviewerResponseSchema } from './phases/review/response';
 import { specifyResponseJsonSchemaSource, specifyResponseSchema } from './phases/specify/response';
 import type { AgentSchemaId } from './shared';
 
@@ -12,6 +13,7 @@ type RegisteredSchema = {
 const schemaRegistry = {
   'change-metadata-v1': changeMetadataSchema,
   'implement-response-v1': implementResponseSchema,
+  'reviewer-response-v1': reviewerResponseSchema,
   'specify-response-v1': specifyResponseSchema,
 } satisfies Record<AgentSchemaId, RegisteredSchema>;
 
@@ -21,6 +23,10 @@ const jsonSchemaRegistry: Record<AgentSchemaId, unknown> = {
     $refStrategy: 'none',
   }),
   'implement-response-v1': zodToJsonSchema(implementResponseJsonSchemaSource as ZodTypeAnyV3, {
+    target: 'openAi',
+    $refStrategy: 'none',
+  }),
+  'reviewer-response-v1': zodToJsonSchema(reviewerResponseJsonSchemaSource as ZodTypeAnyV3, {
     target: 'openAi',
     $refStrategy: 'none',
   }),

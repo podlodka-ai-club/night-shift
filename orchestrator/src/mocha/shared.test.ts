@@ -18,6 +18,7 @@ describe('shared deterministic-phase contracts', () => {
       'Ready',
       'In progress',
       'In review',
+      'Ready to merge',
     ]);
   });
 

@@ -32,6 +32,15 @@ interface AddProjectItemMutationData {
   };
 }
 
+interface ExistingProjectItemQueryData {
+  node: null | {
+    __typename: 'Issue';
+    projectItems: {
+      nodes: Array<{ id: string; project: { id: string } }>;
+    };
+  };
+}
+
 interface ProjectItemStatusQueryData {
   node: null | {
     __typename: 'ProjectV2Item';
@@ -80,7 +89,8 @@ interface FakeArtifactsSnapshot {
   commitMessage: string;
   pullRequestTitle: string;
   pullRequestBody: string;
-  summaryCommentBody: string;
+  implementSummaryCommentBody: string;
+  reviewSummaryCommentBody: string;
   fileText: string;
 }
 
@@ -103,6 +113,22 @@ const ADD_PROJECT_ITEM_MUTATION = `
     addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
       item {
         id
+      }
+    }
+  }
+`;
+
+const EXISTING_PROJECT_ITEM_QUERY = `
+  query ExistingProjectItem($contentId: ID!) {
+    node(id: $contentId) {
+      __typename
+      ... on Issue {
+        projectItems(first: 20) {
+          nodes {
+            id
+            project { id }
+          }
+        }
       }
     }
   }
@@ -345,6 +371,10 @@ function assertCommonWorkflowArtifacts(
     comments.some((comment) => comment.body.includes(buildNightShiftMarker('implement:summary'))),
     'Expected the seeded issue to contain the implement summary marker comment.',
   );
+  assert.ok(
+    comments.some((comment) => comment.body.includes(buildNightShiftMarker('review:summary'))),
+    'Expected the seeded issue to contain the review summary marker comment.',
+  );
 }
 
 async function assertFakeAgentArtifacts(
@@ -367,11 +397,12 @@ async function assertFakeAgentArtifacts(
     commitMessage: commit.commit.message,
     pullRequestTitle: pullRequest.title,
     pullRequestBody: pullRequest.body,
-    summaryCommentBody: getRequiredSummaryComment(commentsForMarker('implement:summary', await getIssueComments(deps, selectedIssue.repoOwner, selectedIssue.repoName, selectedIssue.issueNumber))),
+    implementSummaryCommentBody: getRequiredSummaryComment(commentsForMarker('implement:summary', await getIssueComments(deps, selectedIssue.repoOwner, selectedIssue.repoName, selectedIssue.issueNumber))),
+    reviewSummaryCommentBody: getRequiredSummaryComment(commentsForMarker('review:summary', await getIssueComments(deps, selectedIssue.repoOwner, selectedIssue.repoName, selectedIssue.issueNumber))),
     fileText,
   };
 
-  assert.deepStrictEqual(actualArtifacts, getExpectedFakeArtifacts(seededIssue.runId, selectedIssue));
+  assert.deepStrictEqual(actualArtifacts, getExpectedFakeArtifacts(seededIssue.runId, selectedIssue, workflowResult.pullRequestUrl));
 }
 
 function assertRealAgentArtifacts(
@@ -392,7 +423,7 @@ function assertRealAgentArtifacts(
   );
 }
 
-function getExpectedFakeArtifacts(runId: string, selectedIssue: SelectedProjectIssue): FakeArtifactsSnapshot {
+function getExpectedFakeArtifacts(runId: string, selectedIssue: SelectedProjectIssue, pullRequestUrl: string): FakeArtifactsSnapshot {
   return {
     commitMessage: `test: fake e2e change for ${runId}`,
     pullRequestTitle: `#${selectedIssue.issueNumber}: ${selectedIssue.issueTitle}`,
@@ -407,12 +438,21 @@ function getExpectedFakeArtifacts(runId: string, selectedIssue: SelectedProjectI
       '## Follow-ups',
       `- Run marker: ${runId}`,
     ].join('\n'),
-    summaryCommentBody: [
+    implementSummaryCommentBody: [
       `## Implement summary for #${selectedIssue.issueNumber}`,
       `- Change: \`openspec/changes/${buildSelectedIssueChangeName(selectedIssue)}\``,
       `- Summary: Deterministic fake e2e change for ${runId}.`,
       `- Follow-ups: Run marker: ${runId}`,
       '- Quality gate: make check passed',
+    ].join('\n'),
+    reviewSummaryCommentBody: [
+      `## Review summary for #${selectedIssue.issueNumber}`,
+      `- Change: \`openspec/changes/${buildSelectedIssueChangeName(selectedIssue)}\``,
+      `- Pull request: ${pullRequestUrl}`,
+      '- Verdict: ready-to-merge',
+      '- Iteration: 1',
+      `- Summary: Review looks good for ${runId}.`,
+      `- Findings: warning: Run marker ${runId} is embedded in the fake E2E artifact for traceability. (${FAKE_AGENT_FILE_PATH}:3)`,
     ].join('\n'),
     fileText: buildFakeAgentFileText(runId),
   };
@@ -447,11 +487,28 @@ async function addIssueToProject(
   projectId: string,
   issueNodeId: string,
 ): Promise<string> {
-  const data = await githubGraphql<AddProjectItemMutationData>(deps, ADD_PROJECT_ITEM_MUTATION, {
-    projectId,
-    contentId: issueNodeId,
-  });
-  return data.addProjectV2ItemById.item.id;
+  try {
+    const data = await githubGraphql<AddProjectItemMutationData>(deps, ADD_PROJECT_ITEM_MUTATION, {
+      projectId,
+      contentId: issueNodeId,
+    });
+    return data.addProjectV2ItemById.item.id;
+  } catch (error) {
+    if (!isDuplicateProjectItemError(error)) throw error;
+    const existingItemId = await findExistingProjectItemId(deps, projectId, issueNodeId);
+    if (existingItemId) return existingItemId;
+    throw error;
+  }
+}
+
+async function findExistingProjectItemId(
+  deps: GitHubClientDeps,
+  projectId: string,
+  issueNodeId: string,
+): Promise<string | undefined> {
+  const data = await githubGraphql<ExistingProjectItemQueryData>(deps, EXISTING_PROJECT_ITEM_QUERY, { contentId: issueNodeId });
+  if (data.node?.__typename !== 'Issue') return undefined;
+  return data.node.projectItems.nodes.find((item) => item.project.id === projectId)?.id;
 }
 
 async function updateProjectItemStatus(
@@ -531,6 +588,10 @@ async function attemptCleanupStep(
 
 function isGitHubNotFoundError(error: unknown): boolean {
   return error instanceof Error && error.message.includes('GitHub request failed (404 Not Found)');
+}
+
+function isDuplicateProjectItemError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('Content already exists in this project');
 }
 
 async function githubRestAllowEmptySuccess(

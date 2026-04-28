@@ -14,6 +14,7 @@ export type ProjectStatusName = (typeof CANONICAL_PROJECT_STATUS_NAMES)[number];
 export const DEFAULT_READY_STATUS = 'Ready';
 export const DEFAULT_IN_PROGRESS_STATUS = 'In progress';
 export const DEFAULT_IN_REVIEW_STATUS = 'In review';
+export const DEFAULT_READY_TO_MERGE_STATUS = 'Ready to merge';
 export const DEFAULT_BLOCKED_STATUS = 'Blocked';
 export const DEFAULT_BACKLOG_STATUS = 'Backlog';
 export const DEFAULT_REFINEMENT_STATUS = 'Refinement';
@@ -25,6 +26,7 @@ export const READY_ISSUE_STATUS_SEQUENCE = [
   DEFAULT_READY_STATUS,
   DEFAULT_IN_PROGRESS_STATUS,
   DEFAULT_IN_REVIEW_STATUS,
+  DEFAULT_READY_TO_MERGE_STATUS,
 ] as const;
 
 export const WORKFLOW_BLOCKED_REASONS = [
@@ -90,6 +92,7 @@ export interface SelectedProjectIssue {
   readyOptionId: string;
   inProgressOptionId: string;
   inReviewOptionId: string;
+  readyToMergeOptionId: string;
   blockedOptionId: string;
   issueNumber: number;
   issueTitle: string;
@@ -103,6 +106,7 @@ export interface SelectedProjectIssue {
   refinedStatusName: string;
   readyStatusName: string;
   inReviewStatusName: string;
+  readyToMergeStatusName: string;
 }
 
 export interface CreateWorktreeForIssueIfNeededInput {
@@ -141,12 +145,18 @@ export interface AgentStructuredStep {
 }
 
 export type AgentStep = AgentPromptStep | AgentStructuredStep;
-export type AgentSchemaId = 'change-metadata-v1' | 'specify-response-v1' | 'implement-response-v1';
+export type AgentSchemaId = 'change-metadata-v1' | 'specify-response-v1' | 'implement-response-v1' | 'reviewer-response-v1';
 
 export const SPECIFY_RESPONSE_OUTPUT_KEY = 'specifyResponse';
 export const IMPLEMENT_RESPONSE_OUTPUT_KEY = 'implementResponse';
+export const REVIEWER_RESPONSE_OUTPUT_KEY = 'reviewerResponse';
 export const CHANGE_METADATA_OUTPUT_KEY = 'changeMetadata';
-export const AGENT_OUTPUT_KEYS = [SPECIFY_RESPONSE_OUTPUT_KEY, IMPLEMENT_RESPONSE_OUTPUT_KEY, CHANGE_METADATA_OUTPUT_KEY] as const;
+export const AGENT_OUTPUT_KEYS = [
+  SPECIFY_RESPONSE_OUTPUT_KEY,
+  IMPLEMENT_RESPONSE_OUTPUT_KEY,
+  REVIEWER_RESPONSE_OUTPUT_KEY,
+  CHANGE_METADATA_OUTPUT_KEY,
+] as const;
 
 export type AgentOutputKey = (typeof AGENT_OUTPUT_KEYS)[number];
 
@@ -194,6 +204,52 @@ export interface CreatedPullRequest {
   filePath: string;
   pullRequestNumber: number;
   pullRequestUrl: string;
+}
+
+export interface PullRequestDetails {
+  pullRequestNumber: number;
+  pullRequestUrl: string;
+  headSha: string;
+  isDraft: boolean;
+}
+
+export interface PullRequestChangedFile {
+  path: string;
+  patch?: string;
+}
+
+export interface PullRequestReviewComment {
+  id: number;
+  body: string;
+  path: string;
+  line?: number;
+}
+
+export interface GetPullRequestDetailsInput {
+  repoOwner: string;
+  repoName: string;
+  pullRequestNumber: number;
+}
+
+export type PullRequestReviewContextInput = GetPullRequestDetailsInput;
+
+export interface SetPullRequestReadyInput extends GetPullRequestDetailsInput {
+  ready: boolean;
+}
+
+export type PullRequestReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+
+export interface CreatePullRequestReviewInput extends GetPullRequestDetailsInput {
+  event: PullRequestReviewEvent;
+  body: string;
+}
+
+export interface UpsertPullRequestReviewCommentInput extends GetPullRequestDetailsInput {
+  commitId: string;
+  marker: string;
+  body: string;
+  path: string;
+  line: number;
 }
 
 export interface IssueCommentInput {

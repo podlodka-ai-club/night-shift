@@ -3,7 +3,7 @@ import { toErrorMessage } from './activity-deps';
 
 const GITHUB_API_URL = 'https://api.github.com';
 const GITHUB_GRAPHQL_URL = `${GITHUB_API_URL}/graphql`;
-const GITHUB_JSON_HEADERS = {
+export const GITHUB_JSON_HEADERS = {
   Accept: 'application/vnd.github+json',
   'Content-Type': 'application/json',
   'X-GitHub-Api-Version': '2022-11-28',
@@ -24,6 +24,18 @@ export async function githubRest<T = unknown>(deps: GitHubClientDeps, path: stri
     headers: { Authorization: `Bearer ${deps.getGitHubToken()}`, ...GITHUB_JSON_HEADERS, ...init.headers },
   });
   return parseGitHubResponse<T>(response);
+}
+
+export async function githubRestText(deps: GitHubClientDeps, path: string, init: RequestInit = {}): Promise<string> {
+  const response = await deps.fetch(`${GITHUB_API_URL}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${deps.getGitHubToken()}`, 'X-GitHub-Api-Version': GITHUB_JSON_HEADERS['X-GitHub-Api-Version'], ...init.headers },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`GitHub request failed (${response.status} ${response.statusText}): ${text}`);
+  }
+  return text;
 }
 
 export async function githubGraphql<T>(

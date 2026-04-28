@@ -52,6 +52,7 @@ function createSelectedIssue(issueUrl: string): SelectedProjectIssue {
     readyOptionId: 'ready',
     inProgressOptionId: 'in-progress',
     inReviewOptionId: 'in-review',
+    readyToMergeOptionId: 'ready-to-merge',
     blockedOptionId: 'blocked',
     issueNumber: 77,
     issueTitle: 'Seeded issue',
@@ -65,6 +66,7 @@ function createSelectedIssue(issueUrl: string): SelectedProjectIssue {
     refinedStatusName: 'Refined',
     readyStatusName: 'Ready',
     inReviewStatusName: 'In review',
+    readyToMergeStatusName: 'Ready to merge',
   };
 }
 
@@ -77,7 +79,7 @@ function createWorkflowResult(overrides: Partial<AutomateReadyIssueResult> = {})
     pullRequestUrl: `https://github.com/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/pull/12`,
     branchName: 'orchestrator-e2e-run-123/issue-77',
     filePath: 'orchestrator-e2e/run-123/issue-77.md',
-    targetStatusName: 'In review',
+    targetStatusName: 'Ready to merge',
     ...overrides,
   };
 }
@@ -169,6 +171,18 @@ describe('assertWorkflowArtifacts', () => {
             `- Summary: Deterministic fake e2e change for ${TEST_RUN_ID}.`,
             `- Follow-ups: Run marker: ${TEST_RUN_ID}`,
             '- Quality gate: make check passed',
+          ].join('\n'),
+        },
+        {
+          body: [
+            buildNightShiftMarker('review:summary'),
+            '## Review summary for #77',
+            '- Change: `openspec/changes/77-seeded-issue`',
+            `- Pull request: https://github.com/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/pull/12`,
+            '- Verdict: ready-to-merge',
+            '- Iteration: 1',
+            `- Summary: Review looks good for ${TEST_RUN_ID}.`,
+            `- Findings: warning: Run marker ${TEST_RUN_ID} is embedded in the fake E2E artifact for traceability. (${FAKE_AGENT_FILE_PATH}:3)`,
           ].join('\n'),
         },
       ],
@@ -284,6 +298,49 @@ describe('seedIssueInProject', () => {
       'GRAPHQL UserProjectIssueSelection',
       'GRAPHQL UpdateStatusField',
       'GRAPHQL AddProjectItem',
+      'GRAPHQL MoveProjectItemStatus',
+    ]);
+  });
+
+  it('reuses the existing project item when GitHub reports the issue is already on the project', async () => {
+    const config = createTestConfig();
+    const { deps, calls } = createGitHubDepsStub({
+      [`REST POST /repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues`]: {
+        number: 77,
+        html_url: `https://github.com/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues/77`,
+        node_id: 'I_issue_77',
+      },
+      GRAPHQL_UserProjectIssueSelection: createProjectSelectionResponse(),
+      GRAPHQL_AddProjectItem: rawResponse(200, JSON.stringify({ errors: [{ message: 'Content already exists in this project' }] })),
+      GRAPHQL_ExistingProjectItem: {
+        node: {
+          __typename: 'Issue',
+          projectItems: {
+            nodes: [{ id: 'PVT_item', project: { id: 'PVT_project' } }],
+          },
+        },
+      },
+      GRAPHQL_MoveProjectItemStatus: {
+        updateProjectV2ItemFieldValue: {
+          projectV2Item: { id: 'PVT_item' },
+        },
+      },
+    });
+
+    const seededIssue = await seedIssueInProject(
+      deps,
+      config,
+      TEST_RUN_ID,
+      `[e2e] orchestrator live test ${TEST_RUN_ID}`,
+      `E2E_RUN_MARKER: ${TEST_RUN_ID}`,
+    );
+
+    assert.deepStrictEqual(seededIssue, createSeededIssue());
+    assert.deepStrictEqual(calls, [
+      `REST POST /repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues`,
+      'GRAPHQL UserProjectIssueSelection',
+      'GRAPHQL AddProjectItem',
+      'GRAPHQL ExistingProjectItem',
       'GRAPHQL MoveProjectItemStatus',
     ]);
   });

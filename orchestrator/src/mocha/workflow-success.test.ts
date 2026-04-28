@@ -36,7 +36,7 @@ describe('workflow success paths', function () {
       pullRequestUrl: pullRequest.pullRequestUrl,
       branchName: pullRequest.branchName,
       filePath: pullRequest.filePath,
-      targetStatusName: issue.inReviewStatusName,
+      targetStatusName: issue.readyToMergeStatusName,
     });
     assert.deepStrictEqual(calls, [
       'getTopReadyIssue',
@@ -44,17 +44,28 @@ describe('workflow success paths', function () {
       'listIssueComments:7',
       'readOpenSpecChangeFiles:7',
       'moveProjectItemStatus:item-1',
-      'runAgentSequence:7',
+      'runAgentSequence:1',
       'writeRepositoryFiles:7',
       'runQualityGate:7',
       'commitAndPush:orchestrator/issue-7',
       'openPullRequest:orchestrator/issue-7',
-      'upsertIssueComment:7',
+      'upsertIssueComment:implement:summary',
+      'moveProjectItemStatus:item-1',
+      'getPullRequestDetails:42',
+      'readOpenSpecChangeFiles:7',
+      'getPullRequestDiff:42',
+      'listPullRequestFiles:42',
+      'listPullRequestReviewComments:42',
+      'runAgentSequence:2',
+      'createPullRequestReview:APPROVE',
+      'upsertPullRequestReviewComment:src/index.ts:1',
+      'upsertIssueComment:review:summary',
       'moveProjectItemStatus:item-1',
     ]);
     assert.deepStrictEqual(statusUpdates, [
       buildStatusUpdateInput(issue, issue.inProgressOptionId),
       buildStatusUpdateInput(issue, issue.inReviewOptionId),
+      buildStatusUpdateInput(issue, issue.readyToMergeOptionId),
     ]);
   });
 
@@ -89,10 +100,12 @@ describe('workflow success paths', function () {
     assert.strictEqual(openPullRequestAttempts, 2);
     assert.strictEqual(calls.filter((call) => call === 'commitAndPush:orchestrator/issue-7').length, 1);
     assert.strictEqual(calls.filter((call) => call === 'openPullRequest:orchestrator/issue-7').length, 2);
-    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment:7').length, 1);
+    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment:implement:summary').length, 1);
+    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment:review:summary').length, 1);
     assert.deepStrictEqual(statusUpdates, [
       buildStatusUpdateInput(issue, issue.inProgressOptionId),
       buildStatusUpdateInput(issue, issue.inReviewOptionId),
+      buildStatusUpdateInput(issue, issue.readyToMergeOptionId),
     ]);
   });
 
@@ -123,26 +136,28 @@ describe('workflow success paths', function () {
     });
 
     assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
-    assert.strictEqual(upsertIssueCommentAttempts, 2);
+    assert.strictEqual(upsertIssueCommentAttempts, 3);
     assert.strictEqual(calls.filter((call) => call === 'openPullRequest:orchestrator/issue-7').length, 1);
-    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment:7').length, 2);
+    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment:implement:summary').length, 2);
+    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment:review:summary').length, 1);
     assert.deepStrictEqual(statusUpdates, [
       buildStatusUpdateInput(issue, issue.inProgressOptionId),
       buildStatusUpdateInput(issue, issue.inReviewOptionId),
+      buildStatusUpdateInput(issue, issue.readyToMergeOptionId),
     ]);
   });
 
-  it('retries the final In review status update without reopening the pull request or rewriting the summary', async () => {
+  it('retries the final Ready to merge status update without reopening the pull request or rewriting summaries', async () => {
     const calls: string[] = [];
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
     const pullRequest = buildExpectedCreatedPullRequest(worktree);
     const statusUpdates: MoveProjectItemStatusInput[] = [];
-    let inReviewStatusAttempts = 0;
+    let readyToMergeStatusAttempts = 0;
 
     const result = await runWorkflow({
       workflowId: 'automate-ready-issue-status-retry-test',
-      expectedWorkerWarnings: [/transient in-review status failure/],
+      expectedWorkerWarnings: [/transient ready-to-merge status failure/],
       activities: createImplementSuccessActivities({
         issue,
         worktree,
@@ -150,10 +165,10 @@ describe('workflow success paths', function () {
         calls,
         statusUpdates,
         moveProjectItemStatus: async (input) => {
-          if (input.statusOptionId === issue.inReviewOptionId) {
-            inReviewStatusAttempts += 1;
-            if (inReviewStatusAttempts === 1) {
-              throw new Error('transient in-review status failure');
+          if (input.statusOptionId === issue.readyToMergeOptionId) {
+            readyToMergeStatusAttempts += 1;
+            if (readyToMergeStatusAttempts === 1) {
+              throw new Error('transient ready-to-merge status failure');
             }
           }
         },
@@ -161,13 +176,15 @@ describe('workflow success paths', function () {
     });
 
     assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
-    assert.strictEqual(inReviewStatusAttempts, 2);
+    assert.strictEqual(readyToMergeStatusAttempts, 2);
     assert.strictEqual(calls.filter((call) => call === 'openPullRequest:orchestrator/issue-7').length, 1);
-    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment:7').length, 1);
+    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment:implement:summary').length, 1);
+    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment:review:summary').length, 1);
     assert.deepStrictEqual(statusUpdates, [
       buildStatusUpdateInput(issue, issue.inProgressOptionId),
       buildStatusUpdateInput(issue, issue.inReviewOptionId),
-      buildStatusUpdateInput(issue, issue.inReviewOptionId),
+      buildStatusUpdateInput(issue, issue.readyToMergeOptionId),
+      buildStatusUpdateInput(issue, issue.readyToMergeOptionId),
     ]);
   });
 });
@@ -191,6 +208,8 @@ function createImplementSuccessActivities({
   upsertIssueComment?: (input: any) => Promise<void>;
   moveProjectItemStatus?: (input: MoveProjectItemStatusInput) => Promise<void>;
 }) {
+  let runAgentSequenceCallCount = 0;
+
   return {
     async getTopReadyIssue() {
       calls.push('getTopReadyIssue');
@@ -212,30 +231,52 @@ function createImplementSuccessActivities({
       ];
     },
     async runAgentSequence(input: any) {
-      calls.push('runAgentSequence:7');
+      runAgentSequenceCallCount += 1;
+      calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
       assert.strictEqual(input.worktree.issueNumber, 7);
       assert.strictEqual(input.steps.length, 1);
+
+      if (runAgentSequenceCallCount === 1) {
+        assert.deepStrictEqual(input.steps.map((step: any) => ({
+          id: step.id,
+          kind: step.kind,
+          resultKey: step.resultKey,
+          schemaId: step.schemaId,
+        })), [{ id: 'implement', kind: 'structured', resultKey: 'implementResponse', schemaId: 'implement-response-v1' }]);
+        assert.match(input.steps[0].prompt, /proposal\.md/);
+        assert.match(input.steps[0].prompt, /tasks\.md/);
+        return {
+          threadId: 'thread-123',
+          completedStepIds: ['implement'],
+          outputs: {
+            implementResponse: {
+              filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+              commitMessage: 'feat: implement the approved spec',
+              summary: 'Implements the approved spec bundle.',
+              followUps: [],
+            },
+          },
+          finalResponse: JSON.stringify({ implemented: true }),
+        };
+      }
+
       assert.deepStrictEqual(input.steps.map((step: any) => ({
         id: step.id,
         kind: step.kind,
         resultKey: step.resultKey,
         schemaId: step.schemaId,
-      })), [{ id: 'implement', kind: 'structured', resultKey: 'implementResponse', schemaId: 'implement-response-v1' }]);
-      assert.match(input.steps[0].prompt, /proposal\.md/);
-      assert.match(input.steps[0].prompt, /tasks\.md/);
-
+      })), [{ id: 'review', kind: 'structured', resultKey: 'reviewerResponse', schemaId: 'reviewer-response-v1' }]);
+      assert.match(input.steps[0].prompt, /## PR Diff/);
       return {
-        threadId: 'thread-123',
-        completedStepIds: ['implement'],
+        threadId: 'thread-review-123',
+        completedStepIds: ['review'],
         outputs: {
-          implementResponse: {
-            filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
-            commitMessage: 'feat: implement the approved spec',
-            summary: 'Implements the approved spec bundle.',
-            followUps: [],
+          reviewerResponse: {
+            summary: 'Looks ready to merge with one note.',
+            findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: 'src/index.ts', line: 1 } }],
           },
         },
-        finalResponse: JSON.stringify({ implemented: true }),
+        finalResponse: JSON.stringify({ reviewed: true }),
       };
     },
     async writeRepositoryFiles(input: any) {
@@ -257,10 +298,38 @@ function createImplementSuccessActivities({
       assert.match(input.body, /Implements the approved spec bundle\./);
       return openPullRequest ? openPullRequest(input) : pullRequest;
     },
+    async getPullRequestDetails(input: any) {
+      calls.push(`getPullRequestDetails:${input.pullRequestNumber}`);
+      return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false };
+    },
+    async getPullRequestDiff(input: any) {
+      calls.push(`getPullRequestDiff:${input.pullRequestNumber}`);
+      return ['diff --git a/src/index.ts b/src/index.ts', '--- /dev/null', '+++ b/src/index.ts', '@@', '+export const ok = true;'].join('\n');
+    },
+    async listPullRequestFiles(input: any) {
+      calls.push(`listPullRequestFiles:${input.pullRequestNumber}`);
+      return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }];
+    },
+    async listPullRequestReviewComments(input: any) {
+      calls.push(`listPullRequestReviewComments:${input.pullRequestNumber}`);
+      return [];
+    },
+    async setPullRequestReady() {
+      calls.push('setPullRequestReady');
+    },
+    async createPullRequestReview(input: any) {
+      calls.push(`createPullRequestReview:${input.event}`);
+    },
+    async upsertPullRequestReviewComment(input: any) {
+      calls.push(`upsertPullRequestReviewComment:${input.path}:${input.line}`);
+    },
     async upsertIssueComment(input: any) {
-      calls.push(`upsertIssueComment:${input.issueNumber}`);
-      assert.strictEqual(input.marker, 'implement:summary');
-      assert.match(input.body, /Implements the approved spec bundle\./);
+      calls.push(`upsertIssueComment:${input.marker}`);
+      if (input.marker === 'implement:summary') {
+        assert.match(input.body, /Implements the approved spec bundle\./);
+      } else {
+        assert.match(input.body, /ready-to-merge/i);
+      }
       if (upsertIssueComment) {
         await upsertIssueComment(input);
       }

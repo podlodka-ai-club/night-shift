@@ -37,10 +37,10 @@ export const reviewerResponseJsonSchemaSource = zodV3.object({
     severity: zodV3.enum(['error', 'warning']),
     message: zodV3.string().min(1),
     location: zodV3.object({
-      file: zodV3.string(),
-      line: zodV3.number().int().positive().nullable(),
-    }).nullable(),
-    specRef: zodV3.string().nullable(),
+      file: zodV3.string().min(1),
+      line: zodV3.number().int().positive().nullable().optional(),
+    }).nullable().optional(),
+    specRef: zodV3.string().nullable().optional(),
   })),
 });
 
