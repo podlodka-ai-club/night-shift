@@ -50,8 +50,14 @@ For each task from Task 1 to Task 9:
 
 ### Task 2
 
-- Status: not started
+- Status: complete
 - Notes:
+  - [Origin: Task 2 | Relevant to: Tasks 3-9] The provider/runtime seam now centers on `AgentSession` plus `createCodexAgentAdapter(...)` in `orchestrator/src/activity-deps.ts`, and structured-output repair/checkpoint logic lives in `orchestrator/src/activity-agent-turn.ts`. Later phase work should build on these seams instead of extending `runAgentSequence` inline.
+  - [Origin: Task 2 | Relevant to: Tasks 3-7] Phase-local response contracts now exist in `orchestrator/src/phases/{specify,implement,review}/response.ts`, with donor-compatible path/shape validation and zod-v3 json-schema sources kept aligned with the runtime validators by tests.
+  - [Origin: Task 2 | Relevant to: Tasks 3-7] Pending structured-step completions are now re-validated against their schema during heartbeat resume before they are finalized. Later structured outputs should preserve JSON-safe shapes or add explicit normalization on resume if they introduce richer runtime types.
+  - [Origin: Task 2 | Relevant to: Tasks 3-9] The current Ready-path `change-metadata` caller now runs through the adapter-backed `runStructuredAgentTurn(...)` helper without changing outward workflow behavior. Reuse that helper pattern when Specify/Implement/Review become real workflow phases.
+  - [Origin: Task 2 | Relevant to: Tasks 3-9] Local verification is green via `make check`, `npm --workspace e2e exec -- tsc --noEmit`, and three clean `review-code` iterations.
+  - [Origin: Task 2 | Relevant to: Tasks 3-9] The prescribed real-agent smoke succeeded on 2026-04-28 against `Mugenor/orchestrator-testing` + Project `Mugenor/1` under the `Mugenor` GitHub auth context (`runId=3a8be06c`, observed statuses `Ready -> In progress -> In review`, PR/comment/status artifacts verified, cleanup succeeded with no failures). Use this same auth context/target when later tasks require live GitHub validation.
 
 ### Task 3
 

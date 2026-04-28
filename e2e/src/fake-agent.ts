@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { AgentActivityDeps, AgentThread, AgentTurnResult } from '../../orchestrator/lib/activity-deps';
+import type { AgentActivityDeps, AgentSession, AgentTurnOptions, AgentTurnResult } from '../../orchestrator/lib/activity-deps';
 
 export const FAKE_AGENT_FILE_PATH = 'e2e/fake-agent-output.md';
 
@@ -33,7 +33,7 @@ function createThreadState(id: string, worktreePath: string): FakeAgentThreadSta
   return { id, worktreePath, runMarker: 'unknown', turnCount: 0 };
 }
 
-function createThread(baseDeps: AgentActivityDeps, state: FakeAgentThreadState): AgentThread {
+function createThread(baseDeps: AgentActivityDeps, state: FakeAgentThreadState): AgentSession {
   return {
     id: state.id,
     run: async (prompt, options) => runFakeTurn(baseDeps, state, prompt, options),
@@ -44,7 +44,7 @@ async function runFakeTurn(
   baseDeps: AgentActivityDeps,
   state: FakeAgentThreadState,
   prompt: string,
-  options?: { outputSchema?: unknown; signal?: AbortSignal },
+  options?: AgentTurnOptions,
 ): Promise<AgentTurnResult> {
   state.turnCount += 1;
   const promptMarker = extractRunMarker(prompt);

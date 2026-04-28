@@ -17,13 +17,30 @@ export interface CommandResult {
   exitCode: number;
 }
 
-export interface AgentTurnResult {
-  finalResponse: string;
+export interface AgentProgressEvent {
+  type: string;
+  payload: unknown;
 }
 
-export interface AgentThread {
+export interface AgentTurnOptions {
+  outputSchema?: unknown;
+  signal?: AbortSignal;
+  onEvent?: (event: AgentProgressEvent) => void;
+}
+
+export interface AgentTurnResult {
+  finalResponse: string;
+  events?: AgentProgressEvent[];
+}
+
+export interface AgentSession {
   readonly id: string | null;
-  run: (prompt: string, options?: { outputSchema?: unknown; signal?: AbortSignal }) => Promise<AgentTurnResult>;
+  run: (prompt: string, options?: AgentTurnOptions) => Promise<AgentTurnResult>;
+}
+
+export interface AgentAdapter {
+  createSession: (worktreePath: string) => AgentSession;
+  resumeSession: (worktreePath: string, threadId: string) => AgentSession;
 }
 
 export interface GitHubClientDeps {
@@ -47,8 +64,8 @@ export interface ClockDeps {
 }
 
 export interface AgentThreadDeps {
-  createCodexThread: (worktreePath: string) => AgentThread;
-  resumeCodexThread: (worktreePath: string, threadId: string) => AgentThread;
+  createCodexThread: (worktreePath: string) => AgentSession;
+  resumeCodexThread: (worktreePath: string, threadId: string) => AgentSession;
   getCancellationSignal: () => AbortSignal | undefined;
 }
 
@@ -86,12 +103,12 @@ export function createActivityDependencies(): ActivityDependencies {
     execFile: defaultExecFile,
     now: () => Date.now(),
     createCodexThread: (worktreePath) =>
-      createLazyCodexThread('startThread', async () => {
+      createLazyCodexSession('startThread', async () => {
         const { Codex } = await loadCodexSdk();
         return new Codex().startThread(buildCodexThreadOptions(worktreePath));
       }),
     resumeCodexThread: (worktreePath, threadId) =>
-      createLazyCodexThread('resumeThread', async () => {
+      createLazyCodexSession('resumeThread', async () => {
         const { Codex } = await loadCodexSdk();
         return new Codex().resumeThread(threadId, buildCodexThreadOptions(worktreePath));
       }),
@@ -178,7 +195,14 @@ function buildCodexThreadOptions(worktreePath: string) {
   };
 }
 
-function createLazyCodexThread(factoryName: 'startThread' | 'resumeThread', factory: () => Promise<unknown>): AgentThread {
+export function createCodexAgentAdapter(deps: Pick<AgentThreadDeps, 'createCodexThread' | 'resumeCodexThread'>): AgentAdapter {
+  return {
+    createSession: (worktreePath) => deps.createCodexThread(worktreePath),
+    resumeSession: (worktreePath, threadId) => deps.resumeCodexThread(worktreePath, threadId),
+  };
+}
+
+export function createLazyCodexSession(factoryName: 'startThread' | 'resumeThread', factory: () => Promise<unknown>): AgentSession {
   let resolvedThread: { id: unknown; run: (prompt: string, options?: unknown) => Promise<unknown> } | undefined;
   let threadPromise: Promise<{ id: unknown; run: (prompt: string, options?: unknown) => Promise<unknown> }> | undefined;
 
@@ -210,9 +234,11 @@ function createLazyCodexThread(factoryName: 'startThread' | 'resumeThread', fact
     async run(prompt, options) {
       const thread = await getThread();
       const turn = await thread.run(prompt, options);
-      return {
-        finalResponse: assertCodexTurnResult(turn, factoryName).finalResponse,
-      };
+      const result = assertCodexTurnResult(turn, factoryName);
+      for (const event of result.events ?? []) {
+        options?.onEvent?.(event);
+      }
+      return result;
     },
   };
 }
@@ -245,8 +271,20 @@ function assertCodexTurnResult(value: unknown, factoryName: 'startThread' | 'res
     throw new Error(`Codex ${factoryName}().run() did not return a finalResponse string.`);
   }
 
+  const events: AgentProgressEvent[] = [];
+  if (Array.isArray((value as { items?: unknown }).items)) {
+    for (const item of (value as { items: unknown[] }).items) {
+      events.push({ type: 'provider-item', payload: item });
+    }
+  }
+  const usage = (value as { usage?: unknown }).usage;
+  if (usage !== undefined && usage !== null) {
+    events.push({ type: 'usage', payload: usage });
+  }
+
   return {
     finalResponse: (value as { finalResponse: string }).finalResponse,
+    ...(events.length > 0 ? { events } : {}),
   };
 }
 

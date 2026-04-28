@@ -196,4 +196,29 @@ describe('agent sequence checkpoint behavior', () => {
     assert.match(pendingHeartbeat.pendingStep.finalResponse, /truncated for Temporal heartbeat checkpoint/);
     assert.ok(Buffer.byteLength(pendingHeartbeat.pendingStep.finalResponse, 'utf8') <= 256 * 1024);
   });
+
+  it('re-validates pending structured outputs restored from heartbeat checkpoints', async () => {
+    const { runAgentSequence } = createActivityTestRig({
+      agent: {
+        createCodexThread: () => { throw new Error('create should not be used'); },
+        resumeCodexThread: () => { throw new Error('resume should not be used'); },
+        getHeartbeatDetails: () => ({
+          threadId: 'thread-123',
+          completedStepIds: ['edit'],
+          outputs: {},
+          finalResponse: 'Implemented the requested change.',
+          pendingStep: {
+            stepId: 'change-metadata',
+            finalResponse: JSON.stringify({ commitMessage: 42 }),
+            output: { resultKey: CHANGE_METADATA_OUTPUT_KEY, parsedOutput: { commitMessage: 42 } },
+          },
+        }),
+      },
+    });
+
+    await assert.rejects(
+      () => runAgentSequence({ worktree: buildWorktreeContext(), steps: buildStructuredAgentSteps(buildWorktreeContext()) }),
+      /invalid changeMetadata output/i,
+    );
+  });
 });
