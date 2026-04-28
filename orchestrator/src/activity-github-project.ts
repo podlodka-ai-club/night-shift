@@ -1,8 +1,11 @@
 import {
   CANONICAL_PROJECT_STATUS_NAMES,
+  DEFAULT_BACKLOG_STATUS,
   DEFAULT_BLOCKED_STATUS,
   DEFAULT_IN_PROGRESS_STATUS,
   DEFAULT_IN_REVIEW_STATUS,
+  DEFAULT_REFINED_STATUS,
+  DEFAULT_REFINEMENT_STATUS,
   DEFAULT_READY_STATUS,
   type AutomateReadyIssueInput,
   type EnsureProjectStatusOptionsInput,
@@ -216,37 +219,14 @@ export async function getTopReadyIssueActivity(
   deps: GitHubActivityDeps,
   input: AutomateReadyIssueInput,
 ): Promise<SelectedProjectIssue> {
-  const readyStatusName = input.readyStatusName ?? DEFAULT_READY_STATUS;
-  const inProgressStatusName = DEFAULT_IN_PROGRESS_STATUS;
-  const inReviewStatusName = input.inReviewStatusName ?? DEFAULT_IN_REVIEW_STATUS;
-  const blockedStatusName = input.blockedStatusName ?? DEFAULT_BLOCKED_STATUS;
-  const project = await lookupProject(deps, input.projectOwner, input.projectNumber);
-  const statusField = await ensureCanonicalProjectStatusOptions(deps, getProjectStatusField(project));
-  const readyOption = getRequiredStatusOption(statusField, readyStatusName);
-  const inProgressOption = getRequiredStatusOption(statusField, inProgressStatusName);
-  const inReviewOption = getRequiredStatusOption(statusField, inReviewStatusName);
-  const blockedOption = getRequiredStatusOption(statusField, blockedStatusName);
-  const readyItem = getReadyIssueItem(project, readyStatusName, input.projectOwner, input.projectNumber);
-  const readyIssue = readyItem.content;
+  return getTopProjectIssueForStatusActivity(deps, input, input.readyStatusName ?? DEFAULT_READY_STATUS);
+}
 
-  return {
-    projectId: project.id,
-    projectItemId: readyItem.id,
-    statusFieldId: statusField.id,
-    readyOptionId: readyOption.id,
-    inProgressOptionId: inProgressOption.id,
-    inReviewOptionId: inReviewOption.id,
-    blockedOptionId: blockedOption.id,
-    issueNumber: readyIssue.number,
-    issueTitle: readyIssue.title,
-    taskDescription: buildTaskDescription(readyIssue.title, readyIssue.body),
-    issueUrl: readyIssue.url,
-    repoOwner: readyIssue.repository.owner.login,
-    repoName: readyIssue.repository.name,
-    defaultBranch: readyIssue.repository.defaultBranchRef?.name ?? 'main',
-    readyStatusName,
-    inReviewStatusName,
-  };
+export async function getTopBacklogIssueActivity(
+  deps: GitHubActivityDeps,
+  input: AutomateReadyIssueInput,
+): Promise<SelectedProjectIssue> {
+  return getTopProjectIssueForStatusActivity(deps, input, input.backlogStatusName ?? DEFAULT_BACKLOG_STATUS);
 }
 
 export async function moveProjectItemStatusActivity(
@@ -441,6 +421,67 @@ function getReadyIssueItem(
     throw new Error(`Could not find a Ready issue in GitHub Project ${projectOwner}/${projectNumber}.`);
   }
   return readyItem;
+}
+
+async function getTopProjectIssueForStatusActivity(
+  deps: GitHubActivityDeps,
+  input: AutomateReadyIssueInput,
+  targetStatusName: string,
+): Promise<SelectedProjectIssue> {
+  const backlogStatusName = input.backlogStatusName ?? DEFAULT_BACKLOG_STATUS;
+  const refinementStatusName = input.refinementStatusName ?? DEFAULT_REFINEMENT_STATUS;
+  const refinedStatusName = input.refinedStatusName ?? DEFAULT_REFINED_STATUS;
+  const readyStatusName = input.readyStatusName ?? DEFAULT_READY_STATUS;
+  const inReviewStatusName = input.inReviewStatusName ?? DEFAULT_IN_REVIEW_STATUS;
+  const blockedStatusName = input.blockedStatusName ?? DEFAULT_BLOCKED_STATUS;
+  const project = await lookupProject(deps, input.projectOwner, input.projectNumber);
+  const statusField = await ensureCanonicalProjectStatusOptions(deps, getProjectStatusField(project));
+  const projectItem = getProjectIssueItem(project, targetStatusName, input.projectOwner, input.projectNumber);
+  const issue = projectItem.content;
+
+  return {
+    projectId: project.id,
+    projectItemId: projectItem.id,
+    statusFieldId: statusField.id,
+    backlogOptionId: getRequiredStatusOption(statusField, backlogStatusName).id,
+    refinementOptionId: getRequiredStatusOption(statusField, refinementStatusName).id,
+    refinedOptionId: getRequiredStatusOption(statusField, refinedStatusName).id,
+    readyOptionId: getRequiredStatusOption(statusField, readyStatusName).id,
+    inProgressOptionId: getRequiredStatusOption(statusField, DEFAULT_IN_PROGRESS_STATUS).id,
+    inReviewOptionId: getRequiredStatusOption(statusField, inReviewStatusName).id,
+    blockedOptionId: getRequiredStatusOption(statusField, blockedStatusName).id,
+    issueNumber: issue.number,
+    issueTitle: issue.title,
+    taskDescription: buildTaskDescription(issue.title, issue.body),
+    issueUrl: issue.url,
+    repoOwner: issue.repository.owner.login,
+    repoName: issue.repository.name,
+    defaultBranch: issue.repository.defaultBranchRef?.name ?? 'main',
+    backlogStatusName,
+    refinementStatusName,
+    refinedStatusName,
+    readyStatusName,
+    inReviewStatusName,
+  };
+}
+
+function getProjectIssueItem(
+  project: ProjectData,
+  targetStatusName: string,
+  projectOwner: string,
+  projectNumber: number,
+): ReadyProjectItem {
+  if (targetStatusName === DEFAULT_READY_STATUS) {
+    return getReadyIssueItem(project, targetStatusName, projectOwner, projectNumber);
+  }
+
+  const projectItem = project.items.nodes.find(
+    (item): item is ReadyProjectItem => item.fieldValueByName?.name === targetStatusName && isProjectIssueContent(item.content),
+  );
+  if (!projectItem) {
+    throw new Error(`Could not find a ${targetStatusName} issue in GitHub Project ${projectOwner}/${projectNumber}.`);
+  }
+  return projectItem;
 }
 
 function buildTaskDescription(issueTitle: string, issueBody: string): string {

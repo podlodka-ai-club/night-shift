@@ -71,8 +71,14 @@ For each task from Task 1 to Task 9:
 
 ### Task 4
 
-- Status: not started
+- Status: complete
 - Notes:
+  - [Origin: Task 4 | Relevant to: Tasks 5-8] The real Specify slice now lives in `orchestrator/src/phases/specify/` with a dedicated prompt builder, phase runner, response parser, and contract error. Later phase work should extend those boundaries instead of re-embedding spec-generation logic in `workflows.ts`.
+  - [Origin: Task 4 | Relevant to: Tasks 5-8] The workflow now caches the selected Backlog issue across `specifyRetry` loops (`selectedSpecifyIssue`) so operator retries keep editing the same GitHub issue / project item. Future signal-driven retries should preserve that invariant unless a task explicitly re-queues selection.
+  - [Origin: Task 4 | Relevant to: Tasks 5-6, 8] `openPullRequest` now supports `draft` and `updateIfExists`; the implement phase uses `updateIfExists: true` so a draft spec PR can be refreshed into the implementation PR instead of leaving stale spec metadata behind.
+  - [Origin: Task 4 | Relevant to: Tasks 5-8] Shared Night Shift comment-marker helpers live in `orchestrator/src/comment-markers.ts`. Reuse that module for prompt filtering and marker-comment upserts instead of duplicating the HTML marker format.
+  - [Origin: Task 4 | Relevant to: Tasks 5-8] New activities now cover `getTopBacklogIssue`, issue-comment listing/upsert, OpenSpec draft file read/write, and `openspec validate <change> --strict`. The fake-agent E2E harness exercises the full Backlog → Specify gate and manually performs the operator review handoff (`Refined` → `Ready` + `specReviewedSignal`) because automatic board-transition approval is still deferred to Task 8.
+  - [Origin: Task 4 | Relevant to: Tasks 5-8] Task 4 verification is green via `make check`, a clean second `review-code` pass, and a live fake-agent E2E run on 2026-04-28 against `Mugenor/orchestrator-testing` + Project `Mugenor/1` (`runId=8d4ac1ef`, issue `#27`, PR `#28`, statuses `Backlog -> Refinement -> Refined -> Ready -> In progress -> In review`, cleanup succeeded). Two preserved harness-failure runs (`#23/#24`, `#25/#26`) were manually cleaned afterward.
 
 ### Task 5
 

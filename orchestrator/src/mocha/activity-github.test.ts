@@ -184,6 +184,7 @@ describe('github activities', () => {
       head: worktree.branchName,
       base: worktree.defaultBranch,
       body: `Automated dummy change for ${worktree.issueUrl}`,
+      draft: false,
     });
   });
 
@@ -210,6 +211,7 @@ describe('github activities', () => {
       head: worktree.branchName,
       base: worktree.defaultBranch,
       body: '## Summary\n- ask Codex for structured metadata in the same thread',
+      draft: false,
     });
   });
 
@@ -239,6 +241,33 @@ describe('github activities', () => {
         },
       },
     ]);
+  });
+
+  it('updates an existing open pull request when asked to refresh draft metadata', async () => {
+    const worktree = buildWorktreeContext();
+    const fetchCalls: FetchCall[] = [];
+    const { openPullRequest } = createActivityTestRig({
+      github: { fetch: async (input, init) => {
+        fetchCalls.push({ url: String(input), init });
+        return (init?.method ?? 'GET') === 'GET'
+          ? jsonResponse([{ number: 42, html_url: `https://github.com/${worktree.repoOwner}/${worktree.repoName}/pull/42` }])
+          : jsonResponse({ number: 42, html_url: `https://github.com/${worktree.repoOwner}/${worktree.repoName}/pull/42` });
+      } },
+    });
+
+    await openPullRequest({ worktree, title: 'Spec: #7 Create a dummy PR', body: 'Draft spec PR body', draft: true, updateIfExists: true });
+
+    assert.deepStrictEqual(
+      fetchCalls.map((call) => ({ url: call.url, method: call.init?.method ?? 'GET' })),
+      [
+        { url: buildOpenPullRequestLookupUrl(worktree), method: 'GET' },
+        { url: `${buildPullRequestsApiUrl(worktree)}/42`, method: 'PATCH' },
+      ],
+    );
+    assert.deepStrictEqual(JSON.parse(String(fetchCalls[1].init?.body)), {
+      title: 'Spec: #7 Create a dummy PR',
+      body: 'Draft spec PR body',
+    });
   });
 
   it('recovers from a duplicate-create PR race by re-querying the branch PR', async () => {
@@ -309,6 +338,37 @@ describe('github activities', () => {
         },
       },
     ]);
+  });
+
+  it('upserts a marker comment instead of creating duplicates', async () => {
+    const fetchCalls: FetchCall[] = [];
+    const { upsertIssueComment } = createActivityTestRig({
+      github: { fetch: async (input, init) => {
+        fetchCalls.push({ url: String(input), init });
+        return (init?.method ?? 'GET') === 'GET'
+          ? jsonResponse([{ id: 55, body: '<!-- night-shift:specify:summary -->\nOld summary' }])
+          : jsonResponse({ id: 55 });
+      } },
+    });
+
+    await upsertIssueComment({
+      repoOwner: 'Mugenor',
+      repoName: 'orchestrator-testing',
+      issueNumber: 7,
+      marker: 'specify:summary',
+      body: 'New summary',
+    });
+
+    assert.deepStrictEqual(
+      fetchCalls.map((call) => ({ url: call.url, method: call.init?.method ?? 'GET' })),
+      [
+        { url: 'https://api.github.com/repos/Mugenor/orchestrator-testing/issues/7/comments', method: 'GET' },
+        { url: 'https://api.github.com/repos/Mugenor/orchestrator-testing/issues/comments/55', method: 'PATCH' },
+      ],
+    );
+    assert.deepStrictEqual(JSON.parse(String(fetchCalls[1].init?.body)), {
+      body: '<!-- night-shift:specify:summary -->\nNew summary',
+    });
   });
 
   it('moves the GitHub project item status via GraphQL', async () => {

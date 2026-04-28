@@ -30,11 +30,17 @@ const defaultActivities = createActivities(createActivityRuntimes());
 
 export const {
   ensureProjectStatusOptions,
+  getTopBacklogIssue,
   getTopReadyIssue,
   openPullRequest,
+  listIssueComments,
   commentOnIssue,
+  upsertIssueComment,
   moveProjectItemStatus,
   createWorktreeForIssueIfNeeded,
+  readOpenSpecChangeFiles,
+  writeOpenSpecChangeFiles,
+  validateOpenSpecChange,
   commitAndPush,
   cleanupWorktree,
   runAgentLegacy,

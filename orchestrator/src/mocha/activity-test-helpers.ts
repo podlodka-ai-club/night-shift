@@ -62,6 +62,8 @@ export function createActivityTestRig(options: ActivityTestRigOptions = {}) {
     worktree: {
       access: async () => failUnmockedDependency('worktree.access'),
       mkdir: async () => failUnmockedDependency('worktree.mkdir'),
+      readdir: async () => failUnmockedDependency('worktree.readdir'),
+      readFile: async () => failUnmockedDependency('worktree.readFile'),
       appendFile: async () => failUnmockedDependency('worktree.appendFile'),
       writeFile: async () => failUnmockedDependency('worktree.writeFile'),
       execFile: async () => failUnmockedDependency('worktree.execFile'),
@@ -71,6 +73,8 @@ export function createActivityTestRig(options: ActivityTestRigOptions = {}) {
     agent: {
       access: async () => failUnmockedDependency('agent.access'),
       mkdir: async () => failUnmockedDependency('agent.mkdir'),
+      readdir: async () => failUnmockedDependency('agent.readdir'),
+      readFile: async () => failUnmockedDependency('agent.readFile'),
       appendFile: async () => failUnmockedDependency('agent.appendFile'),
       writeFile: async () => failUnmockedDependency('agent.writeFile'),
       execFile: async () => failUnmockedDependency('agent.execFile'),
@@ -104,6 +108,9 @@ export function buildSelectedIssue(): SelectedProjectIssue {
     projectId: 'project-1',
     projectItemId: 'item-1',
     statusFieldId: 'status-field',
+    backlogOptionId: 'backlog-option',
+    refinementOptionId: 'refinement-option',
+    refinedOptionId: 'refined-option',
     readyOptionId: 'ready-option',
     inProgressOptionId: 'progress-option',
     inReviewOptionId: 'review-option',
@@ -115,6 +122,9 @@ export function buildSelectedIssue(): SelectedProjectIssue {
     repoOwner: 'Mugenor',
     repoName: 'orchestrator-testing',
     defaultBranch: 'main',
+    backlogStatusName: 'Backlog',
+    refinementStatusName: 'Refinement',
+    refinedStatusName: 'Refined',
     readyStatusName: 'Ready',
     inReviewStatusName: 'In review',
   };

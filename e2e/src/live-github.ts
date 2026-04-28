@@ -3,7 +3,7 @@ import { buildBranchName, buildIssueComment } from '../../orchestrator/lib/activ
 import type { GitHubClientDeps } from '../../orchestrator/lib/activity-deps';
 import { buildRepoApiPath, githubGraphql, githubRest } from '../../orchestrator/lib/activity-github-client';
 import { createGitHubActivities } from '../../orchestrator/lib/activity-github';
-import { DEFAULT_READY_STATUS, type AutomateReadyIssueResult, type SelectedProjectIssue } from '../../orchestrator/lib/shared';
+import { DEFAULT_BACKLOG_STATUS, DEFAULT_READY_STATUS, type AutomateReadyIssueResult, type SelectedProjectIssue, type WorkflowPhase } from '../../orchestrator/lib/shared';
 import type { E2EConfig } from './config';
 import { FAKE_AGENT_FILE_PATH } from './fake-agent';
 
@@ -160,6 +160,7 @@ export async function seedIssueInProject(
   runId: string,
   title: string,
   body: string,
+  initialStatusName = DEFAULT_READY_STATUS,
 ): Promise<SeededIssue> {
   const issue = await createIssue(deps, config, title, body);
   const projectStatus = await createGitHubActivities(deps).ensureProjectStatusOptions({
@@ -172,7 +173,7 @@ export async function seedIssueInProject(
     projectStatus.projectId,
     projectItemId,
     projectStatus.statusFieldId,
-    projectStatus.statusOptionIds[DEFAULT_READY_STATUS],
+    projectStatus.statusOptionIds[initialStatusName as keyof typeof projectStatus.statusOptionIds],
   );
 
   return {
@@ -199,18 +200,27 @@ export async function assertSeededIssueWillBeSelected(
   deps: GitHubClientDeps,
   config: E2EConfig,
   expectedIssueNumber: number,
-  options: SelectionRetryOptions = {},
+  startPhaseOrOptions: WorkflowPhase | SelectionRetryOptions = 'implement',
+  maybeOptions: SelectionRetryOptions = {},
 ): Promise<SelectedProjectIssue> {
+  const startPhase = typeof startPhaseOrOptions === 'string' ? startPhaseOrOptions : 'implement';
+  const options = typeof startPhaseOrOptions === 'string' ? maybeOptions : startPhaseOrOptions;
   const maxAttempts = options.maxAttempts ?? DEFAULT_SELECTION_MAX_ATTEMPTS;
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_SELECTION_RETRY_DELAY_MS;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const selectedIssue = await createGitHubActivities(deps).getTopReadyIssue({
+      const selectedIssue = await (startPhase === 'specify'
+        ? createGitHubActivities(deps).getTopBacklogIssue({
+            projectOwner: config.projectOwner,
+            projectNumber: config.projectNumber,
+            backlogStatusName: DEFAULT_BACKLOG_STATUS,
+          })
+        : createGitHubActivities(deps).getTopReadyIssue({
         projectOwner: config.projectOwner,
         projectNumber: config.projectNumber,
-      });
+      }));
 
       if (selectedIssue.issueNumber === expectedIssueNumber) {
         return selectedIssue;
@@ -505,7 +515,9 @@ async function githubRestAllowEmptySuccess(
 }
 
 function isRetryableProjectSelectionError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('Could not find a Ready issue in GitHub Project');
+  return error instanceof Error
+    && (error.message.includes('Could not find a Ready issue in GitHub Project')
+      || error.message.includes('Could not find a Backlog issue in GitHub Project'));
 }
 
 function createUnexpectedSelectionError(expectedIssueNumber: number, actualIssueNumber: number): Error {

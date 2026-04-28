@@ -2,7 +2,7 @@ import assert from 'assert';
 import { CancelledFailure } from '@temporalio/common';
 import { describe, it } from 'mocha';
 import { buildChangeMetadataPrompt, buildTaskImplementationPrompt } from '../agent-prompts';
-import { CHANGE_METADATA_OUTPUT_KEY, type AgentStep, type WorktreeContext } from '../shared';
+import { CHANGE_METADATA_OUTPUT_KEY, SPECIFY_RESPONSE_OUTPUT_KEY, type AgentStep, type WorktreeContext } from '../shared';
 import {
   buildGeneratedChangeMetadata,
   buildStructuredAgentSteps,
@@ -117,6 +117,56 @@ describe('agent sequence activities', () => {
     assert.strictEqual(runCalls.length, 3);
     assert.match(runCalls[2], /previous response did not satisfy the required structured output schema/i);
     assert.deepStrictEqual(result.outputs[CHANGE_METADATA_OUTPUT_KEY], buildGeneratedChangeMetadata());
+  });
+
+  it('repairs a Specify structured step and returns the parsed spec bundle', async () => {
+    const runCalls: string[] = [];
+    const { runAgentSequence } = createActivityTestRig({
+      agent: {
+        createCodexThread: () => ({
+          id: 'thread-123',
+          run: async (prompt: string) => {
+            runCalls.push(prompt);
+            if (runCalls.length === 1) return { items: [], finalResponse: '{"files":[{"path":"notes.txt","content":"nope"}],"openQuestions":[],"assumptions":[],"risks":[]}', usage: null };
+            return {
+              items: [],
+              finalResponse: JSON.stringify({
+                files: [
+                  { path: 'proposal.md', content: '# Proposal' },
+                  { path: 'tasks.md', content: '# Tasks' },
+                ],
+                openQuestions: [],
+                assumptions: [],
+                risks: [],
+              }),
+              usage: null,
+            };
+          },
+        }),
+        resumeCodexThread: () => {
+          throw new Error('resume should not be used without a checkpoint');
+        },
+        getHeartbeatDetails: () => undefined,
+        heartbeat: () => undefined,
+      },
+    });
+
+    const result = await runAgentSequence({
+      worktree: buildWorktreeContext(),
+      steps: [{ id: 'specify', kind: 'structured', prompt: 'Draft the spec bundle.', schemaId: 'specify-response-v1', resultKey: SPECIFY_RESPONSE_OUTPUT_KEY }],
+    });
+
+    assert.strictEqual(runCalls.length, 2);
+    assert.match(runCalls[1], /previous response did not satisfy the required structured output schema/i);
+    assert.deepStrictEqual(result.outputs[SPECIFY_RESPONSE_OUTPUT_KEY], {
+      files: [
+        { path: 'proposal.md', content: '# Proposal' },
+        { path: 'tasks.md', content: '# Tasks' },
+      ],
+      openQuestions: [],
+      assumptions: [],
+      risks: [],
+    });
   });
 
   it('fails instead of silently dropping structured output when repair also fails', async () => {

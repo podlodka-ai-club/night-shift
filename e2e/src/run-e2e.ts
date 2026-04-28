@@ -3,8 +3,9 @@ import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { createActivities, createActivityDependencies } from '../../orchestrator/lib/activities';
 import type { ActivityRuntimes } from '../../orchestrator/lib/activity-deps';
+import { createGitHubActivities } from '../../orchestrator/lib/activity-github';
 import { TASK_QUEUE, type AutomateReadyIssueResult, type SelectedProjectIssue } from '../../orchestrator/lib/shared';
-import { automateTopReadyIssue } from '../../orchestrator/lib/workflows';
+import { automateTopReadyIssue, getBlockedReasonQuery, specReviewedSignal } from '../../orchestrator/lib/workflows';
 import { parseE2EConfig, type E2EConfig } from './config';
 import { createFakeAgentDeps } from './fake-agent';
 import {
@@ -44,6 +45,7 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
   const branchPrefix = `orchestrator-e2e-${runId}`;
   const filePathPrefix = `orchestrator-e2e/${runId}`;
   const githubDeps = createGitHubDeps(config.githubToken);
+  const startPhase = config.agentMode === 'fake' ? 'specify' : 'implement';
 
   let seededIssue: SeededIssue | undefined;
   let selectedIssue: SelectedProjectIssue | undefined;
@@ -59,8 +61,9 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
       runId,
       buildSeedIssueTitle(runId),
       buildSeedIssueBody(runId),
+      startPhase === 'specify' ? 'Backlog' : 'Ready',
     );
-    selectedIssue = await assertSeededIssueWillBeSelected(githubDeps, config, seededIssue.issueNumber);
+    selectedIssue = await assertSeededIssueWillBeSelected(githubDeps, config, seededIssue.issueNumber, startPhase);
 
     observedStatuses = [];
     await recordCurrentProjectItemStatus(githubDeps, seededIssue.projectItemId, observedStatuses);
@@ -69,7 +72,7 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
     try {
       const poller = startStatusPoller(githubDeps, seededIssue.projectItemId, observedStatuses);
       try {
-        workflowResult = await runWorkflowOnce(testEnv, config, workflowId, branchPrefix, filePathPrefix);
+        workflowResult = await runWorkflowOnce(testEnv, config, workflowId, branchPrefix, filePathPrefix, startPhase, selectedIssue, observedStatuses);
       } finally {
         observedStatuses = await poller.stop();
         await recordCurrentProjectItemStatus(githubDeps, seededIssue.projectItemId, observedStatuses);
@@ -144,6 +147,9 @@ async function runWorkflowOnce(
   workflowId: string,
   branchPrefix: string,
   filePathPrefix: string,
+  startPhase: 'implement' | 'specify',
+  selectedIssue: SelectedProjectIssue,
+  observedStatuses: string[],
 ): Promise<AutomateReadyIssueResult> {
   const baseDeps = createActivityDependencies();
   const agentDeps = config.agentMode === 'fake' ? createFakeAgentDeps(baseDeps) : baseDeps;
@@ -160,8 +166,8 @@ async function runWorkflowOnce(
     activities: createActivities(runtimes),
   });
 
-  return worker.runUntil(
-    testEnv.client.workflow.execute(automateTopReadyIssue, {
+  return worker.runUntil(async () => {
+    const handle = await testEnv.client.workflow.start(automateTopReadyIssue, {
       taskQueue: TASK_QUEUE,
       workflowId,
       args: [{
@@ -169,9 +175,42 @@ async function runWorkflowOnce(
         projectNumber: config.projectNumber,
         branchPrefix,
         filePathPrefix,
+        startPhase,
       }],
-    }),
-  );
+    });
+
+    if (startPhase === 'specify') {
+      await driveSpecifyApprovalGate(handle, runtimes.github, selectedIssue, observedStatuses);
+    }
+
+    return handle.result();
+  });
+}
+
+async function driveSpecifyApprovalGate(
+  handle: Awaited<ReturnType<TestWorkflowEnvironment['client']['workflow']['start']>>,
+  githubDeps: ReturnType<typeof createGitHubDeps>,
+  selectedIssue: SelectedProjectIssue,
+  observedStatuses: string[],
+): Promise<void> {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const blockedReason = await handle.query(getBlockedReasonQuery);
+    if (blockedReason === 'awaiting_spec_review') {
+      recordObservedStatus(observedStatuses, await getProjectItemStatusName(githubDeps, selectedIssue.projectItemId));
+      await createGitHubActivities(githubDeps).moveProjectItemStatus({
+        projectId: selectedIssue.projectId,
+        projectItemId: selectedIssue.projectItemId,
+        statusFieldId: selectedIssue.statusFieldId,
+        statusOptionId: selectedIssue.readyOptionId,
+      });
+      recordObservedStatus(observedStatuses, selectedIssue.readyStatusName);
+      await handle.signal(specReviewedSignal);
+      return;
+    }
+    await sleep(STATUS_POLL_INTERVAL_MS);
+  }
+
+  throw new Error('Workflow did not reach awaiting_spec_review during the live fake-agent run.');
 }
 
 function startStatusPoller(

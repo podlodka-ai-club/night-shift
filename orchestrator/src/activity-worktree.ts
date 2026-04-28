@@ -1,5 +1,17 @@
 import path from 'node:path';
-import { DEFAULT_BRANCH_PREFIX, DEFAULT_FILE_PATH_PREFIX, type CleanupWorktreeInput, type CommitAndPushInput, type CreateWorktreeForIssueIfNeededInput, type SelectedProjectIssue, type WorktreeContext } from './shared';
+import {
+  DEFAULT_BRANCH_PREFIX,
+  DEFAULT_FILE_PATH_PREFIX,
+  type CleanupWorktreeInput,
+  type CommitAndPushInput,
+  type CreateWorktreeForIssueIfNeededInput,
+  type OpenSpecChangeFile,
+  type ReadOpenSpecChangeFilesInput,
+  type SelectedProjectIssue,
+  type ValidateOpenSpecChangeInput,
+  type WorktreeContext,
+  type WriteOpenSpecChangeFilesInput,
+} from './shared';
 import type { WorktreeActivityDeps } from './activity-deps';
 import { git, pathExists, toErrorMessage } from './activity-deps';
 
@@ -63,6 +75,27 @@ export function createWorktreeActivities(deps: WorktreeActivityDeps) {
       }
 
       await git(deps, worktreePath, ['push', '-u', 'origin', branchName]);
+    },
+
+    async readOpenSpecChangeFiles(input: ReadOpenSpecChangeFilesInput): Promise<OpenSpecChangeFile[]> {
+      const changeRoot = resolveOpenSpecChangeRoot(input.worktree, input.changeName);
+      if (!(await pathExists(deps, changeRoot))) {
+        return [];
+      }
+      return readOpenSpecFilesRecursively(deps, changeRoot, changeRoot);
+    },
+
+    async writeOpenSpecChangeFiles(input: WriteOpenSpecChangeFilesInput): Promise<void> {
+      const changeRoot = resolveOpenSpecChangeRoot(input.worktree, input.changeName);
+      for (const file of input.files) {
+        const targetPath = path.join(changeRoot, file.path);
+        await deps.mkdir(path.dirname(targetPath), { recursive: true });
+        await deps.writeFile(targetPath, file.content, 'utf8');
+      }
+    },
+
+    async validateOpenSpecChange(input: ValidateOpenSpecChangeInput): Promise<void> {
+      await deps.execFile('openspec', ['validate', input.changeName, '--strict'], { cwd: input.worktree.worktreePath });
     },
 
     async cleanupWorktree(input: CleanupWorktreeInput): Promise<void> {
@@ -168,6 +201,36 @@ async function hasAheadCommits(deps: WorktreeActivityDeps, worktreePath: string,
 
 function buildCommitMessage(worktree: WorktreeContext, commitMessage?: string): string {
   return commitMessage?.trim() || `Add dummy change for issue #${worktree.issueNumber}`;
+}
+
+function resolveOpenSpecChangeRoot(worktree: WorktreeContext, changeName: string): string {
+  return path.join(worktree.worktreePath, 'openspec', 'changes', changeName);
+}
+
+async function readOpenSpecFilesRecursively(
+  deps: WorktreeActivityDeps,
+  rootPath: string,
+  currentPath: string,
+): Promise<OpenSpecChangeFile[]> {
+  const entries = await deps.readdir(currentPath, { withFileTypes: true });
+  const files: OpenSpecChangeFile[] = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(currentPath, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await readOpenSpecFilesRecursively(deps, rootPath, entryPath));
+      continue;
+    }
+    if (!entry.isFile()) {
+      continue;
+    }
+    files.push({
+      path: path.relative(rootPath, entryPath),
+      content: await deps.readFile(entryPath, 'utf8'),
+    });
+  }
+
+  return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 async function ensureIssueWorktree(

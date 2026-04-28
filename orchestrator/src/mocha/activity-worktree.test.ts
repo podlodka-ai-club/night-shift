@@ -317,6 +317,81 @@ describe('worktree activities', () => {
     ]);
   });
 
+  it('reads OpenSpec draft files relative to the change root', async () => {
+    const worktree = buildWorktreeContext();
+    const { readOpenSpecChangeFiles } = createActivityTestRig({
+      worktree: {
+        access: async () => undefined,
+        readdir: async (targetPath) => String(targetPath).endsWith('/specs')
+          ? [{ name: 'demo', isDirectory: () => true, isFile: () => false } as any]
+          : String(targetPath).endsWith('/demo')
+            ? [{ name: 'spec.md', isDirectory: () => false, isFile: () => true } as any]
+            : [
+                { name: 'proposal.md', isDirectory: () => false, isFile: () => true } as any,
+                { name: 'specs', isDirectory: () => true, isFile: () => false } as any,
+              ],
+        readFile: async (targetPath, _encoding: any) => String(targetPath).endsWith('proposal.md') ? '# Proposal' as any : '## ADDED Requirements' as any,
+      },
+    });
+
+    const files = await readOpenSpecChangeFiles({ worktree, changeName: '7-demo-change' });
+    assert.deepStrictEqual(files, [
+      { path: 'proposal.md', content: '# Proposal' },
+      { path: 'specs/demo/spec.md', content: '## ADDED Requirements' },
+    ]);
+  });
+
+  it('writes OpenSpec draft files under the change root', async () => {
+    const worktree = buildWorktreeContext();
+    const mkdirCalls: MkdirCall[] = [];
+    const writeCalls: WriteCall[] = [];
+    const { writeOpenSpecChangeFiles } = createActivityTestRig({
+      worktree: {
+        mkdir: async (targetPath, options) => {
+          mkdirCalls.push({ path: String(targetPath), options });
+          return undefined;
+        },
+        writeFile: async (targetPath, data, encoding) => {
+          writeCalls.push({ path: String(targetPath), data, encoding });
+        },
+      },
+    });
+
+    await writeOpenSpecChangeFiles({
+      worktree,
+      changeName: '7-demo-change',
+      files: [
+        { path: 'proposal.md', content: '# Proposal' },
+        { path: 'specs/demo/spec.md', content: '## ADDED Requirements' },
+      ],
+    });
+
+    assert.deepStrictEqual(mkdirCalls, [
+      { path: `${worktree.worktreePath}/openspec/changes/7-demo-change`, options: { recursive: true } },
+      { path: `${worktree.worktreePath}/openspec/changes/7-demo-change/specs/demo`, options: { recursive: true } },
+    ]);
+    assert.deepStrictEqual(writeCalls, [
+      { path: `${worktree.worktreePath}/openspec/changes/7-demo-change/proposal.md`, data: '# Proposal', encoding: 'utf8' },
+      { path: `${worktree.worktreePath}/openspec/changes/7-demo-change/specs/demo/spec.md`, data: '## ADDED Requirements', encoding: 'utf8' },
+    ]);
+  });
+
+  it('runs openspec validate from the worktree root', async () => {
+    const worktree = buildWorktreeContext();
+    const gitCalls: GitCall[] = [];
+    const { validateOpenSpecChange } = createActivityTestRig({
+      worktree: { execFile: async (file, args, options) => {
+        gitCalls.push({ cwd: options?.cwd, args: [String(file), ...args] });
+        return { stdout: '', stderr: '', exitCode: 0 };
+      } },
+    });
+
+    await validateOpenSpecChange({ worktree, changeName: '7-demo-change' });
+    assert.deepStrictEqual(gitCalls, [
+      { cwd: worktree.worktreePath, args: ['openspec', 'validate', '7-demo-change', '--strict'] },
+    ]);
+  });
+
   it('builds deterministic worktree helper values', () => {
     assert.strictEqual(buildBranchName(9, 'auto'), 'auto/issue-9');
     assert.strictEqual(buildDummyFilePath(9, 'runs'), 'runs/issue-9.md');

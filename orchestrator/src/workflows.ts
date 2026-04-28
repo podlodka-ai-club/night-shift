@@ -15,6 +15,7 @@ import {
   WORKFLOW_SIGNAL_NAMES,
 } from './shared';
 import type * as activities from './activities';
+import { runSpecifyPhase } from './phases/specify/phase';
 import type {
   AgentSequenceResult,
   AgentStep,
@@ -30,11 +31,17 @@ import type {
 } from './shared';
 
 const {
+  getTopBacklogIssue,
   getTopReadyIssue,
   createWorktreeForIssueIfNeeded,
+  readOpenSpecChangeFiles,
+  writeOpenSpecChangeFiles,
+  validateOpenSpecChange,
   commitAndPush,
   openPullRequest,
+  listIssueComments,
   commentOnIssue,
+  upsertIssueComment,
   moveProjectItemStatus,
 } = proxyActivities<typeof activities>({
   retry: {
@@ -75,6 +82,7 @@ export async function automateTopReadyIssue(
   input: AutomateReadyIssueInput,
 ): Promise<AutomateReadyIssueResult> {
   const shellState = createWorkflowShellState(input);
+  let selectedSpecifyIssue: SelectedProjectIssue | undefined;
   let allowSpecReviewed = false;
   let allowSpecifyRetry = false;
   // Placeholder scaffolding for later tasks that add implement/review retry loops.
@@ -110,6 +118,51 @@ export async function automateTopReadyIssue(
   syncCurrentDetails();
 
   while (shellState.currentPhase === 'specify') {
+    selectedSpecifyIssue ??= await getTopBacklogIssue(input);
+    const issue = selectedSpecifyIssue;
+    shellState.issueNumber = issue.issueNumber;
+    shellState.issueTitle = issue.issueTitle;
+    shellState.latestActivity = `Selected Backlog issue #${issue.issueNumber} for Specify.`;
+    syncCurrentDetails();
+
+    const specifyResult = await runSpecifyPhase(
+      {
+        issue,
+        branchPrefix: input.branchPrefix,
+        filePathPrefix: input.filePathPrefix,
+        onProgress: (message) => {
+          shellState.latestActivity = message;
+          syncCurrentDetails();
+        },
+      },
+      {
+        createWorktreeForIssueIfNeeded,
+        listIssueComments,
+        readOpenSpecChangeFiles,
+        writeOpenSpecChangeFiles,
+        validateOpenSpecChange,
+        runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+        commitAndPush,
+        openPullRequest,
+        upsertIssueComment,
+        moveProjectItemStatus,
+      },
+    );
+
+    if (specifyResult.outcome === 'needs_input') {
+      shellState.blockedReason = 'specify_needs_input';
+      shellState.latestActivity = 'Specify phase is blocked on operator input.';
+      allowSpecifyRetry = true;
+      syncCurrentDetails();
+      await condition(() => pendingSpecifyRetry);
+      allowSpecifyRetry = false;
+      pendingSpecifyRetry = false;
+      shellState.blockedReason = null;
+      shellState.latestActivity = 'Specify retry requested; rerunning Specify phase.';
+      syncCurrentDetails();
+      continue;
+    }
+
     shellState.blockedReason = 'awaiting_spec_review';
     shellState.latestActivity = 'Waiting for spec review approval to enter implement mode.';
     allowSpecReviewed = true;
@@ -123,12 +176,14 @@ export async function automateTopReadyIssue(
 
     if (pendingSpecifyRetry) {
       pendingSpecifyRetry = false;
-      shellState.latestActivity = 'Specify retry requested; placeholder shell remains in spec review wait state.';
+      shellState.blockedReason = null;
+      shellState.latestActivity = 'Specify retry requested; rerunning Specify phase.';
       syncCurrentDetails();
       continue;
     }
 
     pendingSpecReviewed = false;
+    selectedSpecifyIssue = undefined;
     shellState.blockedReason = null;
     shellState.currentPhase = 'implement';
     shellState.latestActivity = 'Spec review approved; entering implement phase.';
@@ -208,6 +263,7 @@ async function runImplementPhase(
       worktree,
       title: changeMetadata?.pullRequestTitle,
       body: changeMetadata?.pullRequestBody,
+      updateIfExists: true,
     });
 
     await commentOnIssue(buildIssueCommentInput(issue, pullRequest));
@@ -325,10 +381,18 @@ function buildAgentSteps(worktree: WorktreeContext): [AgentStep, ...AgentStep[]]
 }
 
 function getRunAgentSequenceActivity(steps: readonly AgentStep[]) {
+  return getRunAgentSequenceActivityWithRetry(steps);
+}
+
+function getRunAgentSequenceActivityWithRetry(
+  steps: readonly AgentStep[],
+  nonRetryableErrorTypes: readonly string[] = [],
+) {
   const { runAgentSequence } = proxyActivities<typeof activities>({
     heartbeatTimeout: '60 seconds',
     retry: {
       maximumAttempts: 3,
+      ...(nonRetryableErrorTypes.length > 0 ? { nonRetryableErrorTypes: [...nonRetryableErrorTypes] } : {}),
     },
     startToCloseTimeout: buildRunAgentSequenceStartToCloseTimeout(steps),
   });

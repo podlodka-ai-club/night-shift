@@ -9,6 +9,7 @@ import {
   getBlockedReasonQuery,
   renderWorkflowCurrentDetails,
   resumeSignal,
+  specifyRetrySignal,
   specReviewedSignal,
 } from '../workflows';
 
@@ -63,35 +64,64 @@ describe('workflow phased shell', function () {
     ]);
   });
 
-  it('reports blocked reason, ignores stale signals, and resumes from spec review approval', async () => {
+  it('runs a refined specify pass, blocks on spec review, then continues into implement after approval', async () => {
+    const calls: string[] = [];
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
     const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let runAgentSequenceCallCount = 0;
 
     const result = await runWorkflowWithHandle<AutomateReadyIssueResult>(
       {
-        workflowId: 'workflow-shell-signal-roundtrip-test',
+        workflowId: 'workflow-shell-specify-refined-test',
         workflowInput: { startPhase: 'specify' },
         activities: {
-          async getTopReadyIssue() { return issue; },
-          async createWorktreeForIssueIfNeeded() { return worktree; },
+          async getTopBacklogIssue() { calls.push('getTopBacklogIssue'); return issue; },
+          async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
+          async listIssueComments() { calls.push('listIssueComments'); return []; },
+          async readOpenSpecChangeFiles() { calls.push('readOpenSpecChangeFiles'); return []; },
+          async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
           async runAgentSequence() {
+            runAgentSequenceCallCount += 1;
+            calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+            if (runAgentSequenceCallCount === 1) {
+              return {
+                threadId: 'specify-thread-123',
+                completedStepIds: ['specify'],
+                outputs: {
+                  specifyResponse: {
+                    files: [
+                      { path: 'proposal.md', content: '# Proposal' },
+                      { path: 'tasks.md', content: '# Tasks' },
+                    ],
+                    openQuestions: [],
+                    assumptions: [],
+                    risks: [],
+                  },
+                } as any,
+                finalResponse: JSON.stringify({ refined: true }),
+              };
+            }
+
             return {
-              threadId: 'thread-123',
+              threadId: 'implement-thread-123',
               completedStepIds: ['edit', 'change-metadata'],
               outputs: { changeMetadata: buildGeneratedChangeMetadata() },
               finalResponse: JSON.stringify(buildGeneratedChangeMetadata()),
             };
           },
-          async commitAndPush() { return undefined; },
-          async openPullRequest() { return pullRequest; },
-          async cleanupWorktree() { return undefined; },
-          async commentOnIssue() { return undefined; },
-          async moveProjectItemStatus() { return undefined; },
+          async writeOpenSpecChangeFiles() { calls.push('writeOpenSpecChangeFiles'); },
+          async validateOpenSpecChange() { calls.push('validateOpenSpecChange'); },
+          async commitAndPush() { calls.push('commitAndPush'); },
+          async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
+          async upsertIssueComment() { calls.push('upsertIssueComment'); },
+          async cleanupWorktree() { calls.push('cleanupWorktree'); },
+          async commentOnIssue() { calls.push('commentOnIssue'); },
+          async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
         },
       },
       async (handle) => {
-        assert.strictEqual(await handle.query(getBlockedReasonQuery), 'awaiting_spec_review');
+        assert.strictEqual(await waitForBlockedReason(handle, 'awaiting_spec_review'), 'awaiting_spec_review');
         await handle.signal(activityProgressSignal, 'Waiting for operator review');
         await handle.signal(resumeSignal);
         assert.strictEqual(await handle.query(getBlockedReasonQuery), 'awaiting_spec_review');
@@ -101,6 +131,108 @@ describe('workflow phased shell', function () {
     );
 
     assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
+    assert.strictEqual(runAgentSequenceCallCount, 2);
+    assert.ok(calls.includes('getTopBacklogIssue'));
+    assert.ok(calls.includes('writeOpenSpecChangeFiles'));
+    assert.ok(calls.includes('validateOpenSpecChange'));
+    assert.ok(calls.includes('upsertIssueComment'));
+    assert.ok(calls.includes('getTopReadyIssue'));
+    assert.ok(calls.includes('commentOnIssue'));
+    assert.ok(calls.indexOf('upsertIssueComment') < calls.indexOf('getTopReadyIssue'));
+  });
+
+  it('blocks on specify_needs_input for open questions and reruns specify after specifyRetry', async () => {
+    const calls: string[] = [];
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let runAgentSequenceCallCount = 0;
+
+    const result = await runWorkflowWithHandle<AutomateReadyIssueResult>(
+      {
+        workflowId: 'workflow-shell-specify-needs-input-test',
+        workflowInput: { startPhase: 'specify' },
+        activities: {
+          async getTopBacklogIssue() { calls.push('getTopBacklogIssue'); return issue; },
+          async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
+          async listIssueComments() { calls.push('listIssueComments'); return []; },
+          async readOpenSpecChangeFiles() { calls.push('readOpenSpecChangeFiles'); return []; },
+          async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
+          async runAgentSequence() {
+            runAgentSequenceCallCount += 1;
+            calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+            if (runAgentSequenceCallCount === 1) {
+              return {
+                threadId: `specify-thread-${runAgentSequenceCallCount}`,
+                completedStepIds: ['specify'],
+                outputs: {
+                  specifyResponse: {
+                    files: [
+                      { path: 'proposal.md', content: '# Proposal' },
+                      { path: 'tasks.md', content: '# Tasks' },
+                    ],
+                    openQuestions: ['What API shape should this use?'],
+                    assumptions: [],
+                    risks: [],
+                  },
+                } as any,
+                finalResponse: JSON.stringify({ needsInput: true }),
+              };
+            }
+
+            if (runAgentSequenceCallCount === 2) {
+              return {
+                threadId: 'specify-thread-2',
+                completedStepIds: ['specify'],
+                outputs: {
+                  specifyResponse: {
+                    files: [
+                      { path: 'proposal.md', content: '# Proposal' },
+                      { path: 'tasks.md', content: '# Tasks' },
+                    ],
+                    openQuestions: [],
+                    assumptions: [],
+                    risks: [],
+                  },
+                } as any,
+                finalResponse: JSON.stringify({ refined: true }),
+              };
+            }
+
+            return {
+              threadId: 'implement-thread-123',
+              completedStepIds: ['edit', 'change-metadata'],
+              outputs: { changeMetadata: buildGeneratedChangeMetadata() },
+              finalResponse: JSON.stringify(buildGeneratedChangeMetadata()),
+            };
+          },
+          async writeOpenSpecChangeFiles() { calls.push('writeOpenSpecChangeFiles'); },
+          async validateOpenSpecChange() { calls.push('validateOpenSpecChange'); },
+          async commitAndPush() { calls.push('commitAndPush'); },
+          async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
+          async upsertIssueComment() { calls.push('upsertIssueComment'); },
+          async cleanupWorktree() { calls.push('cleanupWorktree'); },
+          async commentOnIssue() { calls.push('commentOnIssue'); },
+          async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
+        },
+      },
+      async (handle) => {
+        assert.strictEqual(await waitForBlockedReason(handle, 'specify_needs_input'), 'specify_needs_input');
+        await handle.signal(resumeSignal);
+        assert.strictEqual(await handle.query(getBlockedReasonQuery), 'specify_needs_input');
+        await handle.signal(specifyRetrySignal);
+        assert.strictEqual(await waitForBlockedReason(handle, 'awaiting_spec_review'), 'awaiting_spec_review');
+        await handle.signal(specReviewedSignal);
+        return handle.result();
+      },
+    );
+
+    assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
+    assert.strictEqual(runAgentSequenceCallCount, 3);
+    assert.strictEqual(calls.filter((call) => call === 'getTopBacklogIssue').length, 1);
+    assert.strictEqual(calls.filter((call) => call === 'upsertIssueComment').length, 2);
+    assert.ok(calls.includes('getTopReadyIssue'));
+    assert.ok(calls.includes('commentOnIssue'));
   });
 
   it('surfaces implement-phase failure state before rethrowing the activity error', async () => {
@@ -130,7 +262,7 @@ describe('workflow phased shell', function () {
         },
       },
       async (handle) => {
-        assert.strictEqual(await waitForBlockedReason(handle), 'implement_needs_input');
+        assert.strictEqual(await waitForBlockedReason(handle, 'implement_needs_input'), 'implement_needs_input');
         failureGate.resolve();
         await assert.rejects(handle.result(), /Workflow execution failed/);
       },
@@ -157,16 +289,17 @@ describe('workflow phased shell', function () {
 
 async function waitForBlockedReason(
   handle: Parameters<typeof runWorkflowWithHandle>[1] extends (handle: infer T) => Promise<unknown> ? T : never,
+  expectedBlockedReason: string,
 ): Promise<string> {
   for (let attempt = 0; attempt < 400; attempt += 1) {
     const blockedReason = await handle.query(getBlockedReasonQuery);
-    if (blockedReason === 'implement_needs_input') {
+    if (blockedReason === expectedBlockedReason) {
       return blockedReason;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
-  throw new assert.AssertionError({ message: 'Timed out waiting for implement_needs_input blocked reason.' });
+  throw new assert.AssertionError({ message: `Timed out waiting for ${expectedBlockedReason} blocked reason.` });
 }
 
 function createDeferred<T>() {

@@ -15,6 +15,9 @@ export const DEFAULT_READY_STATUS = 'Ready';
 export const DEFAULT_IN_PROGRESS_STATUS = 'In progress';
 export const DEFAULT_IN_REVIEW_STATUS = 'In review';
 export const DEFAULT_BLOCKED_STATUS = 'Blocked';
+export const DEFAULT_BACKLOG_STATUS = 'Backlog';
+export const DEFAULT_REFINEMENT_STATUS = 'Refinement';
+export const DEFAULT_REFINED_STATUS = 'Refined';
 export const DEFAULT_BRANCH_PREFIX = 'orchestrator';
 export const DEFAULT_FILE_PATH_PREFIX = 'orchestrator-runs';
 
@@ -67,6 +70,9 @@ export interface AutomateReadyIssueInput {
   projectOwner: string;
   projectNumber: number;
   startPhase?: WorkflowPhase;
+  backlogStatusName?: string;
+  refinementStatusName?: string;
+  refinedStatusName?: string;
   readyStatusName?: string;
   inReviewStatusName?: string;
   blockedStatusName?: string;
@@ -78,6 +84,9 @@ export interface SelectedProjectIssue {
   projectId: string;
   projectItemId: string;
   statusFieldId: string;
+  backlogOptionId: string;
+  refinementOptionId: string;
+  refinedOptionId: string;
   readyOptionId: string;
   inProgressOptionId: string;
   inReviewOptionId: string;
@@ -89,6 +98,9 @@ export interface SelectedProjectIssue {
   repoOwner: string;
   repoName: string;
   defaultBranch: string;
+  backlogStatusName: string;
+  refinementStatusName: string;
+  refinedStatusName: string;
   readyStatusName: string;
   inReviewStatusName: string;
 }
@@ -129,10 +141,11 @@ export interface AgentStructuredStep {
 }
 
 export type AgentStep = AgentPromptStep | AgentStructuredStep;
-export type AgentSchemaId = 'change-metadata-v1';
+export type AgentSchemaId = 'change-metadata-v1' | 'specify-response-v1';
 
+export const SPECIFY_RESPONSE_OUTPUT_KEY = 'specifyResponse';
 export const CHANGE_METADATA_OUTPUT_KEY = 'changeMetadata';
-export const AGENT_OUTPUT_KEYS = [CHANGE_METADATA_OUTPUT_KEY] as const;
+export const AGENT_OUTPUT_KEYS = [SPECIFY_RESPONSE_OUTPUT_KEY, CHANGE_METADATA_OUTPUT_KEY] as const;
 
 export type AgentOutputKey = (typeof AGENT_OUTPUT_KEYS)[number];
 
@@ -167,6 +180,8 @@ export interface OpenPullRequestInput {
   worktree: WorktreeContext;
   title?: string;
   body?: string;
+  draft?: boolean;
+  updateIfExists?: boolean;
 }
 
 export interface CleanupWorktreeInput {
@@ -185,6 +200,44 @@ export interface IssueCommentInput {
   repoName: string;
   issueNumber: number;
   pullRequestUrl: string;
+}
+
+export interface IssueComment {
+  id: number;
+  body: string;
+}
+
+export interface ListIssueCommentsInput {
+  repoOwner: string;
+  repoName: string;
+  issueNumber: number;
+}
+
+export interface UpsertIssueCommentInput {
+  repoOwner: string;
+  repoName: string;
+  issueNumber: number;
+  marker: string;
+  body: string;
+}
+
+export interface OpenSpecChangeFile {
+  path: string;
+  content: string;
+}
+
+export interface ReadOpenSpecChangeFilesInput {
+  worktree: WorktreeContext;
+  changeName: string;
+}
+
+export interface WriteOpenSpecChangeFilesInput extends ReadOpenSpecChangeFilesInput {
+  files: OpenSpecChangeFile[];
+}
+
+export interface ValidateOpenSpecChangeInput {
+  worktree: WorktreeContext;
+  changeName: string;
 }
 
 export interface MoveProjectItemStatusInput {

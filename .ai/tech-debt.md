@@ -17,3 +17,10 @@
 
 - Review phase is a terminal no-op: `currentPhase` transitions to `'review'` then the workflow returns immediately. Wire the review-phase retry loop when review-phase activities are implemented.
 - `implementRetry` and `resume` signal handlers are registered but permanently gated off (`const false`). Activate them with their respective phase loops when implement/review retry logic is added.
+
+## From Task 4 review (20260428T094730759513Z)
+
+- `openspec` binary availability is assumed but not verified at worker startup. If missing, `execFile` throws a cryptic `ENOENT`. Add a startup check or wrap the error with a better message.
+- `seedIssueInProject` parameter `initialStatusName` (`e2e/src/live-github.ts`) accepts untyped `string` instead of `ProjectStatusName`. Add the type annotation to catch invalid status names at compile time.
+- `isRetryableProjectSelectionError` (`e2e/src/live-github.ts`) only recognizes "Ready" and "Backlog" error messages. Future phases selecting from other statuses would not be retried. Consider a generic pattern match.
+- `updatePullRequest` (`activity-github-pull-request.ts`) falls back to dummy title/body defaults when none is provided. Currently all callers supply explicit values, but the fallback is misleading for future use. Consider requiring title/body or separating the update signature.

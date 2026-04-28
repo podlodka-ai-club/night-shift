@@ -1,4 +1,4 @@
-import { access, appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { Context } from '@temporalio/activity';
 import { execa } from 'execa';
 
@@ -55,6 +55,8 @@ export interface CommandDeps {
 export interface FileSystemDeps {
   access: (targetPath: string) => Promise<void>;
   mkdir: typeof mkdir;
+  readdir: typeof readdir;
+  readFile: typeof readFile;
   appendFile: (targetPath: string, data: string, encoding: BufferEncoding) => Promise<void>;
   writeFile: (targetPath: string, data: string, encoding: BufferEncoding) => Promise<void>;
 }
@@ -98,6 +100,8 @@ export function createActivityDependencies(): ActivityDependencies {
     getGitHubToken: () => getProcessGitHubToken(),
     access,
     mkdir,
+    readdir,
+    readFile,
     appendFile: (targetPath, data, encoding) => appendFile(targetPath, data, encoding),
     writeFile: (targetPath, data, encoding) => writeFile(targetPath, data, encoding),
     execFile: defaultExecFile,

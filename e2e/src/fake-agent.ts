@@ -53,6 +53,21 @@ async function runFakeTurn(
   }
 
   if (state.turnCount === 1) {
+    if (options?.outputSchema && prompt.includes('OpenSpec proposal')) {
+      return {
+        finalResponse: JSON.stringify({
+          files: [
+            { path: 'proposal.md', content: '# Proposal\n\n## Why\n- Support deterministic phases in the live fake-agent harness.' },
+            { path: 'tasks.md', content: '# Tasks\n\n- [ ] Review and approve the proposed spec.' },
+            { path: 'specs/e2e/spec.md', content: '## ADDED Requirements\n### Requirement: Fake agent e2e validation\nThe fake-agent e2e path MUST prove the specify gate can be approved and resumed.' },
+          ],
+          openQuestions: [],
+          assumptions: [],
+          risks: [],
+        }),
+      };
+    }
+
     await writeDeterministicChange(baseDeps, state.worktreePath, state.runMarker);
     return {
       finalResponse: `Fake agent applied deterministic repository change for ${state.runMarker}.`,
