@@ -1,6 +1,7 @@
 import { after, before } from 'mocha';
 import assert from 'assert';
 import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
+import type { WorkflowHandle } from '@temporalio/client';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import {
   DefaultLogger,
@@ -13,6 +14,7 @@ import {
 import { automateTopReadyIssue } from '../workflows';
 import {
   TASK_QUEUE,
+  type AutomateReadyIssueInput,
   type CreatedPullRequest,
   type IssueCommentInput,
   type MoveProjectItemStatusInput,
@@ -25,6 +27,7 @@ type WorkflowRunInput = {
   workflowId: string;
   activities: WorkflowActivities;
   expectedWorkerWarnings?: readonly ExpectedWorkerWarning[];
+  workflowInput?: Partial<AutomateReadyIssueInput>;
 };
 
 let currentExpectedWorkerWarnings: readonly ExpectedWorkerWarning[] = [];
@@ -63,7 +66,7 @@ export function createWorkflowTestRig() {
         testEnv.client.workflow.execute(automateTopReadyIssue, {
           taskQueue: TASK_QUEUE,
           workflowId: input.workflowId,
-          args: [{ projectOwner: 'Mugenor', projectNumber: 1 }],
+          args: [buildWorkflowInput(input.workflowInput)],
         }),
       );
     } finally {
@@ -72,7 +75,45 @@ export function createWorkflowTestRig() {
     }
   }
 
-  return { runWorkflow };
+  async function runWorkflowWithHandle<T>(
+    input: WorkflowRunInput,
+    callback: (handle: WorkflowHandle<typeof automateTopReadyIssue>) => Promise<T>,
+  ): Promise<T> {
+    const previousExpectedWarnings = currentExpectedWorkerWarnings;
+    currentExpectedWorkerWarnings = input.expectedWorkerWarnings ?? [];
+
+    try {
+      const worker = await Worker.create({
+        connection: testEnv.nativeConnection,
+        taskQueue: TASK_QUEUE,
+        workflowsPath: require.resolve('../workflows'),
+        activities: wrapActivitiesWithExpectedFailures(input.activities, currentExpectedWorkerWarnings),
+      });
+
+      return worker.runUntil(async () => {
+        const handle = await testEnv.client.workflow.start(automateTopReadyIssue, {
+          taskQueue: TASK_QUEUE,
+          workflowId: input.workflowId,
+          args: [buildWorkflowInput(input.workflowInput)],
+        });
+
+        return callback(handle);
+      });
+    } finally {
+      await settleExpectedWarningLogging();
+      currentExpectedWorkerWarnings = previousExpectedWarnings;
+    }
+  }
+
+  return { runWorkflow, runWorkflowWithHandle };
+}
+
+function buildWorkflowInput(overrides: Partial<AutomateReadyIssueInput> | undefined): AutomateReadyIssueInput {
+  return {
+    projectOwner: 'Mugenor',
+    projectNumber: 1,
+    ...overrides,
+  };
 }
 
 function wrapActivitiesWithExpectedFailures(

@@ -1,0 +1,37 @@
+{
+  "artifactPath": null,
+  "previousReviewPath": null,
+  "artifactSlug": "diff-only",
+  "runId": "20260428T080019719244Z",
+  "repoRoot": "/Users/ich776/pocs/agent-orchestrator",
+  "branch": "feat/temporal-simplest-workflow",
+  "requestedScope": "Task 3 deterministic phases migration (phased workflow shell). Review the current uncommitted changes for conformance to task-3.md acceptance criteria only. Focus on concrete material issues in orchestrator/src/workflows.ts, orchestrator/src/shared.ts, orchestrator/src/mocha/workflow-shell.test.ts, and orchestrator/src/mocha/workflow-test-helpers.ts. Local make check and e2e live:fake are green; report only remaining material findings.",
+  "extraInstructions": null,
+  "reviewMode": "branch-only",
+  "actualReviewMode": "branch-only",
+  "reviewer": "auggie",
+  "requiredModel": "opus4.6",
+  "reviewStatus": "completed_with_fallback",
+  "reviewLifecycleStatus": "full_review_completed",
+  "fallbackReason": "task-3.md not found in repository; reviewed diff against inferred acceptance criteria",
+  "verification": {
+    "attempted": false,
+    "fixed": 0,
+    "partiallyFixed": 0,
+    "notFixed": 0,
+    "notApplicable": 0
+  },
+  "counts": {
+    "mustFix": 0,
+    "shouldFix": 2,
+    "outOfScope": 2,
+    "rejected": 2
+  },
+  "artifacts": {
+    "runDir": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T080019719244Z",
+    "review": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T080019719244Z/review.md",
+    "meta": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T080019719244Z/meta.json",
+    "techDebt": "/Users/ich776/pocs/agent-orchestrator/.ai/tech-debt.md",
+    "prompt": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T080019719244Z/auggie-review-prompt.md"
+  }
+}

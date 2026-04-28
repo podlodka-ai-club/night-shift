@@ -61,8 +61,13 @@ For each task from Task 1 to Task 9:
 
 ### Task 3
 
-- Status: not started
+- Status: complete
 - Notes:
+  - [Origin: Task 3 | Relevant to: Tasks 4-6, 8-9] `orchestrator/src/workflows.ts` is now a phased shell that tracks `startPhase`, `currentPhase`, `blockedReason`, review-iteration metadata, and markdown `setCurrentDetails()` output. Later phase ports should mutate this shared shell state rather than bypassing it with phase-local ad hoc flags.
+  - [Origin: Task 3 | Relevant to: Tasks 4-6, 8-9] Workflow-facing phase-control contracts now live in code as exported Temporal definitions (`specifyRetrySignal`, `specReviewedSignal`, `implementRetrySignal`, `resumeSignal`, `activityProgressSignal`, `getBlockedReasonQuery`). Reuse these exports from future trigger/test code instead of re-copying signal/query names.
+  - [Origin: Task 3 | Relevant to: Tasks 4-6] `orchestrator/src/mocha/workflow-test-helpers.ts` now supports `workflowInput` overrides and `runWorkflowWithHandle(...)`, which made signal/query testing possible. Use this helper for future Specify/Implement/Review shell tests instead of building parallel Temporal harness code.
+  - [Origin: Task 3 | Relevant to: Tasks 4-6] The `specify` and `review` phases are still shell placeholders: `specify` currently blocks on approval and `review` is a terminal no-op after successful implement execution. Task 4 and Task 6 should replace those placeholders while preserving the now-tested `implement` entry path.
+  - [Origin: Task 3 | Relevant to: Tasks 4-9] Task 3 verification is green via `make check`, a clean second `review-code` pass, and a live fake-agent E2E run on 2026-04-28 against `Mugenor/orchestrator-testing` + Project `Mugenor/1` (`runId=5f75c302`, statuses `Ready -> In progress -> In review`, cleanup succeeded with no failures). Reuse the same auth context/targets for later live GitHub-backed validation unless the pinned target changes.
 
 ### Task 4
 

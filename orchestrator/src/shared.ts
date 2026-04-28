@@ -34,6 +34,10 @@ export type WorkflowBlockedReason = (typeof WORKFLOW_BLOCKED_REASONS)[number];
 
 export const WORKFLOW_SIGNAL_NAMES = ['specifyRetry', 'specReviewed', 'implementRetry', 'resume'] as const;
 export type WorkflowSignalName = (typeof WORKFLOW_SIGNAL_NAMES)[number];
+export const WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME = 'activityProgress';
+
+export const WORKFLOW_PHASES = ['specify', 'implement', 'review'] as const;
+export type WorkflowPhase = (typeof WORKFLOW_PHASES)[number];
 
 export const BLOCKED_REASON_BOARD_SIGNAL_RULES = [
   { blockedReason: 'specify_needs_input', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
@@ -62,6 +66,7 @@ export interface ResolvedProjectStatusOptions {
 export interface AutomateReadyIssueInput {
   projectOwner: string;
   projectNumber: number;
+  startPhase?: WorkflowPhase;
   readyStatusName?: string;
   inReviewStatusName?: string;
   blockedStatusName?: string;
