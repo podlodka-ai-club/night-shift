@@ -1,4 +1,4 @@
-.PHONY: help install check test-all test test-orchestrator test-e2e build build-orchestrator build-e2e lint format worker workflow e2e-live-fake e2e-live-real
+.PHONY: help install check test-all test test-orchestrator test-e2e build build-orchestrator build-e2e lint format worker workflow e2e-live-fake e2e-live-fake-pickup e2e-live-real
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*## "; print "Available targets:"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -42,6 +42,9 @@ workflow: ## Run the orchestrator workflow client (pass args with ARGS="...")
 
 e2e-live-fake: ## Run the live e2e suite in fake-agent mode
 	npm --workspace e2e run live:fake
+
+e2e-live-fake-pickup: ## Run the live e2e suite in fake-agent mode through pickupWorkflow
+	npm --workspace e2e run live:fake:pickup
 
 e2e-live-real: ## Run the live e2e suite in real-agent mode
 	npm --workspace e2e run live:real

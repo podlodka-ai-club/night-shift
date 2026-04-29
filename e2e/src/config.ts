@@ -1,4 +1,5 @@
 export type E2EAgentMode = 'real' | 'fake';
+export type E2EIntakeMode = 'manual' | 'pickup';
 
 export interface E2EConfig {
   targetRepo: {
@@ -8,6 +9,7 @@ export interface E2EConfig {
   projectOwner: string;
   projectNumber: number;
   agentMode: E2EAgentMode;
+  intakeMode: E2EIntakeMode;
   cleanup: boolean;
   preserveOnFailure: boolean;
   githubToken: string;
@@ -19,6 +21,7 @@ export function parseE2EConfig(env: NodeJS.ProcessEnv): E2EConfig {
     projectOwner: readRequired(env, 'E2E_PROJECT_OWNER'),
     projectNumber: parsePositiveInteger(readRequired(env, 'E2E_PROJECT_NUMBER'), 'E2E_PROJECT_NUMBER'),
     agentMode: parseAgentMode(readRequired(env, 'E2E_AGENT_MODE')),
+    intakeMode: parseIntakeMode(env.E2E_INTAKE_MODE ?? 'manual'),
     cleanup: parseBooleanFlag(env.E2E_CLEANUP ?? 'true', 'E2E_CLEANUP'),
     preserveOnFailure: parseBooleanFlag(env.E2E_PRESERVE_ON_FAILURE ?? 'true', 'E2E_PRESERVE_ON_FAILURE'),
     githubToken: readGitHubToken(env),
@@ -62,6 +65,13 @@ function parseAgentMode(rawValue: string): E2EAgentMode {
     return rawValue;
   }
   throw new Error('E2E_AGENT_MODE must be "real" or "fake".');
+}
+
+function parseIntakeMode(rawValue: string): E2EIntakeMode {
+  if (rawValue === 'manual' || rawValue === 'pickup') {
+    return rawValue;
+  }
+  throw new Error('E2E_INTAKE_MODE must be "manual" or "pickup".');
 }
 
 function parseBooleanFlag(rawValue: string, key: string): boolean {

@@ -24,6 +24,7 @@ function createTestConfig(): E2EConfig {
     projectOwner: TEST_REPO_OWNER,
     projectNumber: 1,
     agentMode: 'fake',
+    intakeMode: 'manual',
     cleanup: true,
     preserveOnFailure: true,
     githubToken: 'test-token',

@@ -6,6 +6,7 @@
     "build": "tsc --build",
     "live": "ts-node src/run-e2e.ts",
     "live:fake": "E2E_AGENT_MODE=fake ts-node src/run-e2e.ts",
+    "live:fake:pickup": "E2E_AGENT_MODE=fake E2E_INTAKE_MODE=pickup ts-node src/run-e2e.ts",
     "live:real": "E2E_AGENT_MODE=real ts-node src/run-e2e.ts",
     "test": "mocha --exit --require ts-node/register src/**/*.test.ts"
   },

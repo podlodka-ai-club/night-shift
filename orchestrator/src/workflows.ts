@@ -12,6 +12,8 @@ import {
   WORKFLOW_SIGNAL_NAMES,
 } from './shared';
 import type * as activities from './activities';
+import type { IntakeCandidate } from './intake';
+import type { PickupWorkflowInput } from './pickup';
 import { runImplementPhase } from './phases/implement/phase';
 import { runReviewPhase } from './phases/review/phase';
 import { runSpecifyPhase } from './phases/specify/phase';
@@ -50,6 +52,23 @@ const {
   moveProjectItemStatus,
   cleanupWorktree,
 } = proxyActivities<typeof activities>({
+  retry: {
+    maximumAttempts: 3,
+  },
+  startToCloseTimeout: '2 minutes',
+});
+
+const {
+  scanPickupCandidates,
+  startPickupWorkflows,
+} = proxyActivities<{
+  scanPickupCandidates(input: AutomateReadyIssueInput): Promise<IntakeCandidate[]>;
+  startPickupWorkflows(input: {
+    workflowInput: AutomateReadyIssueInput;
+    candidates: IntakeCandidate[];
+    maxActions: number;
+  }): Promise<unknown>;
+}>({
   retry: {
     maximumAttempts: 3,
   },
@@ -363,6 +382,18 @@ export async function automateTopReadyIssue(
   }
 
   throw new Error('Workflow exited the implement phase unexpectedly.');
+}
+
+export async function pickupWorkflow(input: PickupWorkflowInput): Promise<void> {
+  const candidates = await scanPickupCandidates(input.workflowInput);
+  if (candidates.length === 0) {
+    return;
+  }
+  await startPickupWorkflows({
+    workflowInput: input.workflowInput,
+    candidates,
+    maxActions: input.maxActions,
+  });
 }
 
 export function renderWorkflowCurrentDetails(state: WorkflowShellState): string {

@@ -4,13 +4,17 @@ import { Worker } from '@temporalio/worker';
 import { createActivities, createActivityDependencies } from '../../orchestrator/lib/activities';
 import { createGitHubActivities } from '../../orchestrator/lib/activity-github';
 import type { ActivityRuntimes } from '../../orchestrator/lib/activity-deps';
-import { TASK_QUEUE, type AutomateReadyIssueResult, type ProjectStatusName, type SelectedProjectIssue } from '../../orchestrator/lib/shared';
+import { TASK_QUEUE, type AutomateReadyIssueInput, type AutomateReadyIssueResult, type ProjectStatusName, type SelectedProjectIssue } from '../../orchestrator/lib/shared';
 import {
   buildIssueWorkflowId,
   createTemporalWorkflowTriggerDeps,
   handleWorkflowTrigger,
+  type IntakeCandidate,
+  loadPickupCandidates,
   loadManualCandidate,
+  runPickupIntake,
 } from '../../orchestrator/lib/intake';
+import { pickupWorkflow } from '../../orchestrator/lib/workflows';
 import { parseE2EConfig, type E2EConfig } from './config';
 import { createFakeAgentDeps } from './fake-agent';
 import {
@@ -61,6 +65,22 @@ export interface E2ERunSummary {
   preservedArtifacts: boolean;
 }
 
+export async function runConfiguredIntake(
+  config: Pick<E2EConfig, 'intakeMode'>,
+  deps: {
+    executePickupWorkflow(): Promise<void>;
+    executeManualIntake(): Promise<void>;
+    awaitWorkflowResult(): Promise<AutomateReadyIssueResult>;
+  },
+): Promise<AutomateReadyIssueResult> {
+  if (config.intakeMode === 'pickup') {
+    await deps.executePickupWorkflow();
+  } else {
+    await deps.executeManualIntake();
+  }
+  return deps.awaitWorkflowResult();
+}
+
 export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ERunSummary> {
   const config = parseE2EConfig(env);
   const runId = randomUUID().slice(0, 8);
@@ -97,7 +117,7 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
     try {
       const poller = startStatusPoller(githubDeps, seededIssue.projectItemId, observedStatuses);
       try {
-        workflowResult = await runWorkflowOnce(testEnv, config, branchPrefix, filePathPrefix, startPhase, selectedIssue);
+        workflowResult = await runWorkflowOnce(testEnv, config, runId, branchPrefix, filePathPrefix, startPhase, selectedIssue);
       } finally {
         observedStatuses = await poller.stop();
         await recordCurrentProjectItemStatus(githubDeps, seededIssue.projectItemId, observedStatuses);
@@ -169,6 +189,7 @@ async function recordCurrentProjectItemStatus(
 async function runWorkflowOnce(
   testEnv: TestWorkflowEnvironment,
   config: E2EConfig,
+  runId: string,
   branchPrefix: string,
   filePathPrefix: string,
   startPhase: 'implement' | 'specify',
@@ -190,7 +211,24 @@ async function runWorkflowOnce(
     connection: testEnv.nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowsPath: require.resolve('../../orchestrator/lib/workflows'),
-    activities: createActivities(runtimes),
+    activities: {
+      ...createActivities(runtimes),
+      async scanPickupCandidates(workflowInput: AutomateReadyIssueInput) {
+        return loadPickupCandidates(createGitHubActivities(runtimes.github), workflowInput);
+      },
+      async startPickupWorkflows(input: {
+        workflowInput: AutomateReadyIssueInput;
+        candidates: IntakeCandidate[];
+        maxActions: number;
+      }) {
+        return runPickupIntake(
+          createTemporalWorkflowTriggerDeps(testEnv.client.workflow),
+          input.workflowInput,
+          input.candidates,
+          input.maxActions,
+        );
+      },
+    },
   });
 
   return worker.runUntil(async () => {
@@ -200,24 +238,36 @@ async function runWorkflowOnce(
       branchPrefix,
       filePathPrefix,
     };
-    const candidate = await loadManualCandidate(
-      createGitHubActivities(runtimes.github),
-      workflowInput,
-      startPhase === 'specify' ? 'Backlog' : 'Ready',
-    );
-    if (!candidate) {
-      throw new Error(`Could not resolve a ${startPhase === 'specify' ? 'Backlog' : 'Ready'} intake candidate for the e2e run.`);
-    }
-    const action = await handleWorkflowTrigger(
-      createTemporalWorkflowTriggerDeps(testEnv.client.workflow),
-      { ...workflowInput, startPhase },
-      candidate,
-    );
-    if (action.type === 'noop') {
-      throw new Error(`E2E intake unexpectedly became a no-op (${action.reason}) for workflow ${action.workflowId}.`);
-    }
-    const handle = testEnv.client.workflow.getHandle(action.workflowId);
-    return handle.result();
+    return runConfiguredIntake(config, {
+      async executePickupWorkflow() {
+        await testEnv.client.workflow.execute(pickupWorkflow, {
+          taskQueue: TASK_QUEUE,
+          workflowId: `pickup-e2e-${runId}`,
+          args: [{ workflowInput, maxActions: 1 }],
+        });
+      },
+      async executeManualIntake() {
+        const candidate = await loadManualCandidate(
+          createGitHubActivities(runtimes.github),
+          workflowInput,
+          startPhase === 'specify' ? 'Backlog' : 'Ready',
+        );
+        if (!candidate) {
+          throw new Error(`Could not resolve a ${startPhase === 'specify' ? 'Backlog' : 'Ready'} intake candidate for the e2e run.`);
+        }
+        const action = await handleWorkflowTrigger(
+          createTemporalWorkflowTriggerDeps(testEnv.client.workflow),
+          { ...workflowInput, startPhase },
+          candidate,
+        );
+        if (action.type === 'noop') {
+          throw new Error(`E2E intake unexpectedly became a no-op (${action.reason}) for workflow ${action.workflowId}.`);
+        }
+      },
+      async awaitWorkflowResult() {
+        return testEnv.client.workflow.getHandle(buildIssueWorkflowId(selectedIssue.issueNumber)).result();
+      },
+    });
   });
 }
 

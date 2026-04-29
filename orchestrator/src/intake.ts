@@ -7,7 +7,6 @@ import {
   type ListedProjectIssue,
   type ListProjectIssuesByStatusInput,
   type ProjectStatusName,
-  type SelectedProjectIssue,
   type WorkflowBlockedReason,
   type WorkflowPhase,
   type WorkflowSignalName,
@@ -24,7 +23,7 @@ import {
 type StartPhase = Extract<WorkflowPhase, 'specify' | 'implement'>;
 
 export interface IntakeCandidate {
-  issue: SelectedProjectIssue | ListedProjectIssue;
+  issue: { issueNumber: number };
   boardStatusName: ProjectStatusName;
   createdAt: string;
   startPhase?: StartPhase;

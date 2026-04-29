@@ -1,7 +1,15 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
+import type { AutomateReadyIssueResult } from '../../orchestrator/lib/shared';
 import type { E2EConfig } from './config';
-import { FAKE_E2E_QUALITY_GATE_FILE, recordObservedStatus, resolveSeedStatus, resolveStartPhase, shouldCleanup } from './run-e2e';
+import {
+  FAKE_E2E_QUALITY_GATE_FILE,
+  recordObservedStatus,
+  resolveSeedStatus,
+  resolveStartPhase,
+  runConfiguredIntake,
+  shouldCleanup,
+} from './run-e2e';
 
 function createTestConfig(): E2EConfig {
   return {
@@ -9,6 +17,7 @@ function createTestConfig(): E2EConfig {
     projectOwner: 'Mugenor',
     projectNumber: 1,
     agentMode: 'fake',
+    intakeMode: 'manual',
     cleanup: true,
     preserveOnFailure: true,
     githubToken: 'test-token',
@@ -47,6 +56,54 @@ describe('recordObservedStatus', () => {
   });
 });
 
+describe('runConfiguredIntake', () => {
+  it('dispatches to pickupWorkflow when intakeMode is pickup', async () => {
+    const calls: string[] = [];
+    const result = buildWorkflowResult();
+
+    const observed = await runConfiguredIntake(
+      { intakeMode: 'pickup' },
+      {
+        async executePickupWorkflow() {
+          calls.push('pickup');
+        },
+        async executeManualIntake() {
+          calls.push('manual');
+        },
+        async awaitWorkflowResult() {
+          calls.push('result');
+          return result;
+        },
+      },
+    );
+
+    assert.deepStrictEqual(calls, ['pickup', 'result']);
+    assert.strictEqual(observed, result);
+  });
+
+  it('dispatches to manual intake when intakeMode is manual', async () => {
+    const calls: string[] = [];
+
+    await runConfiguredIntake(
+      { intakeMode: 'manual' },
+      {
+        async executePickupWorkflow() {
+          calls.push('pickup');
+        },
+        async executeManualIntake() {
+          calls.push('manual');
+        },
+        async awaitWorkflowResult() {
+          calls.push('result');
+          return buildWorkflowResult();
+        },
+      },
+    );
+
+    assert.deepStrictEqual(calls, ['manual', 'result']);
+  });
+});
+
 describe('resolveStartPhase', () => {
   it('starts fake-agent runs at Implement so the harness can seed an approved spec bundle', () => {
     assert.strictEqual(resolveStartPhase('fake'), 'implement');
@@ -75,3 +132,16 @@ describe('FAKE_E2E_QUALITY_GATE_FILE', () => {
     assert.match(FAKE_E2E_QUALITY_GATE_FILE.content, /fake e2e quality gate passed/);
   });
 });
+
+function buildWorkflowResult(): AutomateReadyIssueResult {
+  return {
+    issueNumber: 77,
+    issueTitle: 'Seeded issue',
+    issueUrl: 'https://github.com/Mugenor/orchestrator-testing/issues/77',
+    pullRequestNumber: 12,
+    pullRequestUrl: 'https://github.com/Mugenor/orchestrator-testing/pull/12',
+    branchName: 'orchestrator-e2e-run-123/issue-77',
+    filePath: 'orchestrator-e2e/run-123',
+    targetStatusName: 'Ready to merge',
+  };
+}
