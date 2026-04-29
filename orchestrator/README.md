@@ -76,9 +76,63 @@ cd orchestrator
 npm start
 ```
 
-The worker connects to Temporal at `localhost:7233` and registers the orchestrator activities.
+The worker reads Temporal settings from the shared config layer and registers the orchestrator activities.
+
+Scheduled pickup is also **enabled by default** on worker startup. The worker ensures the Temporal schedule `pickup-schedule` exists, uses skip-overlap behavior, and triggers an immediate pickup tick when the schedule is first created.
+
+Use the config `pickup` block to disable or tune it:
+
+- `pickup.enabled` — set to `false` to opt out
+- `pickup.intervalSeconds` — schedule cadence (defaults to `10`)
+- `pickup.maxConcurrent` — max start/signal actions per tick (defaults to `5`)
+
+Quick operator summary:
+
+- `npm start` starts the worker and bootstraps scheduled pickup automatically
+- `pickup.enabled = false` disables schedule creation on startup
+- `pickup-schedule` is the stable Temporal schedule id used by the worker
+- `npm run workflow -- ...` remains the manual/one-off intake entrypoint
+- for the live GitHub harness, see `../e2e/README.md`
 
 ### Start a workflow run
+
+You can configure the worker/client with a TypeScript config file.
+
+- canonical name: `orchestrator.config.ts`
+- donor-compatible alias: `night-shift.config.ts`
+- sample file: copy the TypeScript example below into `orchestrator.config.ts`
+
+Configuration precedence for selecting the config file:
+
+1. `--config <path>` (also supports `--config=<path>`)
+2. `ORCHESTRATOR_CONFIG` env override
+3. `NIGHT_SHIFT_CONFIG` env override
+4. discovered config file in the current working directory
+
+If the selected config file lives next to a `.env`, that `.env` is loaded before the config file is imported.
+
+Example config:
+
+```ts
+import { defineOrchestratorConfig } from './src/config';
+
+export default defineOrchestratorConfig({
+  github: { projectOwner: 'your-org', projectNumber: 123 },
+  pickup: { enabled: true, intervalSeconds: 10, maxConcurrent: 5 },
+});
+```
+
+Key config fields:
+
+- `temporal.address` — Temporal endpoint, defaults to `localhost:7233`
+- `temporal.namespace` — Temporal namespace, defaults to `default`
+- `temporal.taskQueue` — worker/client task queue, defaults to `orchestrator`
+- `intake.maxActions` — default max actions for manual `pickup` CLI runs, defaults to `1`
+- `pickup.enabled` — whether worker startup creates/updates `pickup-schedule`, defaults to `true`
+- `pickup.intervalSeconds` — pickup schedule cadence, defaults to `10`
+- `pickup.maxConcurrent` — max pickup start/signal actions per schedule tick, defaults to `5`
+- `github.projectOwner` / `github.projectNumber` — Project v2 coordinates used by both worker and client
+- `github.branchPrefix` / `github.filePathPrefix` — naming prefixes for generated branch/file paths
 
 You can pass the GitHub project owner/number directly:
 
@@ -99,6 +153,14 @@ Or provide project coordinates through environment variables:
 - `GITHUB_PROJECT_OWNER`
 - `GITHUB_PROJECT_NUMBER`
 
+Or point either entrypoint at a specific config file:
+
+```bash
+cd orchestrator
+npm start -- --config ./orchestrator.config.ts
+npm run workflow -- --config ./orchestrator.config.ts pickup
+```
+
 Optional overrides:
 
 - `GITHUB_READY_STATUS`
@@ -107,6 +169,42 @@ Optional overrides:
 - `GITHUB_BRANCH_PREFIX`
 - `GITHUB_FILE_PATH_PREFIX`
 - `GITHUB_PICKUP_MAX_ACTIONS`
+
+Value precedence for client/manual intake is:
+
+1. positional CLI arguments
+2. `GITHUB_*` environment variables
+3. resolved config file values
+4. built-in defaults
+
+Temporal address/namespace precedence is:
+
+1. `TEMPORAL_ADDRESS` / `TEMPORAL_NAMESPACE`
+2. resolved config file values
+3. SDK defaults (`localhost:7233`, `default`)
+
+`taskQueue` comes from the resolved config file and defaults to `orchestrator`.
+
+`e2e` remains a deliberate temporary exception for this task: it still uses `e2e/src/config.ts` and its existing `E2E_*` environment-variable contract instead of the new shared config loader.
+
+### Common run recipes
+
+From `orchestrator/`:
+
+```bash
+npm start
+npm start -- --config ./orchestrator.config.ts
+npm run workflow -- <project-owner> <project-number> pickup 1
+npm run workflow -- <project-owner> <project-number> Backlog
+```
+
+From the repo root:
+
+```bash
+make worker
+make workflow ARGS="<project-owner> <project-number> pickup 1"
+make check
+```
 
 ### Useful verification commands
 

@@ -67,3 +67,12 @@
 
 - Partial worktree recovery (`isHealthyIssueWorktree`) only checks `rev-parse --show-toplevel`. A deeper health check (e.g. HEAD validity, index integrity) may be warranted if corruption patterns are observed in production. Low priority.
 - `cleanupLocalWorktree` deletes the local branch on success-path cleanup while the remote branch/PR still exists. Document or guard against re-entry after cleanup if the workflow is ever extended to allow post-cleanup operations on the same ticket.
+
+## From Task 10 review (20260429T090852608332Z)
+
+- E2E config migration: `e2e/src/config.ts` still uses its own `E2E_*` env-var contract instead of the shared config loader. Migrate to the shared config layer in a future task.
+
+## From Task 11 review (20260429T130449330320Z)
+
+- `createTemporalWorkflowTriggerDeps` (`intake.ts:179`) hardcodes `TASK_QUEUE` from `shared.ts` instead of accepting a configurable task queue parameter. If `config.temporal.taskQueue` differs from the constant, child workflows started by scheduled or manual pickup would be placed on the wrong queue. Pre-existing pattern affecting both the scheduled and manual CLI paths.
+- Webhook bridge/event ingestion remains explicitly deferred per task-11 scope.

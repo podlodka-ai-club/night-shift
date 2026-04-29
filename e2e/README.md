@@ -8,7 +8,8 @@ The runner seeds a real GitHub issue into a Project v2, starts a local Temporal 
 
 ## Modes
 
-- `live:fake` uses a deterministic fake agent and still talks to real GitHub + local Temporal.
+- `live:fake` uses a deterministic fake agent and talks to real GitHub + local Temporal through the default manual intake path.
+- `live:fake:pickup` uses the deterministic fake agent but starts the run through `pickupWorkflow` / scheduled-pickup semantics.
 - `live:real` runs the real agent path and verifies real PR metadata against GitHub.
 
 ## Required environment
@@ -22,8 +23,14 @@ Optional flags:
 
 - `E2E_CLEANUP` — `true`/`false`, defaults to `true`
 - `E2E_PRESERVE_ON_FAILURE` — `true`/`false`, defaults to `true`
+- `E2E_INTAKE_MODE` — `manual` or `pickup`, defaults to `manual`
 
-`E2E_AGENT_MODE` is set by the npm script (`live:fake` or `live:real`).
+`E2E_AGENT_MODE` is usually set by the npm script (`live:fake`, `live:fake:pickup`, or `live:real`).
+
+If you invoke `npm --workspace e2e run live` directly, set both:
+
+- `E2E_AGENT_MODE=fake|real`
+- `E2E_INTAKE_MODE=manual|pickup`
 
 ## Workspace install
 
@@ -35,10 +42,18 @@ From the repo root:
 - `npm --workspace e2e test`
 - `npm --workspace e2e run build`
 - `npm --workspace e2e run live:fake`
+- `npm --workspace e2e run live:fake:pickup`
 - `npm --workspace e2e run live:real`
+
+Or use the repo-root Make wrappers:
+
+- `make e2e-live-fake`
+- `make e2e-live-fake-pickup`
+- `make e2e-live-real`
 
 ## Notes
 
 - `live:real` assumes your local Codex/OpenAI auth is already working for the orchestrator runtime.
+- `live:fake:pickup` is the quickest live proof that the scheduled-pickup path can start/resume workflows end-to-end.
 - Cleanup closes the created issue/PR, removes the project item, and deletes the branch when enabled.
 - On failures, artifacts are preserved when `E2E_PRESERVE_ON_FAILURE=true`.
