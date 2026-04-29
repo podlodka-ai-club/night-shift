@@ -63,6 +63,11 @@ export function isPullRequestAlreadyExistsError(error: unknown): boolean {
   return message.includes('github request failed') && message.includes('422') && message.includes('pull request already exists');
 }
 
+export function isPullRequestSelfReviewError(error: unknown): boolean {
+  const message = toErrorMessage(error).toLowerCase();
+  return message.includes('github request failed') && message.includes('422') && message.includes('your own pull request');
+}
+
 export function isMissingProjectOwnerError(error: unknown, ownerType: 'User' | 'Organization'): boolean {
   return error instanceof Error && error.message.includes(`Could not resolve to a ${ownerType} with the login of`);
 }

@@ -1,4 +1,5 @@
 import type { GitHubActivityDeps } from './activity-deps';
+import { ApplicationFailure } from '@temporalio/common';
 import { buildNightShiftMarker } from './comment-markers';
 import type {
   AddIssueLabelsInput,
@@ -18,7 +19,7 @@ import type {
   UpsertIssueCommentInput,
   WorktreeContext,
 } from './shared';
-import { GITHUB_JSON_HEADERS, buildRepoApiPath, githubGraphql, githubRest, githubRestText, isPullRequestAlreadyExistsError } from './activity-github-client';
+import { GITHUB_JSON_HEADERS, buildRepoApiPath, githubGraphql, githubRest, githubRestText, isPullRequestAlreadyExistsError, isPullRequestSelfReviewError } from './activity-github-client';
 
 interface PullRequestResponse {
   number: number;
@@ -142,10 +143,20 @@ export async function setPullRequestReadyActivity(deps: GitHubActivityDeps, inpu
 
 export async function createPullRequestReviewActivity(deps: GitHubActivityDeps, input: CreatePullRequestReviewInput): Promise<void> {
   const repoPath = buildRepoApiPath(input.repoOwner, input.repoName);
-  await githubRest(deps, `${repoPath}/pulls/${input.pullRequestNumber}/reviews`, {
-    method: 'POST',
-    body: JSON.stringify({ event: input.event, body: input.body }),
-  });
+  try {
+    await githubRest(deps, `${repoPath}/pulls/${input.pullRequestNumber}/reviews`, {
+      method: 'POST',
+      body: JSON.stringify({ event: input.event, body: input.body }),
+    });
+  } catch (error) {
+    if (isPullRequestSelfReviewError(error)) {
+      throw ApplicationFailure.nonRetryable(
+        error instanceof Error ? error.message : String(error),
+        'GitHubSelfReviewNotAllowed',
+      );
+    }
+    throw error;
+  }
 }
 
 export async function upsertPullRequestReviewCommentActivity(

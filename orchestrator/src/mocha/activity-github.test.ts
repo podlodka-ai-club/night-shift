@@ -1,4 +1,5 @@
 import assert from 'assert';
+import { ApplicationFailure } from '@temporalio/common';
 import { describe, it } from 'mocha';
 import { buildIssueComment } from '../activities';
 import {
@@ -461,6 +462,28 @@ describe('github activities', () => {
         },
       },
     ]);
+  });
+
+  it('marks self-review 422 responses as non-retryable so workflow fallback can degrade cleanly', async () => {
+    const { createPullRequestReview } = createActivityTestRig({
+      github: {
+        fetch: createFetchSequenceMock([
+          jsonResponse({
+            message: 'Unprocessable Entity',
+            errors: ['Review Can not approve your own pull request'],
+            status: '422',
+          }, 422),
+        ], []),
+      },
+    });
+
+    await assert.rejects(
+      () => createPullRequestReview({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42, event: 'APPROVE', body: 'LGTM' }),
+      (error: unknown) => error instanceof ApplicationFailure
+        && error.nonRetryable === true
+        && error.type === 'GitHubSelfReviewNotAllowed'
+        && /own pull request/i.test(error.message),
+    );
   });
 
   it('comments on the issue with the opened pull request URL', async () => {
