@@ -31,8 +31,8 @@ data when needed — but we strive never to need it.
 
 | Adapter               | Provider        | Notes                                        |
 | --------------------- | --------------- | -------------------------------------------- |
-| `CodexAdapter`        | `codex`         | Shells out to the Codex CLI via the SDK      |
-| `ClaudeAgentAdapter`  | `claude-agent`  | M1 stub — throws on `openSession`            |
+| `CodexAdapter`        | `codex`         | Drives `@openai/codex-sdk` (Codex harness as a library) |
+| `ClaudeAgentAdapter`  | `claude-agent`  | Drives `@anthropic-ai/claude-agent-sdk`      |
 | `InMemoryFakeAdapter` | `fake`          | Deterministic scripted sessions for tests    |
 
 ## Auto-emission contract (`instrumentSession`)
@@ -76,6 +76,7 @@ shadowed by custom factories.
 ## Module boundary
 
 `src/adapters/**` may import from `src/contracts/**`, `@openai/codex-sdk`,
-`zod`, `node:fs/promises`, `node:path`, and its own siblings. It MUST NOT
-import from `src/config/**` at runtime (type-only imports are allowed). The
-`npm run lint:boundaries` script enforces this.
+`@anthropic-ai/claude-agent-sdk`, `zod`, `node:fs/promises`, `node:path`, and
+its own siblings. It MUST NOT import from `src/config/**` at runtime
+(type-only imports are allowed). The `npm run lint:boundaries` script enforces
+this.

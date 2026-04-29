@@ -4,6 +4,7 @@
 // Rules (source of truth for both phase-contracts and agent-adapter-api specs):
 //   src/contracts/** may import only: zod, and siblings within src/contracts/
 //   src/adapters/**  may import only: zod, @openai/codex-sdk,
+//                                      @anthropic-ai/claude-agent-sdk,
 //                                      node:fs/promises, node:path,
 //                                      src/contracts/**, and siblings within src/adapters/
 //   src/config/**    may import only: zod, node:fs, node:path, node:url,
@@ -29,7 +30,13 @@ const MODULES = [
     name: "adapters",
     dir: join(SRC, "adapters"),
     allowed: {
-      externals: new Set(["zod", "@openai/codex-sdk", "node:fs/promises", "node:path"]),
+      externals: new Set([
+        "zod",
+        "@openai/codex-sdk",
+        "@anthropic-ai/claude-agent-sdk",
+        "node:fs/promises",
+        "node:path",
+      ]),
       internal: ["src/contracts", "src/adapters"],
     },
   },

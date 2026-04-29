@@ -41,7 +41,8 @@ export interface CreateAgentOptions {
 export const BUILTIN_ADAPTER_FACTORIES: AgentAdapterRegistry = Object.freeze({
   codex: ({ pricingOverrides }: AgentAdapterFactoryContext) =>
     new CodexAdapter(pricingOverrides ? { pricingOverrides } : {}),
-  "claude-agent": () => new ClaudeAgentAdapter(),
+  "claude-agent": ({ pricingOverrides }: AgentAdapterFactoryContext) =>
+    new ClaudeAgentAdapter(pricingOverrides ? { pricingOverrides } : {}),
 });
 
 export function createAdapterRegistry(
