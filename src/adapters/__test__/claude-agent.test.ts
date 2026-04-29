@@ -211,6 +211,41 @@ describe("ClaudeAgentAdapter.run", () => {
     await expect(s.run("x")).rejects.toThrow(/error_max_turns.*hit cap/);
   });
 
+  it("returns structured_output as JSON-stringified finalText when schema set", async () => {
+    const structured = { answer: "pong", count: 4 };
+    const result = {
+      type: "result",
+      subtype: "success",
+      duration_ms: 0,
+      duration_api_ms: 0,
+      is_error: false,
+      num_turns: 1,
+      result: "Done! I returned the JSON.",
+      stop_reason: "end_turn",
+      total_cost_usd: 0,
+      usage: successUsage,
+      modelUsage: {},
+      permission_denials: [],
+      structured_output: structured,
+      uuid: "u-result",
+      session_id: "s-1",
+    } as unknown as SDKMessage;
+    const a = new ClaudeAgentAdapter({ queryFn: makeQueryFn([result]) });
+    const s = a.openSession(baseSessionOpts);
+    const r = await s.run("hi", { outputSchema: { type: "object" } });
+    expect(r.finalText).toBe(JSON.stringify(structured));
+    expect(JSON.parse(r.finalText)).toEqual(structured);
+  });
+
+  it("falls back to result.result when structured_output is absent", async () => {
+    const a = new ClaudeAgentAdapter({
+      queryFn: makeQueryFn([successResult("plain text")]),
+    });
+    const s = a.openSession(baseSessionOpts);
+    const r = await s.run("hi");
+    expect(r.finalText).toBe("plain text");
+  });
+
   it("captures session_id for resume on subsequent calls", async () => {
     let captured: Options | undefined;
     const queryFn: ClaudeQueryFn = ((params) => {
@@ -301,6 +336,42 @@ describe("ClaudeAgentAdapter.runStreamed event translation", () => {
     ]);
     const tr = out.find((e) => (e as { kind: string }).kind === "tool-result") as { status: string };
     expect(tr.status).toBe("failed");
+  });
+
+  it("emits a final message-completed carrying structured_output JSON", async () => {
+    const structured = { answer: "pong", letters: ["p", "o", "n", "g"] };
+    const result = {
+      type: "result",
+      subtype: "success",
+      duration_ms: 0,
+      duration_api_ms: 0,
+      is_error: false,
+      num_turns: 1,
+      result: "Done! I returned the JSON.",
+      stop_reason: "end_turn",
+      total_cost_usd: 0,
+      usage: successUsage,
+      modelUsage: {},
+      permission_denials: [],
+      structured_output: structured,
+      uuid: "u-result",
+      session_id: "s-1",
+    } as unknown as SDKMessage;
+    const out = await collect([assistantText("Done! I returned the JSON."), result]);
+    const messageCompleteds = out.filter(
+      (e) => (e as { kind: string }).kind === "message-completed",
+    ) as Array<{ kind: string; text: string; messageId: string }>;
+    // First the natural-language assistant text, then the synthetic structured one.
+    expect(messageCompleteds).toHaveLength(2);
+    expect(messageCompleteds[0]?.text).toBe("Done! I returned the JSON.");
+    expect(messageCompleteds[1]?.text).toBe(JSON.stringify(structured));
+    expect(messageCompleteds[1]?.messageId).toBe("u-result-structured");
+    // turn-completed comes after, so runTurnWithProgress's finalText ends up
+    // as the structured JSON (last message-completed wins).
+    const kinds = out.map((e) => (e as { kind: string }).kind);
+    const structIdx = kinds.lastIndexOf("message-completed");
+    const turnIdx = kinds.indexOf("turn-completed");
+    expect(structIdx).toBeLessThan(turnIdx);
   });
 
   it("emits turn-failed for result error subtype", async () => {

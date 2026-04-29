@@ -139,10 +139,16 @@ class ClaudeAgentSession implements AgentSession {
 
     const usage = mapUsage(resultMsg.usage);
     const cost = computeCost(this.opts.model, usage, this.pricingOverrides);
+    // When TurnOpts.outputSchema is set, the SDK enforces it and exposes the
+    // parsed payload as `structured_output`; `result.result` then carries
+    // model chatter, not the JSON. Prefer structured_output so callers can
+    // JSON.parse(finalText) regardless of provider.
     const finalText =
-      typeof resultMsg.result === "string" && resultMsg.result.length > 0
-        ? resultMsg.result
-        : lastAssistantText;
+      resultMsg.structured_output !== undefined
+        ? JSON.stringify(resultMsg.structured_output)
+        : typeof resultMsg.result === "string" && resultMsg.result.length > 0
+          ? resultMsg.result
+          : lastAssistantText;
 
     return {
       finalText,
@@ -209,6 +215,18 @@ class EventTranslator {
         return out;
       case "result":
         if (msg.subtype === "success") {
+          // If a schema was enforced, surface the parsed payload as a final
+          // message-completed event so streamed callers (runTurnWithProgress
+          // overwrites finalText on each message-completed) end up with the
+          // JSON, not the model's natural-language chatter.
+          if (msg.structured_output !== undefined) {
+            out.push({
+              kind: "message-completed",
+              messageId: `${msg.uuid}-structured`,
+              text: JSON.stringify(msg.structured_output),
+              rawProviderEvent: msg,
+            });
+          }
           const usage = mapUsage(msg.usage);
           out.push({
             kind: "turn-completed",
