@@ -2,16 +2,7 @@ import { Connection, Client } from '@temporalio/client';
 import { loadClientConnectConfig } from '@temporalio/envconfig';
 import { createActivityDependencies } from './activities';
 import { createGitHubActivities } from './activity-github';
-import {
-  DEFAULT_BACKLOG_STATUS,
-  DEFAULT_BRANCH_PREFIX,
-  DEFAULT_BLOCKED_STATUS,
-  DEFAULT_FILE_PATH_PREFIX,
-  DEFAULT_IN_REVIEW_STATUS,
-  DEFAULT_READY_STATUS,
-  type AutomateReadyIssueInput,
-  type ProjectStatusName,
-} from './shared';
+import { loadClientEntrypointConfig, parseEntrypointConfigArgs } from './entrypoint-config';
 import {
   createTemporalWorkflowTriggerDeps,
   handleWorkflowTrigger,
@@ -20,16 +11,24 @@ import {
   runPickupIntake,
 } from './intake';
 
-type IntakeCommand = { kind: 'pickup'; maxActions: number } | { kind: 'manual'; statusName: ProjectStatusName };
-
-async function run(): Promise<void> {
+export async function run(args = process.argv.slice(2)): Promise<void> {
   console.log('Running github issue automation');
-  const { workflowInput, command } = parseClientArgs(process.argv.slice(2));
+  const parsedArgs = parseEntrypointConfigArgs(args);
+  const { temporal, workflowInput, command } = await loadClientEntrypointConfig({
+    args: parsedArgs.args,
+    explicitPath: parsedArgs.explicitPath,
+  });
 
   const config = loadClientConnectConfig();
-  const connection = await Connection.connect(config.connectionOptions);
+  const connection = await Connection.connect({
+    ...config.connectionOptions,
+    address: temporal.address,
+  });
   try {
-    const client = new Client({ connection });
+    const client = new Client({
+      connection,
+      namespace: temporal.namespace,
+    });
     const workflowDeps = createTemporalWorkflowTriggerDeps(client.workflow);
     const githubActivities = createGitHubActivities(createActivityDependencies());
 
@@ -54,50 +53,9 @@ async function run(): Promise<void> {
   }
 }
 
-function parseClientArgs(args: string[]): { workflowInput: AutomateReadyIssueInput; command: IntakeCommand } {
-  const [projectOwnerArg, projectNumberArg, modeOrStatusArg, maxActionsArg] = args;
-  const projectOwner = projectOwnerArg ?? process.env.GITHUB_PROJECT_OWNER;
-  const projectNumberRaw = projectNumberArg ?? process.env.GITHUB_PROJECT_NUMBER;
-
-  if (!projectOwner || !projectNumberRaw) {
-    throw new Error(
-      'Usage: npm run workflow -- <project-owner> <project-number> [pickup|Backlog|Ready|"In review"] [max-actions]',
-    );
-  }
-
-  const projectNumber = Number(projectNumberRaw);
-  if (!Number.isInteger(projectNumber) || projectNumber <= 0) {
-    throw new Error(`Invalid project number: ${projectNumberRaw}`);
-  }
-
-  const workflowInput: AutomateReadyIssueInput = {
-    projectOwner,
-    projectNumber,
-    backlogStatusName: process.env.GITHUB_BACKLOG_STATUS ?? DEFAULT_BACKLOG_STATUS,
-    readyStatusName: process.env.GITHUB_READY_STATUS ?? DEFAULT_READY_STATUS,
-    inReviewStatusName: process.env.GITHUB_IN_REVIEW_STATUS ?? DEFAULT_IN_REVIEW_STATUS,
-    blockedStatusName: process.env.GITHUB_BLOCKED_STATUS ?? DEFAULT_BLOCKED_STATUS,
-    branchPrefix: process.env.GITHUB_BRANCH_PREFIX ?? DEFAULT_BRANCH_PREFIX,
-    filePathPrefix: process.env.GITHUB_FILE_PATH_PREFIX ?? DEFAULT_FILE_PATH_PREFIX,
-  };
-
-  if (!modeOrStatusArg || modeOrStatusArg === 'pickup') {
-    const maxActionsRaw = maxActionsArg ?? process.env.GITHUB_PICKUP_MAX_ACTIONS ?? '1';
-    const maxActions = Number(maxActionsRaw);
-    if (!Number.isInteger(maxActions) || maxActions <= 0) {
-      throw new Error(`Invalid pickup max-actions value: ${maxActionsRaw}`);
-    }
-    return { workflowInput, command: { kind: 'pickup', maxActions } };
-  }
-
-  if (modeOrStatusArg === 'Backlog' || modeOrStatusArg === 'Ready' || modeOrStatusArg === 'In review') {
-    return { workflowInput, command: { kind: 'manual', statusName: modeOrStatusArg } };
-  }
-
-  throw new Error(`Unsupported intake mode or status: ${modeOrStatusArg}`);
+if (require.main === module) {
+  run().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
 }
-
-run().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});

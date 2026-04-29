@@ -1,18 +1,25 @@
 import { NativeConnection, Worker } from '@temporalio/worker';
 import { createActivities, createActivityRuntimes } from './activities';
-import { TASK_QUEUE } from './shared';
+import {
+  loadWorkerEntrypointConfig,
+  parseEntrypointConfigArgs,
+} from './entrypoint-config';
 
-async function run(): Promise<void> {
+export async function run(args = process.argv.slice(2)): Promise<void> {
+  const parsedArgs = parseEntrypointConfigArgs(args);
+  const config = await loadWorkerEntrypointConfig({ explicitPath: parsedArgs.explicitPath });
   const connection = await NativeConnection.connect({
-    address: 'localhost:7233',
+    address: config.temporal.address,
   });
   try {
+    const runtimes = createActivityRuntimes();
     const worker = await Worker.create({
       connection,
-      taskQueue: TASK_QUEUE,
+      namespace: config.temporal.namespace,
+      taskQueue: config.temporal.taskQueue,
       // Workflows are registered using a path as they run in a separate JS context.
       workflowsPath: require.resolve('./workflows'),
-      activities: createActivities(createActivityRuntimes()),
+      activities: createActivities(runtimes),
     });
 
     await worker.run();
@@ -21,7 +28,9 @@ async function run(): Promise<void> {
   }
 }
 
-run().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  run().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
