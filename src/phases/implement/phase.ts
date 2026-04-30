@@ -723,9 +723,15 @@ export async function runImplementPhase(
       pr,
     );
 
-    // Keep the successful implement worktree alive for the immediate review phase
-    // when the workflow started directly in implement and review needs the spec bundle
-    // from the ticket branch rather than the main checkout.
+    // TODO(orphaned-retention): This guard kept the worktree alive on success
+    // so the immediate review phase could read the spec bundle from the ticket
+    // branch (introduced in f9076fb). The companion change in workflow.ts
+    // (`requireReviewArtifacts` consuming `implResult.worktreePath`) was
+    // reverted in 3e0c5fa, so the worktree is now retained but never read,
+    // never cleaned up, and `phase.integration.test.ts:76` (which still
+    // expects ["create", "remove"]) fails. Fix is to drop this guard and
+    // always remove on success — original pre-f9076fb behaviour. Held off
+    // pending coordination with the author of 3e0c5fa.
     if (status !== "pr_opened") {
       await deps.worktree.remove(prepared.worktreePath);
       worktreePath = undefined;

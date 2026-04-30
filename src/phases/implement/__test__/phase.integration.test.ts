@@ -73,6 +73,9 @@ describe("runImplementPhase (integration with in-memory fakes)", () => {
     expect(result.status).toBe("pr_opened");
     expect(result.result?.qualityGates.map((g) => g.status)).toEqual(["passed"]);
     expect(git.commits).toHaveLength(1);
+    // Currently fails: implement/phase.ts retains the worktree on pr_opened
+    // (see "orphaned-retention" TODO there). This expectation matches the
+    // pre-f9076fb design and will pass again once the retention is removed.
     expect(worktree.events.map((e) => e.kind)).toEqual(["create", "remove"]);
   });
 
