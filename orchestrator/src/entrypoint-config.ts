@@ -153,7 +153,6 @@ function resolveWorkflowInput(
     inReviewStatusName: env.GITHUB_IN_REVIEW_STATUS ?? config.github.inReviewStatusName,
     blockedStatusName: env.GITHUB_BLOCKED_STATUS ?? config.github.blockedStatusName,
     branchPrefix: env.GITHUB_BRANCH_PREFIX ?? config.github.branchPrefix,
-    filePathPrefix: env.GITHUB_FILE_PATH_PREFIX ?? config.github.filePathPrefix,
   };
 }
 
