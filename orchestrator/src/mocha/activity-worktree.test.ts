@@ -1,7 +1,7 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
 import type { WorktreeActivityDeps } from '../activity-deps';
-import { buildBranchName, buildDummyChangeContent, buildDummyFilePath } from '../activities';
+import { buildBranchName } from '../activities';
 import {
   type AppendCall,
   type GitCall,
@@ -469,36 +469,6 @@ describe('worktree activities', () => {
     });
   });
 
-  it('preserves the dummy file writer in runDummyAgent', async () => {
-    const worktree = buildWorktreeContext();
-    const mkdirCalls: MkdirCall[] = [];
-    const writeCalls: WriteCall[] = [];
-    const { runDummyAgent } = createActivityTestRig({
-      agent: {
-        mkdir: async (targetPath, options) => {
-        mkdirCalls.push({ path: String(targetPath), options });
-        return undefined;
-      },
-        writeFile: async (targetPath, data, encoding) => {
-        writeCalls.push({ path: String(targetPath), data, encoding });
-      },
-      },
-    });
-
-    await runDummyAgent({ worktree });
-
-    assert.deepStrictEqual(mkdirCalls, [
-      { path: '/tmp/orchestrator/Mugenor/orchestrator-testing/.worktrees/orchestrator/issue-7/orchestrator-runs', options: { recursive: true } },
-    ]);
-    assert.deepStrictEqual(writeCalls, [
-      {
-        path: '/tmp/orchestrator/Mugenor/orchestrator-testing/.worktrees/orchestrator/issue-7/orchestrator-runs/issue-7.md',
-        data: buildDummyChangeContent(7, 'Create a dummy PR', '1970-01-01T00:00:00.123Z'),
-        encoding: 'utf8',
-      },
-    ]);
-  });
-
   it('stages, commits, and pushes the worktree changes without force', async () => {
     const worktree = buildWorktreeContext();
     const gitCalls: GitCall[] = [];
@@ -759,10 +729,5 @@ describe('worktree activities', () => {
 
   it('builds deterministic worktree helper values', () => {
     assert.strictEqual(buildBranchName(9, 'auto'), 'auto/issue-9');
-    assert.strictEqual(buildDummyFilePath(9, 'runs'), 'runs/issue-9.md');
-    assert.strictEqual(
-      buildDummyChangeContent(9, 'Ship Dummy Automation!', '2026-04-26T00:00:00.000Z'),
-      ['# Orchestrator Dummy Change', '', '- Issue: #9', '- Title: Ship Dummy Automation!', '- Generated at: 2026-04-26T00:00:00.000Z'].join('\n'),
-    );
   });
 });

@@ -53,6 +53,8 @@ export async function runAgentTurnWithHeartbeat(
       throw intervalError;
     }
 
+    forwardFallbackTurnEvents(turn, options);
+
     return turn;
   } catch (runError) {
     if (intervalError) {
@@ -63,6 +65,23 @@ export async function runAgentTurnWithHeartbeat(
     throw runError;
   } finally {
     clearInterval(interval);
+  }
+}
+
+function forwardFallbackTurnEvents(turn: AgentTurnResult, options: AgentTurnOptions | undefined): void {
+  if (!options?.onEvent || Array.isArray(turn.events)) {
+    return;
+  }
+
+  const rawTurn = turn as AgentTurnResult & { items?: unknown; usage?: unknown };
+  if (Array.isArray(rawTurn.items)) {
+    for (const item of rawTurn.items) {
+      options.onEvent({ type: 'provider-item', payload: item });
+    }
+  }
+
+  if (rawTurn.usage !== undefined && rawTurn.usage !== null) {
+    options.onEvent({ type: 'usage', payload: rawTurn.usage });
   }
 }
 

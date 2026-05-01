@@ -18,12 +18,11 @@ import { buildChangeName } from '../change-name';
 export interface RunImplementPhaseInput {
   issue: SelectedProjectIssue;
   branchPrefix?: string;
-  filePathPrefix?: string;
   onProgress?: (message: string) => void;
 }
 
 export interface RunImplementPhaseDeps {
-  createWorktreeForIssueIfNeeded: (input: { issue: SelectedProjectIssue; branchPrefix?: string; filePathPrefix?: string }) => Promise<WorktreeContext>;
+  createWorktreeForIssueIfNeeded: (input: { issue: SelectedProjectIssue; branchPrefix?: string }) => Promise<WorktreeContext>;
   listIssueComments: (input: { repoOwner: string; repoName: string; issueNumber: number }) => Promise<IssueComment[]>;
   readOpenSpecChangeFiles: (input: { worktree: WorktreeContext; changeName: string }) => Promise<OpenSpecChangeFile[]>;
   runAgentSequence: (input: { worktree: WorktreeContext; steps: [AgentStep, ...AgentStep[]] }) => Promise<{ outputs?: Record<string, unknown> }>;
@@ -50,7 +49,6 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
   const worktree = await deps.createWorktreeForIssueIfNeeded({
     issue: input.issue,
     branchPrefix: input.branchPrefix,
-    filePathPrefix: input.filePathPrefix,
   });
   const issueComments = await deps.listIssueComments({
     repoOwner: input.issue.repoOwner,

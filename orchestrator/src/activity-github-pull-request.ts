@@ -211,7 +211,7 @@ async function findOpenPullRequestForBranch(deps: GitHubActivityDeps, worktree: 
 }
 
 function buildCreatedPullRequest(worktree: WorktreeContext, pullRequest: PullRequestResponse): CreatedPullRequest {
-  return { branchName: worktree.branchName, filePath: worktree.filePath, pullRequestNumber: pullRequest.number, pullRequestUrl: pullRequest.html_url };
+  return { branchName: worktree.branchName, pullRequestNumber: pullRequest.number, pullRequestUrl: pullRequest.html_url };
 }
 
 function createPullRequest(deps: GitHubActivityDeps, input: OpenPullRequestInput): Promise<PullRequestResponse> {

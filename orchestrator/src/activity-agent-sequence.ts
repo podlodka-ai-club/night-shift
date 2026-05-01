@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { ApplicationFailure } from '@temporalio/common';
 import {
   applyPendingStepCompletion,
@@ -14,8 +13,17 @@ import { AgentContractError, runAgentTurnWithHeartbeat, runStructuredAgentTurn }
 import { buildTaskImplementationPrompt } from './agent-prompts';
 import { getAgentSchema } from './agent-schema-registry';
 import { type AgentSequenceResult, type AgentStep, type RunAgentLegacyInput, type RunAgentSequenceInput, type WorktreeContext } from './shared';
-import { buildDummyChangeContent } from './activity-worktree';
-import { CODEX_COMMAND, CODEX_MODEL, CODEX_REASONING_EFFORT, createCodexAgentAdapter, execCommand, type AgentActivityDeps, type AgentSession } from './activity-deps';
+import {
+  CODEX_COMMAND,
+  CODEX_MODEL,
+  CODEX_REASONING_EFFORT,
+  createCodexAgentAdapter,
+  execCommand,
+  type AgentActivityDeps,
+  type AgentProgressEvent,
+  type AgentSession,
+  type AgentTurnOptions,
+} from './activity-deps';
 
 export function createAgentActivities(deps: AgentActivityDeps) {
   return {
@@ -38,16 +46,6 @@ export function createAgentActivities(deps: AgentActivityDeps) {
         throw error;
       }
     },
-
-    async runDummyAgent(input: { worktree: WorktreeContext }): Promise<void> {
-      const { worktree } = input;
-      await writeDummyFile(
-        deps,
-        worktree.worktreePath,
-        worktree.filePath,
-        buildDummyChangeContent(worktree.issueNumber, worktree.issueTitle, worktree.generatedAt),
-      );
-    },
   };
 }
 
@@ -65,6 +63,7 @@ async function runAgentSequenceSteps(
   let finalResponse = checkpoint.finalResponse;
   let threadId = checkpoint.threadId;
   const adapter = createCodexAgentAdapter(deps);
+  let lastProgressMessage: string | undefined;
 
   if (checkpoint.pendingStep) {
     const validatedPendingStep = validatePendingStepCompletion(checkpoint.pendingStep, stepsById);
@@ -87,6 +86,22 @@ async function runAgentSequenceSteps(
     return session;
   }
 
+  const reportProgress = (message: string): void => {
+    const normalizedMessage = message.trim();
+    if (!normalizedMessage || normalizedMessage === lastProgressMessage) {
+      return;
+    }
+    lastProgressMessage = normalizedMessage;
+    void deps.signalProgress(normalizedMessage).catch(() => undefined);
+  };
+
+  const handleProgressEvent = (event: AgentProgressEvent): void => {
+    const message = extractAssistantProgressMessage(event);
+    if (message) {
+      reportProgress(message);
+    }
+  };
+
   for (const step of steps) {
     if (completedStepIds.includes(step.id)) {
       continue;
@@ -96,7 +111,7 @@ async function runAgentSequenceSteps(
     let pendingStep: PendingStepCompletion;
 
     if (step.kind === 'prompt') {
-      const turn = await runAgentTurnWithHeartbeat(deps, currentSession, step.prompt, buildAgentTurnOptions(deps), () => ({
+      const turn = await runAgentTurnWithHeartbeat(deps, currentSession, step.prompt, buildAgentTurnOptions(deps, handleProgressEvent), () => ({
         threadId: currentSession.id ?? threadId,
         completedStepIds,
         outputs,
@@ -119,6 +134,7 @@ async function runAgentSequenceSteps(
           outputs,
           finalResponse,
         }),
+        onEvent: handleProgressEvent,
       });
       finalResponse = structuredResponse;
       pendingStep = buildPendingStructuredStepCompletion(step, structuredResponse, parsedOutput);
@@ -208,18 +224,53 @@ function codex(deps: AgentActivityDeps, cwd: string, prompt: string): Promise<un
   return execCommand(deps, CODEX_COMMAND, buildCodexArgs(prompt), { cwd, ...buildAgentTurnOptions(deps) });
 }
 
-function buildAgentTurnOptions(deps: AgentActivityDeps): { signal?: AbortSignal } {
+function buildAgentTurnOptions(
+  deps: Pick<AgentActivityDeps, 'getCancellationSignal'>,
+  onEvent?: (event: AgentProgressEvent) => void,
+): AgentTurnOptions {
   const signal = deps.getCancellationSignal();
-  return signal ? { signal } : {};
+  return {
+    ...(signal ? { signal } : {}),
+    ...(onEvent ? { onEvent } : {}),
+  };
 }
 
-async function writeDummyFile(
-  deps: AgentActivityDeps,
-  worktreePath: string,
-  relativeFilePath: string,
-  content: string,
-): Promise<void> {
-  const absoluteFilePath = path.join(worktreePath, relativeFilePath);
-  await deps.mkdir(path.dirname(absoluteFilePath), { recursive: true });
-  await deps.writeFile(absoluteFilePath, content, 'utf8');
+function extractAssistantProgressMessage(event: AgentProgressEvent): string | undefined {
+  if (event.type !== 'provider-item') {
+    return undefined;
+  }
+
+  return extractAssistantTextFromProviderItem(event.payload);
+}
+
+function extractAssistantTextFromProviderItem(item: unknown): string | undefined {
+  if (!item || typeof item !== 'object') {
+    return undefined;
+  }
+
+  const providerItem = item as {
+    type?: unknown;
+    text?: unknown;
+    role?: unknown;
+    content?: unknown;
+  };
+
+  if (providerItem.type === 'message.delta' && typeof providerItem.text === 'string') {
+    return providerItem.text;
+  }
+
+  if (providerItem.type === 'message' && providerItem.role === 'assistant' && Array.isArray(providerItem.content)) {
+    for (const entry of providerItem.content) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+
+      const contentEntry = entry as { type?: unknown; text?: unknown };
+      if (contentEntry.type === 'output_text' && typeof contentEntry.text === 'string') {
+        return contentEntry.text;
+      }
+    }
+  }
+
+  return undefined;
 }

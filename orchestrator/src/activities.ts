@@ -1,14 +1,14 @@
 import { createAgentActivities } from './activity-agent-sequence';
-import { createActivityDependencies, type ActivityRuntimes } from './activity-deps';
+import { createActivityDependencies, type ActivityRuntimes, type CreateActivityDependenciesOptions } from './activity-deps';
 import { createGitHubActivities } from './activity-github';
 import { createWorktreeActivities } from './activity-worktree';
 
 export { createActivityDependencies } from './activity-deps';
 export { buildIssueComment } from './activity-github';
-export { buildBranchName, buildDummyChangeContent, buildDummyFilePath } from './activity-worktree';
+export { buildBranchName } from './activity-worktree';
 
-export function createActivityRuntimes(): ActivityRuntimes {
-  const deps = createActivityDependencies();
+export function createActivityRuntimes(options: CreateActivityDependenciesOptions = {}): ActivityRuntimes {
+  const deps = createActivityDependencies(options);
   return {
     github: deps,
     worktree: deps,
@@ -58,5 +58,4 @@ export const {
   cleanupWorktree,
   runAgentLegacy,
   runAgentSequence,
-  runDummyAgent,
 } = defaultActivities;

@@ -6,12 +6,11 @@ import { SpecifyPhaseContractError } from './errors';
 export interface RunSpecifyPhaseInput {
   issue: SelectedProjectIssue;
   branchPrefix?: string;
-  filePathPrefix?: string;
   onProgress?: (message: string) => void;
 }
 
 export interface RunSpecifyPhaseDeps {
-  createWorktreeForIssueIfNeeded: (input: { issue: SelectedProjectIssue; branchPrefix?: string; filePathPrefix?: string }) => Promise<WorktreeContext>;
+  createWorktreeForIssueIfNeeded: (input: { issue: SelectedProjectIssue; branchPrefix?: string }) => Promise<WorktreeContext>;
   listIssueComments: (input: { repoOwner: string; repoName: string; issueNumber: number }) => Promise<IssueComment[]>;
   readOpenSpecChangeFiles: (input: { worktree: WorktreeContext; changeName: string }) => Promise<OpenSpecChangeFile[]>;
   writeOpenSpecChangeFiles: (input: { worktree: WorktreeContext; changeName: string; files: OpenSpecChangeFile[] }) => Promise<void>;
@@ -35,7 +34,7 @@ export async function runSpecifyPhase(input: RunSpecifyPhaseInput, deps: RunSpec
   const changeName = buildSpecifyChangeName(input.issue);
   input.onProgress?.(`Moving issue #${input.issue.issueNumber} into ${input.issue.refinementStatusName}.`);
   await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.refinementOptionId));
-  const worktree = await deps.createWorktreeForIssueIfNeeded({ issue: input.issue, branchPrefix: input.branchPrefix, filePathPrefix: input.filePathPrefix });
+  const worktree = await deps.createWorktreeForIssueIfNeeded({ issue: input.issue, branchPrefix: input.branchPrefix });
   const issueComments = await deps.listIssueComments({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, issueNumber: input.issue.issueNumber });
   const currentDraftFiles = await deps.readOpenSpecChangeFiles({ worktree, changeName });
   let specifyResponse = await generateSpecifyResponse(deps, worktree, input.issue, changeName, issueComments, currentDraftFiles, undefined);

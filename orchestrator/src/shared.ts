@@ -20,7 +20,6 @@ export const DEFAULT_BACKLOG_STATUS = 'Backlog';
 export const DEFAULT_REFINEMENT_STATUS = 'Refinement';
 export const DEFAULT_REFINED_STATUS = 'Refined';
 export const DEFAULT_BRANCH_PREFIX = 'orchestrator';
-export const DEFAULT_FILE_PATH_PREFIX = 'orchestrator-runs';
 
 export const READY_ISSUE_STATUS_SEQUENCE = [
   DEFAULT_READY_STATUS,
@@ -79,7 +78,6 @@ export interface AutomateReadyIssueInput {
   inReviewStatusName?: string;
   blockedStatusName?: string;
   branchPrefix?: string;
-  filePathPrefix?: string;
 }
 
 export interface ListProjectIssuesByStatusInput extends AutomateReadyIssueInput {
@@ -121,7 +119,6 @@ export interface ListedProjectIssue extends SelectedProjectIssue {
 export interface CreateWorktreeForIssueIfNeededInput {
   issue: SelectedProjectIssue;
   branchPrefix?: string;
-  filePathPrefix?: string;
 }
 
 export interface WorktreeContext {
@@ -133,7 +130,6 @@ export interface WorktreeContext {
   repoName: string;
   defaultBranch: string;
   branchName: string;
-  filePath: string;
   generatedAt: string;
   repoRoot: string;
   worktreePath: string;
@@ -210,7 +206,6 @@ export interface CleanupWorktreeInput {
 
 export interface CreatedPullRequest {
   branchName: string;
-  filePath: string;
   pullRequestNumber: number;
   pullRequestUrl: string;
 }
@@ -347,6 +342,5 @@ export interface AutomateReadyIssueResult {
   pullRequestNumber: number;
   pullRequestUrl: string;
   branchName: string;
-  filePath: string;
   targetStatusName: string;
 }

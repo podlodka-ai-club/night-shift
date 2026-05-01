@@ -85,9 +85,12 @@ interface WorkflowShellState {
   reviewIteration: number;
   maxReviewIterations: number;
   latestActivity?: string;
+  recentActivities: string[];
   issueNumber?: number;
   issueTitle?: string;
 }
+
+const MAX_RECENT_ACTIVITIES = 3;
 
 export const specifyRetrySignal = defineSignal(WORKFLOW_SIGNAL_NAMES[0]);
 export const specReviewedSignal = defineSignal(WORKFLOW_SIGNAL_NAMES[1]);
@@ -111,14 +114,24 @@ export async function automateTopReadyIssue(
   let pendingImplementRetry = false;
   let pendingResume = false;
 
+  const recordActivity = (message: string): void => {
+    const normalizedMessage = message.trim();
+    if (!normalizedMessage) {
+      return;
+    }
+
+    shellState.latestActivity = normalizedMessage;
+    shellState.recentActivities = appendRecentActivity(shellState.recentActivities, normalizedMessage);
+    syncCurrentDetails();
+  };
+
   const syncCurrentDetails = () => {
     setCurrentDetails(renderWorkflowCurrentDetails(shellState));
   };
 
   const handlePhaseFailure = async (phase: WorkflowPhase, issue: SelectedProjectIssue, error: unknown) => {
     shellState.blockedReason = null;
-    shellState.latestActivity = `${capitalizePhaseName(phase)} phase failed; issue moved to Blocked.`;
-    syncCurrentDetails();
+    recordActivity(`${capitalizePhaseName(phase)} phase failed; issue moved to Blocked.`);
     await moveProjectItemStatus({
       projectId: issue.projectId,
       projectItemId: issue.projectItemId,
@@ -154,10 +167,7 @@ export async function automateTopReadyIssue(
   };
 
   setHandler(getBlockedReasonQuery, () => shellState.blockedReason);
-  setHandler(activityProgressSignal, (message) => {
-    shellState.latestActivity = message;
-    syncCurrentDetails();
-  });
+  setHandler(activityProgressSignal, recordActivity);
   setHandler(specReviewedSignal, () => {
     if (allowSpecReviewed) pendingSpecReviewed = true;
   });
@@ -178,8 +188,7 @@ export async function automateTopReadyIssue(
     const issue = selectedSpecifyIssue;
     shellState.issueNumber = issue.issueNumber;
     shellState.issueTitle = issue.issueTitle;
-    shellState.latestActivity = `Selected Backlog issue #${issue.issueNumber} for Specify.`;
-    syncCurrentDetails();
+    recordActivity(`Selected Backlog issue #${issue.issueNumber} for Specify.`);
 
     let specifyResult;
     try {
@@ -187,11 +196,7 @@ export async function automateTopReadyIssue(
         {
           issue,
           branchPrefix: input.branchPrefix,
-          filePathPrefix: input.filePathPrefix,
-          onProgress: (message) => {
-            shellState.latestActivity = message;
-            syncCurrentDetails();
-          },
+          onProgress: recordActivity,
         },
         {
           createWorktreeForIssueIfNeeded,
@@ -213,23 +218,20 @@ export async function automateTopReadyIssue(
 
     if (specifyResult.outcome === 'needs_input') {
       shellState.blockedReason = 'specify_needs_input';
-      shellState.latestActivity = 'Specify phase is blocked on operator input.';
       allowSpecifyRetry = true;
-      syncCurrentDetails();
+      recordActivity('Specify phase is blocked on operator input.');
       await condition(() => pendingSpecifyRetry);
       allowSpecifyRetry = false;
       pendingSpecifyRetry = false;
       shellState.blockedReason = null;
-      shellState.latestActivity = 'Specify retry requested; rerunning Specify phase.';
-      syncCurrentDetails();
+      recordActivity('Specify retry requested; rerunning Specify phase.');
       continue;
     }
 
     shellState.blockedReason = 'awaiting_spec_review';
-    shellState.latestActivity = 'Waiting for spec review approval to enter implement mode.';
     allowSpecReviewed = true;
     allowSpecifyRetry = true;
-    syncCurrentDetails();
+    recordActivity('Waiting for spec review approval to enter implement mode.');
 
     await condition(() => pendingSpecReviewed || pendingSpecifyRetry);
 
@@ -239,8 +241,7 @@ export async function automateTopReadyIssue(
     if (pendingSpecifyRetry) {
       pendingSpecifyRetry = false;
       shellState.blockedReason = null;
-      shellState.latestActivity = 'Specify retry requested; rerunning Specify phase.';
-      syncCurrentDetails();
+      recordActivity('Specify retry requested; rerunning Specify phase.');
       continue;
     }
 
@@ -249,8 +250,7 @@ export async function automateTopReadyIssue(
     selectedSpecifyIssue = undefined;
     shellState.blockedReason = null;
     shellState.currentPhase = 'implement';
-    shellState.latestActivity = 'Spec review approved; entering implement phase.';
-    syncCurrentDetails();
+    recordActivity('Spec review approved; entering implement phase.');
   }
 
   if (pendingResume) pendingResume = false;
@@ -260,8 +260,7 @@ export async function automateTopReadyIssue(
     const issue = selectedImplementIssue;
     shellState.issueNumber = issue.issueNumber;
     shellState.issueTitle = issue.issueTitle;
-    shellState.latestActivity = `Selected Ready issue #${issue.issueNumber} for Implement.`;
-    syncCurrentDetails();
+    recordActivity(`Selected Ready issue #${issue.issueNumber} for Implement.`);
 
     let implementResult;
     try {
@@ -269,11 +268,7 @@ export async function automateTopReadyIssue(
         {
           issue,
           branchPrefix: input.branchPrefix,
-          filePathPrefix: input.filePathPrefix,
-          onProgress: (message) => {
-            shellState.latestActivity = message;
-            syncCurrentDetails();
-          },
+          onProgress: recordActivity,
         },
         {
           createWorktreeForIssueIfNeeded,
@@ -295,22 +290,19 @@ export async function automateTopReadyIssue(
 
     if (implementResult.outcome === 'needs_input') {
       shellState.blockedReason = 'implement_needs_input';
-      shellState.latestActivity = 'Implement phase is blocked on operator input.';
       allowImplementRetry = true;
-      syncCurrentDetails();
+      recordActivity('Implement phase is blocked on operator input.');
       await condition(() => pendingImplementRetry);
       allowImplementRetry = false;
       pendingImplementRetry = false;
       shellState.blockedReason = null;
-      shellState.latestActivity = 'Implement retry requested; rerunning Implement phase.';
-      syncCurrentDetails();
+      recordActivity('Implement retry requested; rerunning Implement phase.');
       continue;
     }
 
     shellState.blockedReason = null;
     shellState.currentPhase = 'review';
-    shellState.latestActivity = `Opened PR #${implementResult.pullRequest?.pullRequestNumber} and moved the issue to In review.`;
-    syncCurrentDetails();
+    recordActivity(`Opened PR #${implementResult.pullRequest?.pullRequestNumber} and moved the issue to In review.`);
     if (!implementResult.pullRequest) {
       throw new Error('Implement phase did not return a pull request.');
     }
@@ -323,10 +315,7 @@ export async function automateTopReadyIssue(
           worktree: implementResult.worktree,
           pullRequest: implementResult.pullRequest,
           reviewIteration: shellState.reviewIteration,
-          onProgress: (message) => {
-            shellState.latestActivity = message;
-            syncCurrentDetails();
-          },
+          onProgress: recordActivity,
         },
         {
           readOpenSpecChangeFiles,
@@ -351,8 +340,7 @@ export async function automateTopReadyIssue(
     if (reviewResult.outcome === 'needs_fix') {
       shellState.reviewIteration += 1;
       shellState.currentPhase = 'implement';
-      shellState.latestActivity = `Review requested fixes for PR #${implementResult.pullRequest.pullRequestNumber}; rerunning Implement for review iteration ${shellState.reviewIteration + 1}.`;
-      syncCurrentDetails();
+      recordActivity(`Review requested fixes for PR #${implementResult.pullRequest.pullRequestNumber}; rerunning Implement for review iteration ${shellState.reviewIteration + 1}.`);
       continue;
     }
 
@@ -360,22 +348,19 @@ export async function automateTopReadyIssue(
       pendingResume = false;
       shellState.blockedReason = 'review_escalation';
       shellState.currentPhase = 'review';
-      shellState.latestActivity = 'Review escalated; waiting for operator resume.';
       allowResume = true;
-      syncCurrentDetails();
+      recordActivity('Review escalated; waiting for operator resume.');
       await condition(() => pendingResume);
       allowResume = false;
       pendingResume = false;
       shellState.blockedReason = null;
       shellState.reviewIteration = 0;
       shellState.currentPhase = 'implement';
-      shellState.latestActivity = 'Resume received; rerunning Implement and restarting the review loop.';
-      syncCurrentDetails();
+      recordActivity('Resume received; rerunning Implement and restarting the review loop.');
       continue;
     }
 
-    shellState.latestActivity = `Review approved PR #${implementResult.pullRequest.pullRequestNumber}; issue moved to Ready to merge.`;
-    syncCurrentDetails();
+    recordActivity(`Review approved PR #${implementResult.pullRequest.pullRequestNumber}; issue moved to Ready to merge.`);
     const result = buildAutomateReadyIssueResult(issue, implementResult.pullRequest, issue.readyToMergeStatusName);
     await cleanupSuccessfulWorktree(implementResult.worktree);
     return result;
@@ -404,19 +389,38 @@ export function renderWorkflowCurrentDetails(state: WorkflowShellState): string 
     `- Blocked reason: ${state.blockedReason ?? 'none'}`,
     `- Review iteration: ${state.reviewIteration}/${state.maxReviewIterations}`,
     `- Latest activity: ${state.latestActivity ?? 'none'}`,
+    ...renderRecentActivities(state.recentActivities),
     state.issueNumber !== undefined && state.issueTitle
       ? `- Issue: #${state.issueNumber} ${state.issueTitle}`
       : '- Issue: unresolved',
   ].join('\n');
 }
 
+function appendRecentActivity(recentActivities: readonly string[], message: string): string[] {
+  if (recentActivities.at(-1) === message) {
+    return [...recentActivities];
+  }
+
+  return [...recentActivities, message].slice(-MAX_RECENT_ACTIVITIES);
+}
+
+function renderRecentActivities(recentActivities: readonly string[]): string[] {
+  if (recentActivities.length === 0) {
+    return [];
+  }
+
+  return ['- Recent summaries:', ...recentActivities.map((activity) => `  - ${activity}`)];
+}
+
 function createWorkflowShellState(input: AutomateReadyIssueInput): WorkflowShellState {
+  const startPhase = input.startPhase ?? 'implement';
   return {
-    startPhase: input.startPhase ?? 'implement',
-    currentPhase: input.startPhase ?? 'implement',
+    startPhase,
+    currentPhase: startPhase,
     blockedReason: null,
     reviewIteration: 0,
     maxReviewIterations: 3,
+    recentActivities: [],
   };
 }
 
@@ -432,7 +436,6 @@ function buildAutomateReadyIssueResult(
     pullRequestNumber: pullRequest.pullRequestNumber,
     pullRequestUrl: pullRequest.pullRequestUrl,
     branchName: pullRequest.branchName,
-    filePath: pullRequest.filePath,
     targetStatusName,
   };
 }

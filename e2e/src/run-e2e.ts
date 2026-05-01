@@ -1,10 +1,18 @@
+import assert from 'assert';
 import { randomUUID } from 'node:crypto';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { createActivities, createActivityDependencies } from '../../orchestrator/lib/activities';
 import { createGitHubActivities } from '../../orchestrator/lib/activity-github';
 import type { ActivityRuntimes } from '../../orchestrator/lib/activity-deps';
-import { TASK_QUEUE, type AutomateReadyIssueInput, type AutomateReadyIssueResult, type ProjectStatusName, type SelectedProjectIssue } from '../../orchestrator/lib/shared';
+import {
+  TASK_QUEUE,
+  WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME,
+  type AutomateReadyIssueInput,
+  type AutomateReadyIssueResult,
+  type ProjectStatusName,
+  type SelectedProjectIssue,
+} from '../../orchestrator/lib/shared';
 import {
   buildIssueWorkflowId,
   createTemporalWorkflowTriggerDeps,
@@ -59,10 +67,18 @@ export interface E2ERunSummary {
   agentMode: 'real' | 'fake';
   issueUrl?: string;
   pullRequestUrl?: string;
+  workflowCurrentDetails?: string;
+  assistantProgressCurrentDetails?: string;
   observedStatuses: string[];
   cleanupAttempted: boolean;
   cleanupReport?: CleanupReport;
   preservedArtifacts: boolean;
+}
+
+export interface WorkflowRunObservation {
+  workflowResult: AutomateReadyIssueResult;
+  workflowCurrentDetails?: string;
+  assistantProgressCurrentDetails?: string;
 }
 
 export async function runConfiguredIntake(
@@ -85,7 +101,6 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
   const config = parseE2EConfig(env);
   const runId = randomUUID().slice(0, 8);
   const branchPrefix = `orchestrator-e2e-${runId}`;
-  const filePathPrefix = `orchestrator-e2e/${runId}`;
   const githubDeps = createGitHubDeps(config.githubToken);
   const startPhase = resolveStartPhase(config.agentMode);
   const seedStatus = resolveSeedStatus(config.agentMode);
@@ -93,6 +108,8 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
   let seededIssue: SeededIssue | undefined;
   let selectedIssue: SelectedProjectIssue | undefined;
   let workflowResult: AutomateReadyIssueResult | undefined;
+  let workflowCurrentDetails: string | undefined;
+  let assistantProgressCurrentDetails: string | undefined;
   let workflowId: string | undefined;
   let observedStatuses: string[] = [];
   let cleanupReport: CleanupReport | undefined;
@@ -117,7 +134,10 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
     try {
       const poller = startStatusPoller(githubDeps, seededIssue.projectItemId, observedStatuses);
       try {
-        workflowResult = await runWorkflowOnce(testEnv, config, runId, branchPrefix, filePathPrefix, startPhase, selectedIssue);
+        const workflowObservation = await runWorkflowOnce(testEnv, config, runId, branchPrefix, startPhase, selectedIssue);
+        workflowResult = workflowObservation.workflowResult;
+        workflowCurrentDetails = workflowObservation.workflowCurrentDetails;
+        assistantProgressCurrentDetails = workflowObservation.assistantProgressCurrentDetails;
       } finally {
         observedStatuses = await poller.stop();
         await recordCurrentProjectItemStatus(githubDeps, seededIssue.projectItemId, observedStatuses);
@@ -128,6 +148,9 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
 
     assertObservedStatusSequence(observedStatuses);
     await assertWorkflowArtifacts(githubDeps, config, seededIssue, selectedIssue, workflowResult);
+    if (config.agentMode === 'fake') {
+      assertFakeAgentWorkflowCurrentDetails(workflowCurrentDetails, assistantProgressCurrentDetails);
+    }
   } catch (error) {
     failure = error;
   }
@@ -144,6 +167,8 @@ export async function runE2E(env: NodeJS.ProcessEnv = process.env): Promise<E2ER
     agentMode: config.agentMode,
     issueUrl: seededIssue?.issueUrl,
     pullRequestUrl: workflowResult?.pullRequestUrl,
+    workflowCurrentDetails,
+    assistantProgressCurrentDetails,
     observedStatuses,
     cleanupAttempted,
     cleanupReport,
@@ -191,11 +216,14 @@ async function runWorkflowOnce(
   config: E2EConfig,
   runId: string,
   branchPrefix: string,
-  filePathPrefix: string,
   startPhase: 'implement' | 'specify',
   selectedIssue: SelectedProjectIssue,
-): Promise<AutomateReadyIssueResult> {
-  const baseDeps = createActivityDependencies();
+): Promise<WorkflowRunObservation> {
+  const baseDeps = createActivityDependencies({
+    signalWorkflowProgress: async (workflowId, message) => {
+      await testEnv.client.workflow.getHandle(workflowId).signal(WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME, message);
+    },
+  });
   const agentDeps = config.agentMode === 'fake' ? createFakeAgentDeps(baseDeps) : baseDeps;
   const runtimes: ActivityRuntimes = {
     github: createGitHubDeps(config.githubToken),
@@ -204,7 +232,7 @@ async function runWorkflowOnce(
   };
 
   if (config.agentMode === 'fake') {
-    await seedApprovedSpecBundle(createActivities(runtimes), selectedIssue, branchPrefix, filePathPrefix);
+    await seedApprovedSpecBundle(createActivities(runtimes), selectedIssue, branchPrefix);
   }
 
   const worker = await Worker.create({
@@ -232,13 +260,14 @@ async function runWorkflowOnce(
   });
 
   return worker.runUntil(async () => {
+    const workflowHandle = testEnv.client.workflow.getHandle(buildIssueWorkflowId(selectedIssue.issueNumber));
+    let assistantProgressPromise: Promise<string | undefined> | undefined;
     const workflowInput = {
       projectOwner: config.projectOwner,
       projectNumber: config.projectNumber,
       branchPrefix,
-      filePathPrefix,
     };
-    return runConfiguredIntake(config, {
+    const workflowResult = await runConfiguredIntake(config, {
       async executePickupWorkflow() {
         await testEnv.client.workflow.execute(pickupWorkflow, {
           taskQueue: TASK_QUEUE,
@@ -265,22 +294,91 @@ async function runWorkflowOnce(
         }
       },
       async awaitWorkflowResult() {
-        return testEnv.client.workflow.getHandle(buildIssueWorkflowId(selectedIssue.issueNumber)).result();
+        const workflowResultPromise = workflowHandle.result();
+        assistantProgressPromise =
+          config.agentMode === 'fake'
+            ? waitForWorkflowCurrentDetailsMatch(
+                workflowHandle,
+                /Preparing deterministic fake (implementation output|review verdict)\./i,
+                workflowResultPromise,
+              )
+            : Promise.resolve(undefined);
+        return workflowResultPromise;
       },
     });
+
+    return {
+      workflowResult,
+      workflowCurrentDetails: await getWorkflowCurrentDetails(workflowHandle),
+      assistantProgressCurrentDetails: await assistantProgressPromise,
+    };
   });
+}
+
+export function assertFakeAgentWorkflowCurrentDetails(
+  currentDetails: string | undefined,
+  assistantProgressCurrentDetails: string | undefined,
+): void {
+  assert.ok(currentDetails, 'Expected the fake-agent workflow run to expose Temporal current details.');
+  assert.match(currentDetails, /Recent summaries:/i);
+  assert.ok(
+    assistantProgressCurrentDetails,
+    'Expected to observe assistant-authored fake progress in workflow current details while the workflow was running.',
+  );
+  assert.match(assistantProgressCurrentDetails, /Preparing deterministic fake (implementation output|review verdict)\./i);
+}
+
+async function getWorkflowCurrentDetails(
+  workflowHandle: ReturnType<TestWorkflowEnvironment['client']['workflow']['getHandle']>,
+): Promise<string | undefined> {
+  const workflowMetadata = await workflowHandle.query<{ currentDetails?: unknown }>('__temporal_workflow_metadata');
+  return typeof workflowMetadata?.currentDetails === 'string' ? workflowMetadata.currentDetails : undefined;
+}
+
+async function waitForWorkflowCurrentDetailsMatch(
+  workflowHandle: ReturnType<TestWorkflowEnvironment['client']['workflow']['getHandle']>,
+  matcher: RegExp,
+  workflowResultPromise: Promise<AutomateReadyIssueResult>,
+): Promise<string | undefined> {
+  let workflowFinished = false;
+  void workflowResultPromise.finally(() => {
+    workflowFinished = true;
+  });
+
+  while (!workflowFinished) {
+    const currentDetails = await getWorkflowCurrentDetailsOrUndefined(workflowHandle);
+    if (currentDetails && matcher.test(currentDetails)) {
+      return currentDetails;
+    }
+    await delay(200);
+  }
+
+  const currentDetails = await getWorkflowCurrentDetailsOrUndefined(workflowHandle);
+  return currentDetails && matcher.test(currentDetails) ? currentDetails : undefined;
+}
+
+async function getWorkflowCurrentDetailsOrUndefined(
+  workflowHandle: ReturnType<TestWorkflowEnvironment['client']['workflow']['getHandle']>,
+): Promise<string | undefined> {
+  try {
+    return await getWorkflowCurrentDetails(workflowHandle);
+  } catch {
+    return undefined;
+  }
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function seedApprovedSpecBundle(
   activities: ReturnType<typeof createActivities>,
   selectedIssue: SelectedProjectIssue,
   branchPrefix: string,
-  filePathPrefix: string,
 ): Promise<void> {
   const worktree = await activities.createWorktreeForIssueIfNeeded({
     issue: selectedIssue,
     branchPrefix,
-    filePathPrefix,
   });
   const changeName = buildSelectedIssueChangeName(selectedIssue);
   await activities.writeOpenSpecChangeFiles({
@@ -320,7 +418,7 @@ function startStatusPoller(
         break;
       }
 
-      await sleep(STATUS_POLL_INTERVAL_MS);
+      await delay(STATUS_POLL_INTERVAL_MS);
     }
   })();
 
@@ -334,10 +432,6 @@ function startStatusPoller(
       return observedStatuses;
     },
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 if (require.main === module) {

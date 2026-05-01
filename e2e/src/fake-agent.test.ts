@@ -28,6 +28,48 @@ describe('createFakeAgentDeps', () => {
     assert.deepStrictEqual(JSON.parse(response.finalResponse), buildFakeAgentImplementResponse('run-123'));
   });
 
+  it('emits assistant-authored progress events for structured turns', async () => {
+    const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
+    const deps = createFakeAgentDeps(buildBaseDeps());
+    const thread = deps.createCodexThread(worktreePath);
+
+    const response = await thread.run([
+      'Implement the approved spec bundle.',
+      'Spec files: proposal.md, tasks.md',
+      'E2E_RUN_MARKER: run-123',
+    ].join('\n'), {
+      outputSchema: { type: 'object' },
+    });
+
+    assert.deepStrictEqual(response.events, [
+      { type: 'provider-item', payload: { type: 'message.delta', text: 'Inspecting the approved spec bundle for run-123.' } },
+      { type: 'provider-item', payload: { type: 'message.delta', text: 'Preparing deterministic fake implementation output.' } },
+    ]);
+  });
+
+  it('forwards emitted events to onEvent like the real Codex adapter', async () => {
+    const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
+    const deps = createFakeAgentDeps(buildBaseDeps());
+    const thread = deps.createCodexThread(worktreePath);
+    const seenEvents: unknown[] = [];
+
+    await thread.run([
+      'Implement the approved spec bundle.',
+      'Spec files: proposal.md, tasks.md',
+      'E2E_RUN_MARKER: run-123',
+    ].join('\n'), {
+      outputSchema: { type: 'object' },
+      onEvent: (event) => {
+        seenEvents.push(event);
+      },
+    });
+
+    assert.deepStrictEqual(seenEvents, [
+      { type: 'provider-item', payload: { type: 'message.delta', text: 'Inspecting the approved spec bundle for run-123.' } },
+      { type: 'provider-item', payload: { type: 'message.delta', text: 'Preparing deterministic fake implementation output.' } },
+    ]);
+  });
+
   it('returns a deterministic OpenSpec bundle for the first structured Specify turn', async () => {
     const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
     const deps = createFakeAgentDeps(buildBaseDeps());
@@ -80,5 +122,6 @@ function buildBaseDeps(): AgentActivityDeps {
     getCancellationSignal: () => undefined,
     getHeartbeatDetails: () => undefined,
     heartbeat: () => undefined,
+    signalProgress: async () => undefined,
   };
 }
