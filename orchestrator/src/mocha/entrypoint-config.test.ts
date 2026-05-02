@@ -146,6 +146,44 @@ describe('entrypoint config wiring', () => {
     }
   });
 
+  it('loads worker project coordinates from a cwd .env when no config file exists', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-worker-dotenv-'));
+    const originalOwner = process.env.GITHUB_PROJECT_OWNER;
+    const originalNumber = process.env.GITHUB_PROJECT_NUMBER;
+    const originalConfig = process.env.ORCHESTRATOR_CONFIG;
+    const originalNightShiftConfig = process.env.NIGHT_SHIFT_CONFIG;
+    try {
+      delete process.env.GITHUB_PROJECT_OWNER;
+      delete process.env.GITHUB_PROJECT_NUMBER;
+      delete process.env.ORCHESTRATOR_CONFIG;
+      delete process.env.NIGHT_SHIFT_CONFIG;
+      await writeFile(path.join(tempDir, '.env'), 'GITHUB_PROJECT_OWNER=dotenv-owner\nGITHUB_PROJECT_NUMBER=17\n', 'utf8');
+
+      const resolved = await loadWorkerEntrypointConfig({ cwd: tempDir });
+
+      assert.deepStrictEqual(resolved.workflowInput, {
+        projectOwner: 'dotenv-owner',
+        projectNumber: 17,
+        backlogStatusName: 'Backlog',
+        readyStatusName: 'Ready',
+        inReviewStatusName: 'In review',
+        blockedStatusName: 'Blocked',
+        branchPrefix: 'orchestrator',
+        filePathPrefix: 'orchestrator-runs',
+      });
+    } finally {
+      if (originalOwner === undefined) delete process.env.GITHUB_PROJECT_OWNER;
+      else process.env.GITHUB_PROJECT_OWNER = originalOwner;
+      if (originalNumber === undefined) delete process.env.GITHUB_PROJECT_NUMBER;
+      else process.env.GITHUB_PROJECT_NUMBER = originalNumber;
+      if (originalConfig === undefined) delete process.env.ORCHESTRATOR_CONFIG;
+      else process.env.ORCHESTRATOR_CONFIG = originalConfig;
+      if (originalNightShiftConfig === undefined) delete process.env.NIGHT_SHIFT_CONFIG;
+      else process.env.NIGHT_SHIFT_CONFIG = originalNightShiftConfig;
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('resolves the same temporal precedence for client and worker entrypoints', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-temporal-precedence-'));
     try {

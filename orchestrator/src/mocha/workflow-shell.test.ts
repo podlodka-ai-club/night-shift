@@ -533,6 +533,127 @@ describe('workflow phased shell', function () {
     assert.ok(calls.includes('createPullRequestReview'));
   });
 
+  it('returns to specify from implement_needs_input after specifyRetry without reselecting the issue', async () => {
+    const calls: string[] = [];
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let getTopReadyIssueCallCount = 0;
+    let getTopBacklogIssueCallCount = 0;
+    let readOpenSpecChangeFilesCallCount = 0;
+    let runAgentSequenceCallCount = 0;
+
+    const result = await runWorkflowWithHandle<AutomateReadyIssueResult>(
+      {
+        workflowId: 'workflow-shell-implement-to-specify-retry-test',
+        workflowInput: { startPhase: 'implement' },
+        activities: {
+          async getTopReadyIssue() {
+            getTopReadyIssueCallCount += 1;
+            calls.push(`getTopReadyIssue:${getTopReadyIssueCallCount}`);
+            return issue;
+          },
+          async getTopBacklogIssue() {
+            getTopBacklogIssueCallCount += 1;
+            calls.push(`getTopBacklogIssue:${getTopBacklogIssueCallCount}`);
+            return issue;
+          },
+          async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
+          async listIssueComments() { calls.push('listIssueComments'); return []; },
+          async readOpenSpecChangeFiles() {
+            readOpenSpecChangeFilesCallCount += 1;
+            calls.push(`readOpenSpecChangeFiles:${readOpenSpecChangeFilesCallCount}`);
+            if (readOpenSpecChangeFilesCallCount <= 2) {
+              return [];
+            }
+            return [
+              { path: 'proposal.md', content: '# Proposal' },
+              { path: 'tasks.md', content: '# Tasks' },
+            ];
+          },
+          async runAgentSequence() {
+            runAgentSequenceCallCount += 1;
+            calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+            if (runAgentSequenceCallCount === 1) {
+              return {
+                threadId: 'specify-thread-123',
+                completedStepIds: ['specify'],
+                outputs: {
+                  specifyResponse: {
+                    files: [
+                      { path: 'proposal.md', content: '# Proposal' },
+                      { path: 'tasks.md', content: '# Tasks' },
+                    ],
+                    openQuestions: [],
+                    assumptions: [],
+                    risks: [],
+                  },
+                } as any,
+                finalResponse: JSON.stringify({ refined: true }),
+              };
+            }
+            if (runAgentSequenceCallCount === 2) {
+              return {
+                threadId: 'implement-thread-123',
+                completedStepIds: ['implement'],
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implements the approved spec bundle.',
+                    followUps: [],
+                  },
+                } as any,
+                finalResponse: JSON.stringify({ implemented: true }),
+              };
+            }
+            return {
+              threadId: 'review-thread-123',
+              completedStepIds: ['review'],
+              outputs: {
+                reviewerResponse: {
+                  summary: 'Looks ready to merge.',
+                  findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: 'src/index.ts', line: 1 } }],
+                },
+              } as any,
+              finalResponse: JSON.stringify({ reviewed: true }),
+            };
+          },
+          async writeOpenSpecChangeFiles() { calls.push('writeOpenSpecChangeFiles'); },
+          async validateOpenSpecChange() { calls.push('validateOpenSpecChange'); },
+          async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },
+          async runQualityGate() { calls.push('runQualityGate'); return { passed: true, summary: 'ok', logs: '' }; },
+          async commitAndPush() { calls.push('commitAndPush'); },
+          async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
+          async upsertIssueComment() { calls.push('upsertIssueComment'); },
+          async getPullRequestDetails() { calls.push('getPullRequestDetails'); return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+          async getPullRequestDiff() { calls.push('getPullRequestDiff'); return 'diff --git a/src/index.ts b/src/index.ts'; },
+          async listPullRequestFiles() { calls.push('listPullRequestFiles'); return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
+          async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return []; },
+          async setPullRequestReady() { calls.push('setPullRequestReady'); },
+          async createPullRequestReview() { calls.push('createPullRequestReview'); },
+          async upsertPullRequestReviewComment() { calls.push('upsertPullRequestReviewComment'); },
+          async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
+        },
+      },
+      async (handle) => {
+        assert.strictEqual(await waitForBlockedReason(handle, 'implement_needs_input'), 'implement_needs_input');
+        await handle.signal(specifyRetrySignal);
+        assert.strictEqual(await waitForBlockedReason(handle, 'awaiting_spec_review'), 'awaiting_spec_review');
+        await handle.signal(specReviewedSignal);
+        return handle.result();
+      },
+    );
+
+    assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
+    assert.strictEqual(getTopReadyIssueCallCount, 1);
+    assert.strictEqual(getTopBacklogIssueCallCount, 0);
+    assert.strictEqual(runAgentSequenceCallCount, 3);
+    assert.ok(calls.includes('writeOpenSpecChangeFiles'));
+    assert.ok(calls.includes('validateOpenSpecChange'));
+    assert.ok(calls.includes('createPullRequestReview'));
+  });
+
   it('loops implement-review on needs-fix without reselecting the Ready issue', async () => {
     const calls: string[] = [];
     const statusUpdates: string[] = [];
