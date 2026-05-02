@@ -181,13 +181,22 @@ export async function commentOnIssueActivity(deps: GitHubActivityDeps, input: Is
 }
 
 export async function upsertIssueCommentActivity(deps: GitHubActivityDeps, input: UpsertIssueCommentInput): Promise<void> {
-  const existingComment = (await listIssueCommentsActivity(deps, input)).find((comment) => comment.body.includes(buildNightShiftMarker(input.marker)));
   const body = buildMarkerComment(input.marker, input.body);
+  if (isAppendOnlyIssueCommentMarker(input.marker)) {
+    await createIssueComment(deps, input.repoOwner, input.repoName, input.issueNumber, body);
+    return;
+  }
+
+  const existingComment = (await listIssueCommentsActivity(deps, input)).find((comment) => comment.body.includes(buildNightShiftMarker(input.marker)));
   if (existingComment) {
     await updateIssueComment(deps, input.repoOwner, input.repoName, existingComment.id, body);
     return;
   }
   await createIssueComment(deps, input.repoOwner, input.repoName, input.issueNumber, body);
+}
+
+function isAppendOnlyIssueCommentMarker(marker: string): boolean {
+  return marker === 'workflow:phase-failure';
 }
 
 async function createPullRequestWithDuplicateRecovery(

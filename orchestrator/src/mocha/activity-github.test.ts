@@ -584,6 +584,34 @@ describe('github activities', () => {
     });
   });
 
+  it('appends workflow phase failure comments instead of updating an existing marker comment', async () => {
+    const fetchCalls: FetchCall[] = [];
+    const { upsertIssueComment } = createActivityTestRig({
+      github: { fetch: async (input, init) => {
+        fetchCalls.push({ url: String(input), init });
+        return jsonResponse({ id: 77 });
+      } },
+    });
+
+    await upsertIssueComment({
+      repoOwner: 'Mugenor',
+      repoName: 'orchestrator-testing',
+      issueNumber: 7,
+      marker: 'workflow:phase-failure',
+      body: 'Failure body',
+    });
+
+    assert.deepStrictEqual(
+      fetchCalls.map((call) => ({ url: call.url, method: call.init?.method ?? 'GET' })),
+      [
+        { url: 'https://api.github.com/repos/Mugenor/orchestrator-testing/issues/7/comments', method: 'POST' },
+      ],
+    );
+    assert.deepStrictEqual(JSON.parse(String(fetchCalls[0].init?.body)), {
+      body: '<!-- night-shift:workflow:phase-failure -->\nFailure body',
+    });
+  });
+
   it('moves the GitHub project item status via GraphQL', async () => {
     const fetchCalls: FetchCall[] = [];
     const { moveProjectItemStatus } = createActivityTestRig({

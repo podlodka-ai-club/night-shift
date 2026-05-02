@@ -1,5 +1,6 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
+import { getAgentSchema } from '../agent-schema-registry';
 import { implementResponseJsonSchemaSource, implementResponseSchema, parseImplementResponse } from '../phases/implement/response';
 import { parseReviewerResponse, reviewerResponseJsonSchemaSource, reviewerResponseSchema } from '../phases/review/response';
 import { parseSpecifyResponse, specifyResponseJsonSchemaSource, specifyResponseSchema } from '../phases/specify/response';
@@ -210,6 +211,32 @@ describe('phase response contracts', () => {
         const jsonSourceResult = reviewerResponseJsonSchemaSource.safeParse(testCase.input);
         assert.strictEqual(parseResult.success, jsonSourceResult.success, testCase.label);
       }
+    });
+
+    it('generates an OpenAI-compatible line-number schema', () => {
+      const jsonSchema = getAgentSchema('reviewer-response-v1').jsonSchema as {
+        properties?: {
+          findings?: {
+            items?: {
+              properties?: {
+                location?: {
+                  anyOf?: Array<{
+                    properties?: {
+                      line?: { anyOf?: Array<Record<string, unknown>> };
+                    };
+                  }>;
+                };
+              };
+            };
+          };
+        };
+      };
+
+      const lineSchema = jsonSchema.properties?.findings?.items?.properties?.location?.anyOf?.[0]?.properties?.line?.anyOf?.[0];
+      assert.deepStrictEqual(lineSchema, {
+        type: 'integer',
+        minimum: 1,
+      });
     });
   });
 });
