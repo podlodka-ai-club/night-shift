@@ -1,0 +1,35 @@
+{
+  "id": "retry-jitter",
+  "ticket": {
+    "title": "Add jitter to network retry backoff to prevent thundering herd",
+    "description": "Our exponential-backoff retries (1s, 3s, 7s) are deterministic. Under outage, every replica retries on the exact same second, hammering the upstream. Add jitter.",
+    "labels": [
+      "bug",
+      "reliability"
+    ]
+  },
+  "specBundle": [
+    {
+      "path": "proposal.md",
+      "content": "# Add jitter to retry backoff\n\nThe retry helper in `src/util/retry.ts` currently sleeps for `1000 * (1 + 2 * attempt)` ms. Add full jitter (`Math.random()` multiplier in `[0.5, 1.5)`) so concurrent clients spread their retries.\n\n## Acceptance criteria\n- Backoff for attempt N is in `[base * 0.5, base * 1.5)` ms where base = `1000 * (1 + 2 * attempt)`.\n- Jitter is applied at every retry, not pre-computed.\n- Existing call sites do not need changes.\n- A unit test verifies the bound holds across 100 samples.\n"
+    },
+    {
+      "path": "tasks.md",
+      "content": "- [ ] Update `src/util/retry.ts` to multiply the base delay by a uniform random in [0.5, 1.5)\n- [ ] Add unit test in `src/util/__test__/retry.test.ts` that samples 100 delays and asserts the bound\n- [ ] Verify no other code reads the literal delay constants\n"
+    },
+    {
+      "path": "design.md",
+      "content": "# Design: jitter strategy\n\nWe pick \"full jitter\" over \"equal jitter\" because the goal is *spread*, not *bound*. AWS Architecture blog recommends full jitter for thundering-herd avoidance with bounded fanout.\n\nTrade-off: a request might wait up to 1.5x base in the worst case, which is acceptable since base itself is small.\n"
+    }
+  ],
+  "operatorComments": [
+    "Please don't introduce a new RNG dependency — `Math.random()` is fine for this."
+  ],
+  "recordedFinalText": "{\n  \"filesWritten\": [\n    {\n      \"path\": \"src/util/retry.ts\",\n      \"content\": \"// src/util/retry.ts\\n\\nfunction sleep(ms: number): Promise<void> {\\n  return new Promise((resolve) => setTimeout(resolve, ms));\\n}\\n\\nfunction getBackoffDelay(attempt: number): number {\\n  const base = 1000 * (1 + 2 * attempt);\\n  return base * (0.5 + Math.random());\\n}\\n\\nexport async function retry<T>(\\n  operation: () => Promise<T>,\\n  maxRetries: number = 3\\n): Promise<T> {\\n  let lastError: unknown;\\n\\n  for (let attempt = 0; attempt < maxRetries; attempt++) {\\n    try {\\n      return await operation();\\n    } catch (error) {\\n      lastError = error;\\n      if (attempt === maxRetries - 1) {\\n        throw lastError;\\n      }\\n      const delayMs = getBackoffDelay(attempt);\\n      await sleep(delayMs);\\n    }\\n  }\\n\\n  throw lastError!;\\n}\\n\"\n    },\n    {\n      \"path\": \"src/util/__test__/retry.test.ts\",\n      \"content\": \"import { getBackoffDelay } from '../retry';\\n\\ndescribe('retry backoff jitter', () => {\\n  it('produces delays in [base * 0.5, base * 1.5) across 100 samples', () => {\\n    const attempt = 0;\\n    const base = 1000 * (1 + 2 * attempt);\\n    const minExpected = base * 0.5;\\n    const maxExpected = base * 1.5;\\n\\n    const delays: number[] = [];\\n    for (let i = 0; i < 100; i++) {\\n      delays.push(getBackoffDelay(attempt));\\n    }\\n\\n    const actualMin = Math.min(...delays);\\n    const actualMax = Math.max(...delays);\\n\\n    expect(actualMin).toBeGreaterThanOrEqual(minExpected);\\n    expect(actualMax).toBeLessThan(maxExpected);\\n  });\\n});\\n\"\n    }\n  ],\n  \"commitMessage\": \"fix(reliability): add jitter to retry backoff delays to prevent thundering herd\\n\\n- Base delay *= uniform random in [0.5, 1.5) via new getBackoffDelay(attempt)\\n- Applied per-retry in loop\\n- Unit test verifies bounds over 100 samples for attempt=0\\n- No API changes for callers\",\n  \"summary\": \"AC mapping:\\n- Jittered backoff in [base*0.5, base*1.5): implemented in src/util/retry.ts getBackoffDelay (lines 6-8), base=1000*(1+2*attempt)\\n- Applied every retry: called in retry loop before sleep (line 24)\\n- No call site changes: retry() signature unchanged\\n- Unit test: src/util/__test__/retry.test.ts lines 8-25 samples 100 getBackoffDelay(0), asserts min>=500 && max<1500\\n\\nAssumptions: inferred prior retry.ts structure from spec (loop var 'attempt', inline base formula, internal sleep); no other files compute same base delay.\\nSelf-attack: attempt=0 (tested), attempt>=1 (same formula), maxRetries=0 (no call), maxRetries=1 (one jittered sleep), float ms/setTimeout ok, no regressions in timing-dependent code (unverified).\",\n  \"followUps\": [\n    \"Grep repo for '1 + 2' OR '1000\\\\s*\\\\*' near 'attempt' OR 'retry' to confirm delay formula only in retry.ts\",\n    \"Run full test suite / integration tests to check for timing regressions\"\n  ]\n}",
+  "recordedUsage": {
+    "input_tokens": 1041,
+    "cached_input_tokens": 149,
+    "output_tokens": 839
+  },
+  "recordedCostMicroUsd": 605
+}

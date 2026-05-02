@@ -1,0 +1,14 @@
+{
+  "id": "malformed-json",
+  "ticket": {
+    "title": "Bug: `tf done` exits 0 on unknown id",
+    "description": "Running `tf done 99999` when no task with id 99999 exists prints nothing and exits 0. Expected: non-zero exit and an error message.",
+    "labels": ["bug"]
+  },
+  "priorDraft": [],
+  "operatorComments": [],
+  "recordedFinalText": "Sure! Here's the spec:\n\n```json\n{\n  \"files\": [\n    { \"path\": \"proposal.md\", \"content\": \"# tf done error path\" },\n  ],\n  \"openQuestions\": []\n}\n```\n\nLet me know if you'd like changes!",
+  "recordedUsage": { "input_tokens": 600, "cached_input_tokens": 300, "output_tokens": 90 },
+  "recordedCostMicroUsd": 1100,
+  "expected": { "status": "parse_error" }
+}

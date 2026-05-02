@@ -1,0 +1,14 @@
+{
+  "id": "cli-flag-addition",
+  "ticket": {
+    "title": "Add `--json` flag to `tf list`",
+    "description": "Scripts wrapping the CLI need machine-readable output. Add `tf list --json` that prints one JSON object per line (NDJSON) with the full Task shape from `packages/shared/schemas.ts`. Default human-readable output is unchanged.",
+    "labels": ["enhancement", "cli"]
+  },
+  "priorDraft": [],
+  "operatorComments": [],
+  "recordedFinalText": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# `tf list --json` (NDJSON)\\n\\n## Problem\\n\\nWrapping `tf list` from a script today requires brittle text parsing.\\n\\n## Approach\\n\\nAdd a `--json` flag to the `list` command that prints one JSON object per task on its own line, in the order tasks would have been printed in the table view. The JSON shape is the canonical Task schema from `packages/shared/schemas.ts` so consumers can reuse the same types.\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] `--json` flag in packages/cli/src/commands/list.ts\\n- [ ] Reuse TaskSchema from shared for serialisation\\n- [ ] Snapshot test: NDJSON output for a 3-task fixture\\n- [ ] Doc: short example in README under 'Scripting'\"}],\"openQuestions\":[],\"assumptions\":[\"Trailing newline after the last record (POSIX-friendly)\",\"Empty list prints zero lines, exits 0\"],\"risks\":[\"If the Task schema gains a field, NDJSON consumers see it on next upgrade — call this out as backwards-compatible by convention but not enforced\"]}",
+  "recordedUsage": { "input_tokens": 1100, "cached_input_tokens": 600, "output_tokens": 290 },
+  "recordedCostMicroUsd": 3800,
+  "expected": { "status": "refined", "maxOpenQuestions": 0 }
+}

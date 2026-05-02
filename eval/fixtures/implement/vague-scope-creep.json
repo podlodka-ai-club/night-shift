@@ -1,0 +1,31 @@
+{
+  "id": "vague-scope-creep",
+  "ticket": {
+    "title": "Improve logging across the worker",
+    "description": "We need better logs from the worker. It's hard to debug failed runs. Make it better.",
+    "labels": [
+      "chore",
+      "observability"
+    ]
+  },
+  "specBundle": [
+    {
+      "path": "proposal.md",
+      "content": "# Improve worker logging\n\nThe Temporal worker in `src/cli/worker.ts` currently only logs activity start/end. Operators want richer signal so failed runs are easier to triage.\n\nProposed: add structured logs with `runId`, `ticketId`, `phase` on every activity boundary.\n\n## Acceptance criteria\n_(none specified — see open questions)_\n"
+    },
+    {
+      "path": "tasks.md",
+      "content": "- [ ] Add structured logger\n- [ ] Wire it into worker activities\n- [ ] Maybe also add metrics?\n- [ ] Maybe restructure the worker startup sequence while we're in there\n"
+    }
+  ],
+  "operatorComments": [
+    "Note: there's an open question on what log format we want — JSON lines vs pino. The specifier flagged this but we said 'just pick one and ship it'."
+  ],
+  "recordedFinalText": "{\"filesWritten\":[{\"path\":\"src/cli/worker.ts\",\"content\":\"import crypto from 'node:crypto';\\nimport { Worker } from '@temporalio/worker';\\nimport * as activities from './activities';\\nimport type { ActivityInboundCall, ActivityInboundInterceptor, NextFn } from '@temporalio/interceptor';\\n\\nfunction logInfo(obj: Record<string, any>): void {\\n  console.log(JSON.stringify({\\n    timestamp: new Date().toISOString(),\\n    level: 'info',\\n    ...obj,\\n  }));\\n}\\n\\nfunction logError(obj: Record<string, any>): void {\\n  console.log(JSON.stringify({\\n    timestamp: new Date().toISOString(),\\n    level: 'error',\\n    ...obj,\\n  }));\\n}\\n\\nclass LoggingActivityInterceptor implements ActivityInboundInterceptor {\\n  async intercept(activity: ActivityInboundCall, next: NextFn): Promise<unknown> {\\n    const info = activity.info;\\n    const workflowExecution = info.workflowExecution;\\n    logInfo({\\n      phase: 'activityStart',\\n      runId: workflowExecution.runId,\\n      ticketId: workflowExecution.workflowId,\\n      activityType: info.activityType.name,\\n      attempt: info.attempt,\\n    });\\n\\n    try {\\n      const result = await next();\\n      logInfo({\\n        phase: 'activityComplete',\\n        runId: workflowExecution.runId,\\n        ticketId: workflowExecution.workflowId,\\n        activityType: info.activityType.name,\\n        attempt: info.attempt,\\n      });\\n      return result;\\n    } catch (error) {\\n      logError({\\n        phase: 'activityFailed',\\n        runId: workflowExecution.runId,\\n        ticketId: workflowExecution.workflowId,\\n        activityType: info.activityType.name,\\n        attempt: info.attempt,\\n        error: error instanceof Error ? error.message : String(error),\\n        stack: error instanceof Error ? error.stack : undefined,\\n      });\\n      throw error;\\n    }\\n  }\\n}\\n\\nasync function run(): Promise<void> {\\n  const workerInstanceId = crypto.randomUUID();\\n\\n  logInfo({ phase: 'workerStart', workerInstanceId });\\n\\n  const worker = await Worker.create({\\n    taskQueue: 'default',\\n    workflowsPath: require.resolve('./workflows'),\\n    activities,\\n    interceptors: {\\n      activities: [new LoggingActivityInterceptor()],\\n    },\\n  });\\n\\n  logInfo({ phase: 'workerReady', workerInstanceId });\\n\\n  try {\\n    await worker.run();\\n    logInfo({ phase: 'workerStop', workerInstanceId });\\n  } catch (err) {\\n    logError({\\n      phase: 'workerFailed',\\n      workerInstanceId,\\n      error: err instanceof Error ? err.message : String(err),\\n    });\\n    process.exit(1);\\n  }\\n}\\n\\nrun().catch((err) => {\\n  logError({\\n    phase: 'runFailed',\\n    error: err instanceof Error ? err.message : String(err),\\n  });\\n  process.exit(1);\\n});\"}],\"commitMessage\":\"chore(observability): add structured JSON logging to worker activity boundaries\",\"summary\":\"Added a Temporal ActivityInboundInterceptor (LoggingActivityInterceptor) that emits structured JSON logs at every activity boundary (start/complete/failed) with required fields: runId (workflowExecution.runId), ticketId (workflowExecution.workflowId), phase, activityType, attempt, and error/stack on failure. Implemented simple JSON lines logger using console.log(JSON.stringify()) with timestamp/level. Also added structured logs for worker lifecycle (start/ready/stop/failed). This directly satisfies the proposal for richer logging in src/cli/worker.ts to ease triage of failed runs. Log format decision: JSON lines (structured, parseable). No metrics or restructuring added (vague 'maybe').\",\"followUps\":[\"Unverified: Add integration test e.g. 'test/worker-logs.test.ts' spawning worker, executing workflow w/ activities (success/fail/retry), assert log lines contain expected fields (runId/ticketId/phase).\",\"Assumption: workflowExecution.workflowId == ticketId (common pattern); if ticketId is a custom field (e.g. SearchAttribute), extract from activity.args[0] or env and update.\",\"Assumption: Temporal SDK >=1.0 supports interceptors & ActivityInboundCall.info shape.\",\"Edge cases addressed: retries (via attempt), failures (error logged+rethrown); unaddressed: heartbeats/timeouts (not in inbound interceptor path) → monitor if needed.\",\"Self-attack: No activities → worker logs only; malformed activityType → stringifies; high volume → console perf ok short-term.\",\"Consider pino for prod perf if console bottleneck.\",\"Future: Add metrics per tasks.md if prioritized.\"]}",
+  "recordedUsage": {
+    "input_tokens": 846,
+    "cached_input_tokens": 845,
+    "output_tokens": 1028
+  },
+  "recordedCostMicroUsd": 556
+}
