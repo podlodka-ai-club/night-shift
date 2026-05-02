@@ -703,12 +703,19 @@ describe('worktree activities', () => {
     ]);
   });
 
-  it('runs the quality gate from the worktree root and truncates long logs', async () => {
+  it('runs make check when the worktree Makefile declares a check target', async () => {
     const worktree = buildWorktreeContext();
     const gitCalls: GitCall[] = [];
     const longLog = 'x'.repeat(5000);
     const { runQualityGate } = createActivityTestRig({
       worktree: {
+        access: async (targetPath) => {
+          if (String(targetPath) === `${worktree.worktreePath}/Makefile`) {
+            return undefined;
+          }
+          throw createNotFoundError();
+        },
+        readFile: async () => 'check:\n\t@echo ok\n' as any,
         execFile: async (file, args, options) => {
           gitCalls.push({ cwd: options?.cwd, args: [String(file), ...args] });
           return { stdout: longLog, stderr: 'tail', exitCode: 1 };
@@ -725,6 +732,58 @@ describe('worktree activities', () => {
     assert.strictEqual(result.summary, 'make check failed');
     assert.match(result.logs, /tail|\.\.\.\[truncated\]/);
     assert.ok(result.logs.length < 4200);
+  });
+
+  it('falls back to npm run check when package.json declares a check script', async () => {
+    const worktree = buildWorktreeContext();
+    const gitCalls: GitCall[] = [];
+    const { runQualityGate } = createActivityTestRig({
+      worktree: {
+        access: async (targetPath) => {
+          const value = String(targetPath);
+          if (value === `${worktree.worktreePath}/Makefile` || value === `${worktree.worktreePath}/package.json`) {
+            return undefined;
+          }
+          throw createNotFoundError();
+        },
+        readFile: async (targetPath) => {
+          if (String(targetPath).endsWith('/Makefile')) {
+            return 'build:\n\t@echo build\n' as any;
+          }
+          return JSON.stringify({ scripts: { check: 'slidev export --dry-run' } }) as any;
+        },
+        execFile: async (file, args, options) => {
+          gitCalls.push({ cwd: options?.cwd, args: [String(file), ...args] });
+          return { stdout: 'ok', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    const result = await runQualityGate({ worktree });
+
+    assert.deepStrictEqual(gitCalls, [
+      { cwd: worktree.worktreePath, args: ['npm', 'run', 'check'] },
+    ]);
+    assert.strictEqual(result.passed, true);
+    assert.strictEqual(result.summary, 'npm run check passed');
+    assert.strictEqual(result.logs, 'ok');
+  });
+
+  it('treats repositories without a declared quality gate as passing', async () => {
+    const worktree = buildWorktreeContext();
+    const { runQualityGate } = createActivityTestRig({
+      worktree: {
+        access: async () => {
+          throw createNotFoundError();
+        },
+      },
+    });
+
+    const result = await runQualityGate({ worktree });
+
+    assert.strictEqual(result.passed, true);
+    assert.strictEqual(result.summary, 'no quality gate configured');
+    assert.strictEqual(result.logs, '');
   });
 
   it('builds deterministic worktree helper values', () => {

@@ -44,6 +44,10 @@ describe('intake trigger handling', () => {
       { type: 'signal', workflowId: 'ticket-7', signalName: 'specReviewed' },
     );
     assert.deepStrictEqual(
+      resolveWorkflowTriggerAction({ boardStatusName: 'Backlog', workflowId: buildIssueWorkflowId(7), workflowState: { kind: 'open', blockedReason: 'implement_needs_input' } }),
+      { type: 'signal', workflowId: 'ticket-7', signalName: 'specifyRetry' },
+    );
+    assert.deepStrictEqual(
       resolveWorkflowTriggerAction({ boardStatusName: 'Ready', workflowId: buildIssueWorkflowId(7), workflowState: { kind: 'open', blockedReason: 'implement_needs_input' } }),
       { type: 'signal', workflowId: 'ticket-7', signalName: 'implementRetry' },
     );

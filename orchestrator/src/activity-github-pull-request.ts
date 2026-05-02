@@ -8,7 +8,9 @@ import type {
   GetPullRequestDetailsInput,
   IssueComment,
   IssueCommentInput,
+  ListOpenPullRequestFeedbackInput,
   ListIssueCommentsInput,
+  OpenPullRequestFeedback,
   OpenPullRequestInput,
   PullRequestChangedFile,
   PullRequestDetails,
@@ -34,6 +36,10 @@ interface PullRequestReviewCommentResponse {
   body: string;
   path: string;
   line?: number | null;
+}
+
+interface PullRequestReviewResponse {
+  body?: string | null;
 }
 
 const MARK_PULL_REQUEST_READY_MUTATION = `
@@ -127,6 +133,29 @@ export async function listPullRequestReviewCommentsActivity(
   }));
 }
 
+export async function listOpenPullRequestFeedbackActivity(
+  deps: GitHubActivityDeps,
+  input: ListOpenPullRequestFeedbackInput,
+): Promise<OpenPullRequestFeedback> {
+  const existingPullRequest = await findOpenPullRequestForBranch(deps, input.worktree);
+  if (!existingPullRequest) {
+    return { reviewBodies: [], reviewComments: [] };
+  }
+
+  const reviewInput = {
+    repoOwner: input.worktree.repoOwner,
+    repoName: input.worktree.repoName,
+    pullRequestNumber: existingPullRequest.number,
+  };
+
+  const [reviewBodies, reviewComments] = await Promise.all([
+    listPullRequestReviewsActivity(deps, reviewInput),
+    listPullRequestReviewCommentsActivity(deps, reviewInput),
+  ]);
+
+  return { reviewBodies, reviewComments };
+}
+
 export async function setPullRequestReadyActivity(deps: GitHubActivityDeps, input: SetPullRequestReadyInput): Promise<void> {
   if (!input.ready) {
     throw new Error('Converting a pull request back to draft is not supported in this branch.');
@@ -176,18 +205,41 @@ export async function upsertPullRequestReviewCommentActivity(
   await createPullRequestReviewComment(deps, input, body);
 }
 
+async function listPullRequestReviewsActivity(
+  deps: GitHubActivityDeps,
+  input: PullRequestReviewContextInput,
+): Promise<string[]> {
+  const repoPath = buildRepoApiPath(input.repoOwner, input.repoName);
+  const reviews = await githubRest<PullRequestReviewResponse[]>(
+    deps,
+    `${repoPath}/pulls/${input.pullRequestNumber}/reviews?per_page=100`,
+  );
+  return reviews
+    .map((review) => review.body?.trim() ?? '')
+    .filter((body) => body.length > 0);
+}
+
 export async function commentOnIssueActivity(deps: GitHubActivityDeps, input: IssueCommentInput): Promise<void> {
   await createIssueComment(deps, input.repoOwner, input.repoName, input.issueNumber, buildIssueComment(input.pullRequestUrl));
 }
 
 export async function upsertIssueCommentActivity(deps: GitHubActivityDeps, input: UpsertIssueCommentInput): Promise<void> {
-  const existingComment = (await listIssueCommentsActivity(deps, input)).find((comment) => comment.body.includes(buildNightShiftMarker(input.marker)));
   const body = buildMarkerComment(input.marker, input.body);
+  if (isAppendOnlyIssueCommentMarker(input.marker)) {
+    await createIssueComment(deps, input.repoOwner, input.repoName, input.issueNumber, body);
+    return;
+  }
+
+  const existingComment = (await listIssueCommentsActivity(deps, input)).find((comment) => comment.body.includes(buildNightShiftMarker(input.marker)));
   if (existingComment) {
     await updateIssueComment(deps, input.repoOwner, input.repoName, existingComment.id, body);
     return;
   }
   await createIssueComment(deps, input.repoOwner, input.repoName, input.issueNumber, body);
+}
+
+function isAppendOnlyIssueCommentMarker(marker: string): boolean {
+  return marker === 'workflow:phase-failure';
 }
 
 async function createPullRequestWithDuplicateRecovery(

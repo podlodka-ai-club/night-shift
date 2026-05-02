@@ -29,6 +29,12 @@ interface LocalRepoPaths {
   remoteUrl: string;
 }
 
+interface QualityGateCommand {
+  file: string;
+  args: string[];
+  summaryLabel: string;
+}
+
 export function buildBranchName(issueNumber: number, branchPrefix = DEFAULT_BRANCH_PREFIX): string {
   return `${branchPrefix}/issue-${issueNumber}`;
 }
@@ -125,11 +131,20 @@ export function createWorktreeActivities(deps: WorktreeActivityDeps) {
     },
 
     async runQualityGate(input: RunQualityGateInput): Promise<QualityGateResult> {
-      const result = await deps.execFile('make', ['check'], { cwd: input.worktree.worktreePath });
+      const command = await resolveQualityGateCommand(deps, input.worktree.worktreePath);
+      if (!command) {
+        return {
+          passed: true,
+          summary: 'no quality gate configured',
+          logs: '',
+        };
+      }
+
+      const result = await deps.execFile(command.file, command.args, { cwd: input.worktree.worktreePath });
       const combinedLogs = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
       return {
         passed: result.exitCode === 0,
-        summary: result.exitCode === 0 ? 'make check passed' : 'make check failed',
+        summary: result.exitCode === 0 ? `${command.summaryLabel} passed` : `${command.summaryLabel} failed`,
         logs: truncateQualityGateLogs(combinedLogs),
       };
     },
@@ -197,6 +212,44 @@ async function ensureWorktreesIgnored(deps: WorktreeActivityDeps, paths: LocalRe
 
 function refreshCloneToDefaultBranch(deps: WorktreeActivityDeps, repoRoot: string, defaultBranch: string): Promise<unknown> {
   return git(deps, repoRoot, ['checkout', '-B', defaultBranch, `origin/${defaultBranch}`]);
+}
+
+async function resolveQualityGateCommand(
+  deps: WorktreeActivityDeps,
+  worktreePath: string,
+): Promise<QualityGateCommand | null> {
+  const makefilePath = path.join(worktreePath, 'Makefile');
+  if (await pathExists(deps, makefilePath)) {
+    const makefileContents = await deps.readFile(makefilePath, 'utf8');
+    if (hasMakeCheckTarget(makefileContents)) {
+      return { file: 'make', args: ['check'], summaryLabel: 'make check' };
+    }
+  }
+
+  const packageJsonPath = path.join(worktreePath, 'package.json');
+  if (await pathExists(deps, packageJsonPath)) {
+    const packageJson = await readPackageJson(deps, packageJsonPath);
+    if (typeof packageJson.scripts?.check === 'string' && packageJson.scripts.check.trim().length > 0) {
+      return { file: 'npm', args: ['run', 'check'], summaryLabel: 'npm run check' };
+    }
+  }
+
+  return null;
+}
+
+function hasMakeCheckTarget(makefileContents: string): boolean {
+  return /^check\s*:/m.test(makefileContents);
+}
+
+async function readPackageJson(
+  deps: Pick<WorktreeActivityDeps, 'readFile'>,
+  packageJsonPath: string,
+): Promise<{ scripts?: Record<string, unknown> }> {
+  try {
+    return JSON.parse(await deps.readFile(packageJsonPath, 'utf8')) as { scripts?: Record<string, unknown> };
+  } catch (error) {
+    throw new Error(`Failed to parse ${packageJsonPath}: ${toErrorMessage(error)}`);
+  }
 }
 
 async function hasRemoteBranch(deps: WorktreeActivityDeps, repoRoot: string, branchName: string): Promise<boolean> {

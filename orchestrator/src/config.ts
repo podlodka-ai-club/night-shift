@@ -92,12 +92,14 @@ export function resolveOrchestratorConfigPath(options: LoadOrchestratorConfigOpt
 }
 
 export async function loadOrchestratorConfig(options: LoadOrchestratorConfigOptions = {}): Promise<OrchestratorConfig> {
+  const cwd = options.cwd ?? process.cwd();
   const configPath = resolveOrchestratorConfigPath(options);
   if (!configPath) {
+    loadEnvFileIfPresent(path.resolve(cwd, '.env'));
     return orchestratorConfigSchema.parse({});
   }
 
-  loadAdjacentEnvFile(configPath);
+  loadEnvFileIfPresent(path.resolve(path.dirname(configPath), '.env'));
   const loaded = await loadConfigModule(configPath);
   return orchestratorConfigSchema.parse(loaded ?? {});
 }
@@ -112,8 +114,7 @@ async function loadConfigModule(configPath: string): Promise<unknown> {
   return typeof loaded === 'object' && loaded !== null && 'default' in loaded ? loaded.default : loaded;
 }
 
-function loadAdjacentEnvFile(configPath: string): void {
-  const envPath = path.resolve(path.dirname(configPath), '.env');
+function loadEnvFileIfPresent(envPath: string): void {
   if (existsSync(envPath)) {
     process.loadEnvFile(envPath);
   }

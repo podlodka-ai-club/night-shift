@@ -35,6 +35,7 @@ Operational defaults:
 - per-ticket branches/worktrees are stable and reusable across retries
 - automation uses a normal `git push -u origin <branch>` policy and does **not** force-push
 - corrupt pre-existing worktrees are recreated instead of being trusted blindly
+- the quality gate is repo-aware: run `make check` when a root `Makefile` declares `check`, otherwise run `npm run check` when a root `package.json` declares it, otherwise treat the repo as having no configured gate
 - the generic intake layer and generic `runAgentSequence` activity are intentional steady-state seams beneath the donor-style phase state machine
 
 ## Project board status model

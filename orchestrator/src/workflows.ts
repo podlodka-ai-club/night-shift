@@ -40,6 +40,7 @@ const {
   commitAndPush,
   openPullRequest,
   listIssueComments,
+  listOpenPullRequestFeedback,
   getPullRequestDetails,
   getPullRequestDiff,
   listPullRequestFiles,
@@ -183,7 +184,8 @@ export async function automateTopReadyIssue(
 
   syncCurrentDetails();
 
-  while (shellState.currentPhase === 'specify') {
+  workflowLoop: while (true) {
+    while (shellState.currentPhase === 'specify') {
     selectedSpecifyIssue ??= await getTopBacklogIssue(input);
     const issue = selectedSpecifyIssue;
     shellState.issueNumber = issue.issueNumber;
@@ -253,9 +255,9 @@ export async function automateTopReadyIssue(
     recordActivity('Spec review approved; entering implement phase.');
   }
 
-  if (pendingResume) pendingResume = false;
+    if (pendingResume) pendingResume = false;
 
-  while (shellState.currentPhase === 'implement') {
+    while (shellState.currentPhase === 'implement') {
     selectedImplementIssue ??= await getTopReadyIssue(input);
     const issue = selectedImplementIssue;
     shellState.issueNumber = issue.issueNumber;
@@ -273,6 +275,7 @@ export async function automateTopReadyIssue(
         {
           createWorktreeForIssueIfNeeded,
           listIssueComments,
+          listOpenPullRequestFeedback,
           readOpenSpecChangeFiles,
           runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
           writeRepositoryFiles,
@@ -290,10 +293,24 @@ export async function automateTopReadyIssue(
 
     if (implementResult.outcome === 'needs_input') {
       shellState.blockedReason = 'implement_needs_input';
+      allowSpecifyRetry = true;
       allowImplementRetry = true;
       recordActivity('Implement phase is blocked on operator input.');
-      await condition(() => pendingImplementRetry);
+  await condition(() => pendingSpecifyRetry || pendingImplementRetry);
+  allowSpecifyRetry = false;
       allowImplementRetry = false;
+
+      if (pendingSpecifyRetry) {
+        pendingSpecifyRetry = false;
+        pendingImplementRetry = false;
+        selectedSpecifyIssue = issue;
+        selectedImplementIssue = undefined;
+        shellState.blockedReason = null;
+        shellState.currentPhase = 'specify';
+    recordActivity('Backlog retry requested; returning to Specify phase.');
+        continue workflowLoop;
+      }
+
       pendingImplementRetry = false;
       shellState.blockedReason = null;
       recordActivity('Implement retry requested; rerunning Implement phase.');
@@ -364,9 +381,10 @@ export async function automateTopReadyIssue(
     const result = buildAutomateReadyIssueResult(issue, implementResult.pullRequest, issue.readyToMergeStatusName);
     await cleanupSuccessfulWorktree(implementResult.worktree);
     return result;
-  }
+    }
 
-  throw new Error('Workflow exited the implement phase unexpectedly.');
+    throw new Error('Workflow exited the implement phase unexpectedly.');
+  }
 }
 
 export async function pickupWorkflow(input: PickupWorkflowInput): Promise<void> {

@@ -47,6 +47,7 @@ export const BLOCKED_REASON_BOARD_SIGNAL_RULES = [
   { blockedReason: 'specify_needs_input', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
   { blockedReason: 'awaiting_spec_review', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
   { blockedReason: 'awaiting_spec_review', boardStatusName: 'Ready', signalName: 'specReviewed' },
+  { blockedReason: 'implement_needs_input', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
   { blockedReason: 'implement_needs_input', boardStatusName: 'Ready', signalName: 'implementRetry' },
   { blockedReason: 'review_escalation', boardStatusName: 'Ready', signalName: 'resume' },
   { blockedReason: 'review_escalation', boardStatusName: 'In review', signalName: 'resume' },
@@ -227,6 +228,15 @@ export interface PullRequestReviewComment {
   body: string;
   path: string;
   line?: number;
+}
+
+export interface OpenPullRequestFeedback {
+  reviewBodies: string[];
+  reviewComments: PullRequestReviewComment[];
+}
+
+export interface ListOpenPullRequestFeedbackInput {
+  worktree: WorktreeContext;
 }
 
 export interface GetPullRequestDetailsInput {
