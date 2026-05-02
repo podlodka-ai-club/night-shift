@@ -94,6 +94,5 @@ function buildWorkflowInput(): AutomateReadyIssueInput {
     inReviewStatusName: 'In review',
     blockedStatusName: 'Blocked',
     branchPrefix: 'orchestrator',
-    filePathPrefix: 'orchestrator-runs',
   };
 }

@@ -166,6 +166,7 @@ function wrapActivitiesWithExpectedFailures(
 function withDefaultWorkflowActivities(activities: WorkflowActivities): WorkflowActivities {
   return {
     cleanupWorktree: async () => undefined,
+    listOpenPullRequestFeedback: async () => ({ reviewBodies: [], reviewComments: [] }),
     ...activities,
   };
 }

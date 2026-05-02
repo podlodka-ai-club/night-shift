@@ -79,7 +79,6 @@ function createWorkflowResult(overrides: Partial<AutomateReadyIssueResult> = {})
     pullRequestNumber: 12,
     pullRequestUrl: `https://github.com/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/pull/12`,
     branchName: 'orchestrator-e2e-run-123/issue-77',
-    filePath: 'orchestrator-e2e/run-123/issue-77.md',
     targetStatusName: 'Ready to merge',
     ...overrides,
   };
@@ -437,7 +436,7 @@ describe('cleanupRunArtifacts', () => {
       seededIssue,
       selectedIssue,
       'orchestrator-e2e-run-123',
-      createWorkflowResult({ filePath: FAKE_AGENT_FILE_PATH }),
+      createWorkflowResult(),
     );
 
     assert.deepStrictEqual(report, {
@@ -471,7 +470,7 @@ describe('cleanupRunArtifacts', () => {
       seededIssue,
       selectedIssue,
       'orchestrator-e2e-run-123',
-      createWorkflowResult({ filePath: FAKE_AGENT_FILE_PATH }),
+      createWorkflowResult(),
     );
 
     assert.deepStrictEqual(report, {

@@ -33,6 +33,7 @@ describe('workflow phased shell', function () {
           async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
           async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
           async listIssueComments() { calls.push('listIssueComments'); return []; },
+          async listOpenPullRequestFeedback() { calls.push('listOpenPullRequestFeedback'); return { reviewBodies: [], reviewComments: [] }; },
           async readOpenSpecChangeFiles() {
             calls.push('readOpenSpecChangeFiles');
             return [
@@ -94,6 +95,7 @@ describe('workflow phased shell', function () {
       'createWorktreeForIssueIfNeeded',
       'listIssueComments',
       'readOpenSpecChangeFiles',
+      'listOpenPullRequestFeedback',
       'moveProjectItemStatus',
       'runAgentSequence:1',
       'writeRepositoryFiles',
@@ -921,6 +923,7 @@ describe('workflow phased shell', function () {
       reviewIteration: 0,
       maxReviewIterations: 3,
       latestActivity: 'Waiting for operator review',
+      recentActivities: [],
       issueNumber: 7,
       issueTitle: 'Demo issue',
     });
@@ -929,7 +932,152 @@ describe('workflow phased shell', function () {
     assert.match(rendered, /Blocked reason: awaiting_spec_review/i);
     assert.match(rendered, /Latest activity: Waiting for operator review/i);
   });
+
+  it('renders bounded recent summaries when present', () => {
+    const rendered = renderWorkflowCurrentDetails({
+      startPhase: 'implement',
+      currentPhase: 'implement',
+      blockedReason: null,
+      reviewIteration: 0,
+      maxReviewIterations: 3,
+      latestActivity: 'Running quality gate.',
+      recentActivities: [
+        'Inspecting repository context.',
+        'Preparing code changes.',
+        'Running quality gate.',
+      ],
+      issueNumber: 7,
+      issueTitle: 'Demo issue',
+    });
+
+    assert.match(rendered, /Latest activity: Running quality gate\./i);
+    assert.match(rendered, /Recent summaries:/i);
+    assert.match(rendered, /Inspecting repository context\./i);
+    assert.match(rendered, /Preparing code changes\./i);
+  });
+
+  it('keeps only the last three distinct progress summaries signaled into current details', async () => {
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let runAgentSequenceCallCount = 0;
+
+    await runWorkflowWithHandle<AutomateReadyIssueResult>(
+      {
+        workflowId: 'workflow-shell-progress-history-test',
+        workflowInput: { startPhase: 'specify' },
+        activities: {
+          async getTopBacklogIssue() { return issue; },
+          async listIssueComments() { return []; },
+          async readOpenSpecChangeFiles() {
+            return runAgentSequenceCallCount >= 1
+              ? [
+                  { path: 'proposal.md', content: '# Proposal' },
+                  { path: 'tasks.md', content: '# Tasks' },
+                ]
+              : [];
+          },
+          async createWorktreeForIssueIfNeeded() { return worktree; },
+          async runAgentSequence() {
+            runAgentSequenceCallCount += 1;
+            if (runAgentSequenceCallCount === 1) {
+              return {
+                threadId: 'specify-thread-123',
+                completedStepIds: ['specify'],
+                outputs: {
+                  specifyResponse: {
+                    files: [
+                      { path: 'proposal.md', content: '# Proposal' },
+                      { path: 'tasks.md', content: '# Tasks' },
+                    ],
+                    openQuestions: [],
+                    assumptions: [],
+                    risks: [],
+                  },
+                } as any,
+                finalResponse: JSON.stringify({ refined: true }),
+              };
+            }
+
+            if (runAgentSequenceCallCount === 2) {
+              return {
+                threadId: 'implement-thread-123',
+                completedStepIds: ['implement'],
+                outputs: {
+                  implementResponse: {
+                    filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                    commitMessage: 'feat: implement the approved spec',
+                    summary: 'Implements the approved spec bundle.',
+                    followUps: [],
+                  },
+                },
+                finalResponse: JSON.stringify({ implemented: true }),
+              };
+            }
+
+            return {
+              threadId: 'review-thread-123',
+              completedStepIds: ['review'],
+              outputs: {
+                reviewerResponse: {
+                  summary: 'Looks ready to merge.',
+                  findings: [],
+                },
+              } as any,
+              finalResponse: JSON.stringify({ reviewed: true }),
+            };
+          },
+          async writeOpenSpecChangeFiles() { return undefined; },
+          async validateOpenSpecChange() { return undefined; },
+          async writeRepositoryFiles() { return undefined; },
+          async runQualityGate() { return { passed: true, summary: 'make check passed', logs: '' }; },
+          async commitAndPush() { return undefined; },
+          async openPullRequest() { return pullRequest; },
+          async upsertIssueComment() { return undefined; },
+          async getPullRequestDetails() { return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: false }; },
+          async getPullRequestDiff() { return 'diff --git a/src/index.ts b/src/index.ts'; },
+          async listPullRequestFiles() { return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
+          async listPullRequestReviewComments() { return []; },
+          async setPullRequestReady() { return undefined; },
+          async createPullRequestReview() { return undefined; },
+          async upsertPullRequestReviewComment() { return undefined; },
+          async moveProjectItemStatus() { return undefined; },
+        },
+      },
+      async (handle) => {
+        assert.strictEqual(await waitForBlockedReason(handle, 'awaiting_spec_review'), 'awaiting_spec_review');
+        await handle.signal(activityProgressSignal, 'First summary.');
+        await handle.signal(activityProgressSignal, 'Second summary.');
+        await handle.signal(activityProgressSignal, 'Second summary.');
+        await handle.signal(activityProgressSignal, 'Third summary.');
+        await handle.signal(activityProgressSignal, 'Fourth summary.');
+
+        const currentDetails = await waitForCurrentDetailsMatch(handle, /Second summary\.[\s\S]*Third summary\.[\s\S]*Fourth summary\./i);
+        assert.ok(currentDetails, 'Expected workflow current details to include the latest signaled summaries.');
+        assert.doesNotMatch(currentDetails, /First summary\./i);
+
+        await handle.signal(specReviewedSignal);
+        return handle.result();
+      },
+    );
+  });
 });
+
+async function waitForCurrentDetailsMatch(
+  handle: Parameters<typeof runWorkflowWithHandle>[1] extends (handle: infer T) => Promise<unknown> ? T : never,
+  matcher: RegExp,
+): Promise<string | undefined> {
+  for (let attempt = 0; attempt < 160; attempt += 1) {
+    const workflowMetadata = await handle.query<{ currentDetails?: unknown }>('__temporal_workflow_metadata');
+    const currentDetails = typeof workflowMetadata?.currentDetails === 'string' ? workflowMetadata.currentDetails : undefined;
+    if (currentDetails && matcher.test(currentDetails)) {
+      return currentDetails;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  return undefined;
+}
 
 async function waitForBlockedReason(
   handle: Parameters<typeof runWorkflowWithHandle>[1] extends (handle: infer T) => Promise<unknown> ? T : never,

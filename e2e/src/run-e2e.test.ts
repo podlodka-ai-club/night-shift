@@ -3,6 +3,7 @@ import { describe, it } from 'mocha';
 import type { AutomateReadyIssueResult } from '../../orchestrator/lib/shared';
 import type { E2EConfig } from './config';
 import {
+  assertFakeAgentWorkflowCurrentDetails,
   FAKE_E2E_QUALITY_GATE_FILE,
   recordObservedStatus,
   resolveSeedStatus,
@@ -133,6 +134,29 @@ describe('FAKE_E2E_QUALITY_GATE_FILE', () => {
   });
 });
 
+describe('assertFakeAgentWorkflowCurrentDetails', () => {
+  it('accepts current details that retain fake assistant summaries', () => {
+    assert.doesNotThrow(() => {
+      assertFakeAgentWorkflowCurrentDetails([
+        '## Deterministic phases workflow',
+        '- Start phase: implement',
+        '- Current phase: review',
+        '- Blocked reason: none',
+        '- Review iteration: 1/3',
+        '- Latest activity: Review approved PR #63; issue moved to Ready to merge.',
+        '- Recent summaries:',
+        '  - Opened PR #63 and moved the issue to In review.',
+        '  - Review verdict for PR #63: ready-to-merge.',
+        '  - Review approved PR #63; issue moved to Ready to merge.',
+      ].join('\n'), [
+        '## Deterministic phases workflow',
+        '- Recent summaries:',
+        '  - Preparing deterministic fake review verdict.',
+      ].join('\n'));
+    });
+  });
+});
+
 function buildWorkflowResult(): AutomateReadyIssueResult {
   return {
     issueNumber: 77,
@@ -141,7 +165,6 @@ function buildWorkflowResult(): AutomateReadyIssueResult {
     pullRequestNumber: 12,
     pullRequestUrl: 'https://github.com/Mugenor/orchestrator-testing/pull/12',
     branchName: 'orchestrator-e2e-run-123/issue-77',
-    filePath: 'orchestrator-e2e/run-123',
     targetStatusName: 'Ready to merge',
   };
 }

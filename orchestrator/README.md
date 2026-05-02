@@ -92,6 +92,8 @@ Quick operator summary:
 - `pickup.enabled = false` disables schedule creation on startup
 - `pickup-schedule` is the stable Temporal schedule id used by the worker
 - `npm run workflow -- ...` remains the manual/one-off intake entrypoint
+- Temporal UI current details now show phase state plus recent assistant-authored progress summaries from agent execution
+- raw tool-use / tool-result noise is intentionally filtered out of the Temporal UI summary stream
 - for the live GitHub harness, see `../e2e/README.md`
 
 ### Start a workflow run
@@ -132,7 +134,7 @@ Key config fields:
 - `pickup.intervalSeconds` — pickup schedule cadence, defaults to `10`
 - `pickup.maxConcurrent` — max pickup start/signal actions per schedule tick, defaults to `5`
 - `github.projectOwner` / `github.projectNumber` — Project v2 coordinates used by both worker and client
-- `github.branchPrefix` / `github.filePathPrefix` — naming prefixes for generated branch/file paths
+- `github.branchPrefix` — naming prefix for generated branches
 
 You can pass the GitHub project owner/number directly:
 
@@ -167,7 +169,6 @@ Optional overrides:
 - `GITHUB_IN_REVIEW_STATUS`
 - `GITHUB_BLOCKED_STATUS`
 - `GITHUB_BRANCH_PREFIX`
-- `GITHUB_FILE_PATH_PREFIX`
 - `GITHUB_PICKUP_MAX_ACTIONS`
 
 Value precedence for client/manual intake is:

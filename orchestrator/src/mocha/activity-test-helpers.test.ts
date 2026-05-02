@@ -27,15 +27,6 @@ describe('activity test rig defaults', () => {
     );
   });
 
-  it('fails fast when a test forgets to mock filesystem writes', async () => {
-    const { runDummyAgent } = createActivityTestRig();
-
-    await assert.rejects(
-      () => runDummyAgent({ worktree: buildWorktreeContext() }),
-      (error: unknown) => error instanceof Error && error.message.includes(TEST_RIG_UNMOCKED_DEPENDENCY_PREFIX) && error.message.includes('agent.mkdir'),
-    );
-  });
-
   it('fails fast when a test forgets to mock Codex thread creation', async () => {
     const { runAgentSequence } = createActivityTestRig();
 

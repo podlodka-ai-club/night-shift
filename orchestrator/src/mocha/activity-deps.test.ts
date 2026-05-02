@@ -1,5 +1,7 @@
 import assert from 'assert';
 import path from 'node:path';
+import { Context } from '@temporalio/activity';
+import { WorkflowNotFoundError } from '@temporalio/common';
 import { describe, it } from 'mocha';
 import { createActivityDependencies } from '../activities';
 import { createCodexAgentAdapter, createLazyCodexSession } from '../activity-deps';
@@ -85,5 +87,28 @@ describe('activity dependencies', () => {
       prompt: 'Return JSON',
       options: { outputSchema: { type: 'object' }, signal: abortController.signal, onEvent: runCalls[0]?.options && (runCalls[0] as { options: { onEvent?: unknown } }).options.onEvent },
     }]);
+  });
+
+  it('ignores late progress signals after the workflow has already completed', async () => {
+    const originalCurrent = Context.current;
+    const progressCalls: Array<{ workflowId: string; message: string }> = [];
+
+    Context.current = (() => ({
+      info: { workflowExecution: { workflowId: 'ticket-7' } },
+    })) as typeof Context.current;
+
+    try {
+      const deps = createActivityDependencies({
+        signalWorkflowProgress: async (workflowId, message) => {
+          progressCalls.push({ workflowId, message });
+          throw new WorkflowNotFoundError('Workflow not found', workflowId, undefined);
+        },
+      });
+
+      await assert.doesNotReject(() => deps.signalProgress('Preparing progress update.'));
+      assert.deepStrictEqual(progressCalls, [{ workflowId: 'ticket-7', message: 'Preparing progress update.' }]);
+    } finally {
+      Context.current = originalCurrent;
+    }
   });
 });

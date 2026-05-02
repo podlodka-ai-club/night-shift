@@ -38,7 +38,6 @@ describe('entrypoint config wiring', () => {
           "    inReviewStatusName: 'Reviewing',",
           "    blockedStatusName: 'Paused',",
           "    branchPrefix: 'feature',",
-          "    filePathPrefix: 'plans',",
           '  },',
           '};',
         ].join('\n'),
@@ -55,7 +54,6 @@ describe('entrypoint config wiring', () => {
         inReviewStatusName: 'Reviewing',
         blockedStatusName: 'Paused',
         branchPrefix: 'feature',
-        filePathPrefix: 'plans',
       });
       assert.deepStrictEqual(resolved.command, { kind: 'pickup', maxActions: 3 });
     } finally {
@@ -105,7 +103,6 @@ describe('entrypoint config wiring', () => {
           inReviewStatusName: 'In review',
           blockedStatusName: 'Blocked',
           branchPrefix: 'orchestrator',
-          filePathPrefix: 'orchestrator-runs',
         },
         pickup: {
           enabled: false,
@@ -239,7 +236,6 @@ describe('entrypoint config wiring', () => {
           "    inReviewStatusName: 'Config Review',",
           "    blockedStatusName: 'Config Blocked',",
           "    branchPrefix: 'config-branch',",
-          "    filePathPrefix: 'config-path',",
           '  },',
           '};',
         ].join('\n'),
@@ -265,7 +261,6 @@ describe('entrypoint config wiring', () => {
         inReviewStatusName: 'Config Review',
         blockedStatusName: 'Config Blocked',
         branchPrefix: 'config-branch',
-        filePathPrefix: 'config-path',
       });
       assert.deepStrictEqual(resolved.command, { kind: 'pickup', maxActions: 4 });
     } finally {

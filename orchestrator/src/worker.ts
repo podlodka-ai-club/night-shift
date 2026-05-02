@@ -14,9 +14,14 @@ import {
   type ResolvedWorkerEntrypointConfig,
 } from './entrypoint-config';
 import { createPickupActivities } from './pickup-activities';
+import { WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME } from './shared';
 
 export const PICKUP_SCHEDULE_ID = 'pickup-schedule';
 const LEGACY_PICKUP_CRON_WORKFLOW_ID = 'pickup-cron';
+
+type ClosableConnection = {
+  close(): Promise<void>;
+};
 
 export function buildPickupScheduleOptions(config: ResolvedWorkerEntrypointConfig) {
   return {
@@ -62,11 +67,17 @@ export async function ensurePickupSchedule(
 export async function run(args = process.argv.slice(2)): Promise<void> {
   const parsedArgs = parseEntrypointConfigArgs(args);
   const config = await loadWorkerEntrypointConfig({ explicitPath: parsedArgs.explicitPath });
-  const connection = await NativeConnection.connect({
-    address: config.temporal.address,
-  });
+  const { connection, signalConnection } = await openWorkerConnections({
+    connectNative: (address) => NativeConnection.connect({ address }),
+    connectSignal: (address) => Connection.connect({ address }),
+  }, config.temporal.address);
   try {
-    const runtimes = createActivityRuntimes();
+    const signalClient = new Client({ connection: signalConnection, namespace: config.temporal.namespace });
+    const runtimes = createActivityRuntimes({
+      signalWorkflowProgress: async (workflowId, message) => {
+        await signalClient.workflow.getHandle(workflowId).signal(WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME, message);
+      },
+    });
     const worker = await Worker.create({
       connection,
       namespace: config.temporal.namespace,
@@ -85,7 +96,54 @@ export async function run(args = process.argv.slice(2)): Promise<void> {
 
     await worker.run();
   } finally {
-    await connection.close();
+    await closeWorkerConnections(signalConnection, connection);
+  }
+}
+
+export async function openWorkerConnections<
+  TConnection extends ClosableConnection,
+  TSignalConnection extends ClosableConnection,
+>(
+  deps: {
+    connectNative(address: string): Promise<TConnection>;
+    connectSignal(address: string): Promise<TSignalConnection>;
+  },
+  address: string,
+): Promise<{ connection: TConnection; signalConnection: TSignalConnection }> {
+  const connection = await deps.connectNative(address);
+  try {
+    const signalConnection = await deps.connectSignal(address);
+    return { connection, signalConnection };
+  } catch (error) {
+    try {
+      await connection.close();
+    } catch {
+      // Preserve the original connection setup failure.
+    }
+    throw error;
+  }
+}
+
+export async function closeWorkerConnections(
+  signalConnection: ClosableConnection | undefined,
+  connection: ClosableConnection | undefined,
+): Promise<void> {
+  let cleanupError: unknown;
+
+  try {
+    await signalConnection?.close();
+  } catch (error) {
+    cleanupError ??= error;
+  }
+
+  try {
+    await connection?.close();
+  } catch (error) {
+    cleanupError ??= error;
+  }
+
+  if (cleanupError) {
+    throw cleanupError;
   }
 }
 

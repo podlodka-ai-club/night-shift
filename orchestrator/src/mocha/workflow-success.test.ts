@@ -35,7 +35,6 @@ describe('workflow success paths', function () {
       pullRequestNumber: pullRequest.pullRequestNumber,
       pullRequestUrl: pullRequest.pullRequestUrl,
       branchName: pullRequest.branchName,
-      filePath: pullRequest.filePath,
       targetStatusName: issue.readyToMergeStatusName,
     });
     assert.deepStrictEqual(calls, [

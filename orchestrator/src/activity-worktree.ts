@@ -1,7 +1,6 @@
 import path from 'node:path';
 import {
   DEFAULT_BRANCH_PREFIX,
-  DEFAULT_FILE_PATH_PREFIX,
   type CleanupWorktreeInput,
   type CommitAndPushInput,
   type QualityGateResult,
@@ -34,28 +33,15 @@ export function buildBranchName(issueNumber: number, branchPrefix = DEFAULT_BRAN
   return `${branchPrefix}/issue-${issueNumber}`;
 }
 
-export function buildDummyFilePath(issueNumber: number, filePathPrefix = DEFAULT_FILE_PATH_PREFIX): string {
-  return `${filePathPrefix}/issue-${issueNumber}.md`;
-}
-
-export function buildDummyChangeContent(
-  issueNumber: number,
-  issueTitle: string,
-  generatedAt = new Date(Date.now()).toISOString(),
-): string {
-  return ['# Orchestrator Dummy Change', '', `- Issue: #${issueNumber}`, `- Title: ${issueTitle}`, `- Generated at: ${generatedAt}`].join('\n');
-}
-
 export function createWorktreeActivities(deps: WorktreeActivityDeps) {
   return {
     async createWorktreeForIssueIfNeeded(input: CreateWorktreeForIssueIfNeededInput): Promise<WorktreeContext> {
-      const { issue, branchPrefix, filePathPrefix } = input;
+      const { issue, branchPrefix } = input;
       const { defaultBranch, issueNumber, repoName, repoOwner } = issue;
       const generatedAt = new Date(deps.now()).toISOString();
       const branchName = buildBranchName(issueNumber, branchPrefix);
-      const filePath = buildDummyFilePath(issueNumber, filePathPrefix);
       const localRepoPaths = resolveLocalRepoPaths(repoOwner, repoName, branchName);
-      const worktree = buildWorktreeContext(issue, branchName, filePath, generatedAt, localRepoPaths);
+      const worktree = buildWorktreeContext(issue, branchName, generatedAt, localRepoPaths);
 
       if (await pathExists(deps, localRepoPaths.worktreePath)) {
         if (await isHealthyIssueWorktree(deps, worktree)) {
@@ -158,7 +144,6 @@ export function createWorktreeActivities(deps: WorktreeActivityDeps) {
 function buildWorktreeContext(
   issue: SelectedProjectIssue,
   branchName: string,
-  filePath: string,
   generatedAt: string,
   localRepoPaths: Pick<LocalRepoPaths, 'repoRoot' | 'worktreePath'>,
 ): WorktreeContext {
@@ -172,7 +157,6 @@ function buildWorktreeContext(
     repoName,
     defaultBranch,
     branchName,
-    filePath,
     generatedAt,
     repoRoot: localRepoPaths.repoRoot,
     worktreePath: localRepoPaths.worktreePath,

@@ -3,9 +3,11 @@ import { ScheduleOverlapPolicy } from '@temporalio/client';
 import { describe, it } from 'mocha';
 import type { ResolvedWorkerEntrypointConfig } from '../entrypoint-config';
 import {
+  closeWorkerConnections,
   PICKUP_SCHEDULE_ID,
   buildPickupScheduleOptions,
   ensurePickupSchedule,
+  openWorkerConnections,
 } from '../worker';
 
 describe('worker pickup schedule bootstrap', () => {
@@ -26,7 +28,6 @@ describe('worker pickup schedule bootstrap', () => {
             inReviewStatusName: 'In review',
             blockedStatusName: 'Blocked',
             branchPrefix: 'orchestrator',
-            filePathPrefix: 'orchestrator-runs',
           },
           maxActions: 5,
         }],
@@ -99,6 +100,56 @@ describe('worker pickup schedule bootstrap', () => {
       { type: 'triggerSchedule', value: ScheduleOverlapPolicy.SKIP },
     ]);
   });
+
+  it('closes the native connection if opening the signal connection fails', async () => {
+    const calls: string[] = [];
+    const connection = {
+      async close() {
+        calls.push('close-native');
+      },
+    };
+    const connectError = new Error('signal connect failed');
+
+    await assert.rejects(
+      () => openWorkerConnections({
+        connectNative: async () => {
+          calls.push('connect-native');
+          return connection;
+        },
+        connectSignal: async () => {
+          calls.push('connect-signal');
+          throw connectError;
+        },
+      }, buildWorkerConfig().temporal.address),
+      (error: unknown) => error === connectError,
+    );
+
+    assert.deepStrictEqual(calls, ['connect-native', 'connect-signal', 'close-native']);
+  });
+
+  it('closes both worker connections even if signal connection cleanup fails', async () => {
+    const calls: string[] = [];
+    const signalCloseError = new Error('signal close failed');
+
+    await assert.rejects(
+      () => closeWorkerConnections(
+        {
+          async close() {
+            calls.push('close-signal');
+            throw signalCloseError;
+          },
+        },
+        {
+          async close() {
+            calls.push('close-native');
+          },
+        },
+      ),
+      (error: unknown) => error === signalCloseError,
+    );
+
+    assert.deepStrictEqual(calls, ['close-signal', 'close-native']);
+  });
 });
 
 function buildWorkerConfig(): ResolvedWorkerEntrypointConfig {
@@ -116,7 +167,6 @@ function buildWorkerConfig(): ResolvedWorkerEntrypointConfig {
       inReviewStatusName: 'In review',
       blockedStatusName: 'Blocked',
       branchPrefix: 'orchestrator',
-      filePathPrefix: 'orchestrator-runs',
     },
     pickup: {
       enabled: true,

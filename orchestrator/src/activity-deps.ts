@@ -1,5 +1,6 @@
 import { access, appendFile, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { Context } from '@temporalio/activity';
+import { WorkflowNotFoundError } from '@temporalio/common';
 import { execa } from 'execa';
 
 export const CODEX_COMMAND = 'codex';
@@ -76,6 +77,7 @@ export interface AgentThreadDeps {
 export interface ActivityContextDeps {
   getHeartbeatDetails: () => unknown;
   heartbeat: (details: unknown) => void;
+  signalProgress: (message: string) => Promise<void>;
 }
 
 export type GitHubActivityDeps = GitHubClientDeps;
@@ -96,7 +98,11 @@ type CodexSdkModule = typeof import('@openai/codex-sdk');
 
 const dynamicImport = new Function('specifier', 'return import(specifier);') as (specifier: string) => Promise<unknown>;
 
-export function createActivityDependencies(): ActivityDependencies {
+export interface CreateActivityDependenciesOptions {
+  signalWorkflowProgress?: (workflowId: string, message: string) => Promise<void>;
+}
+
+export function createActivityDependencies(options: CreateActivityDependenciesOptions = {}): ActivityDependencies {
   return {
     fetch: globalThis.fetch.bind(globalThis) as typeof fetch,
     getGitHubToken: () => getProcessGitHubToken(),
@@ -122,6 +128,7 @@ export function createActivityDependencies(): ActivityDependencies {
       }),
     getHeartbeatDetails: () => getActivityHeartbeatDetails(),
     heartbeat: (details) => heartbeatActivity(details),
+    signalProgress: async (message) => signalActivityProgress(options, message),
     getCancellationSignal: () => getActivityCancellationSignal(),
   };
 }
@@ -313,6 +320,26 @@ function getActivityHeartbeatDetails(): unknown {
   return context?.info.heartbeatDetails;
 }
 
+async function signalActivityProgress(options: CreateActivityDependenciesOptions, message: string): Promise<void> {
+  if (!options.signalWorkflowProgress) {
+    return;
+  }
+
+  const workflowId = getCurrentActivityWorkflowId();
+  if (!workflowId) {
+    return;
+  }
+
+  try {
+    await options.signalWorkflowProgress(workflowId, message);
+  } catch (error) {
+    if (error instanceof WorkflowNotFoundError) {
+      return;
+    }
+    throw error;
+  }
+}
+
 function heartbeatActivity(details: unknown): void {
   const context = getCurrentActivityContextOrUndefined();
   if (!context) {
@@ -325,6 +352,11 @@ function heartbeatActivity(details: unknown): void {
 function getActivityCancellationSignal(): AbortSignal | undefined {
   const context = getCurrentActivityContextOrUndefined();
   return context?.cancellationSignal;
+}
+
+function getCurrentActivityWorkflowId(): string | undefined {
+  const context = getCurrentActivityContextOrUndefined();
+  return context?.info.workflowExecution.workflowId;
 }
 
 function getCurrentActivityContextOrUndefined(): ReturnType<typeof Context.current> | undefined {

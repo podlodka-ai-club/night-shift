@@ -2,7 +2,6 @@ import type { AgentActivityDeps, GitHubActivityDeps, WorktreeActivityDeps } from
 import { buildChangeMetadataPrompt, buildTaskImplementationPrompt } from '../agent-prompts';
 import {
   buildBranchName,
-  buildDummyFilePath,
   createActivities,
   createActivityDependencies,
 } from '../activities';
@@ -86,6 +85,7 @@ export function createActivityTestRig(options: ActivityTestRigOptions = {}) {
       resumeCodexThread: () => failUnmockedDependency('agent.resumeCodexThread'),
       getHeartbeatDetails: () => undefined,
       heartbeat: () => undefined,
+      signalProgress: async () => undefined,
       getCancellationSignal: () => undefined,
       ...options.agent,
     },
@@ -149,7 +149,6 @@ const DEFAULT_PROJECT_STATUS_OPTIONS = [
 
 export function buildWorktreeContext(issue = buildSelectedIssue()): WorktreeContext {
   const branchName = buildBranchName(issue.issueNumber);
-  const filePath = buildDummyFilePath(issue.issueNumber);
   const repoRoot = `/tmp/orchestrator/${issue.repoOwner}/${issue.repoName}`;
 
   return {
@@ -161,7 +160,6 @@ export function buildWorktreeContext(issue = buildSelectedIssue()): WorktreeCont
     repoName: issue.repoName,
     defaultBranch: issue.defaultBranch,
     branchName,
-    filePath,
     generatedAt: '1970-01-01T00:00:00.123Z',
     repoRoot,
     worktreePath: `${repoRoot}/.worktrees/${branchName}`,
@@ -252,7 +250,6 @@ export function buildPullRequestUrl(worktree: WorktreeContext, pullRequestNumber
 export function buildExpectedCreatedPullRequest(worktree: WorktreeContext, pullRequestNumber = 42): CreatedPullRequest {
   return {
     branchName: worktree.branchName,
-    filePath: worktree.filePath,
     pullRequestNumber,
     pullRequestUrl: buildPullRequestUrl(worktree, pullRequestNumber),
   };

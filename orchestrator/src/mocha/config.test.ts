@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'mocha';
@@ -97,6 +97,24 @@ describe('config loading', () => {
       else process.env.GITHUB_PROJECT_OWNER = originalOwner;
       if (originalNumber === undefined) delete process.env.GITHUB_PROJECT_NUMBER;
       else process.env.GITHUB_PROJECT_NUMBER = originalNumber;
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('discovers a repo-root config file when the cwd is the orchestrator workspace package', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-config-workspace-root-'));
+    try {
+      const workspaceRoot = path.join(tempDir, 'repo-root');
+      const packageDir = path.join(workspaceRoot, 'orchestrator');
+      await mkdir(packageDir, { recursive: true });
+      await writeFile(path.join(workspaceRoot, 'orchestrator.config.ts'), "export default { github: { projectOwner: 'workspace-root', projectNumber: 33 } };\n", 'utf8');
+      await writeFile(path.join(packageDir, 'placeholder.txt'), 'placeholder\n', 'utf8');
+
+      const config = await loadOrchestratorConfig({ cwd: packageDir });
+
+      assert.strictEqual(config.github.projectOwner, 'workspace-root');
+      assert.strictEqual(config.github.projectNumber, 33);
+    } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });

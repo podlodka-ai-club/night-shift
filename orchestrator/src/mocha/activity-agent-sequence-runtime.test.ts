@@ -91,6 +91,79 @@ describe('agent sequence activities', () => {
     assert.strictEqual(heartbeatCalls.length, 6);
   });
 
+  it('signals assistant-authored prompt progress from provider items and dedupes repeats', async () => {
+    const progressSignals: string[] = [];
+    const { runAgentSequence } = createActivityTestRig({
+      agent: {
+        createCodexThread: () => ({
+          id: 'thread-123',
+          run: async () => ({
+            items: [
+              { type: 'message.delta', text: 'Inspecting repository context.' },
+              { type: 'tool-use', tool: 'npm test' },
+              { type: 'message.delta', text: 'Inspecting repository context.' },
+              { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Preparing code changes.' }] },
+            ],
+            finalResponse: 'Implemented the requested change.',
+            usage: { inputTokens: 10, outputTokens: 5 },
+          }),
+        }),
+        resumeCodexThread: () => {
+          throw new Error('resume should not be used without a checkpoint');
+        },
+        getHeartbeatDetails: () => undefined,
+        heartbeat: () => undefined,
+        signalProgress: async (message: string) => {
+          progressSignals.push(message);
+        },
+      } as any,
+    });
+
+    await runAgentSequence({
+      worktree: buildWorktreeContext(),
+      steps: [{ id: 'edit', kind: 'prompt', prompt: 'Implement the task in this repository.' }],
+    });
+
+    assert.deepStrictEqual(progressSignals, [
+      'Inspecting repository context.',
+      'Preparing code changes.',
+    ]);
+  });
+
+  it('signals assistant-authored progress for structured turns while ignoring tool-only items', async () => {
+    const progressSignals: string[] = [];
+    const { runAgentSequence } = createActivityTestRig({
+      agent: {
+        createCodexThread: () => ({
+          id: 'thread-123',
+          run: async () => ({
+            items: [
+              { type: 'tool-use', tool: 'npm test' },
+              { type: 'message.delta', text: 'Validating the proposed metadata.' },
+            ],
+            finalResponse: JSON.stringify(buildGeneratedChangeMetadata()),
+            usage: { inputTokens: 15, outputTokens: 6 },
+          }),
+        }),
+        resumeCodexThread: () => {
+          throw new Error('resume should not be used without a checkpoint');
+        },
+        getHeartbeatDetails: () => undefined,
+        heartbeat: () => undefined,
+        signalProgress: async (message: string) => {
+          progressSignals.push(message);
+        },
+      } as any,
+    });
+
+    await runAgentSequence({
+      worktree: buildWorktreeContext(),
+      steps: [{ id: 'change-metadata', kind: 'structured', prompt: buildChangeMetadataPrompt(), schemaId: 'change-metadata-v1', resultKey: CHANGE_METADATA_OUTPUT_KEY }],
+    });
+
+    assert.deepStrictEqual(progressSignals, ['Validating the proposed metadata.']);
+  });
+
   it('repairs a structured step when the first response is invalid', async () => {
     const runCalls: string[] = [];
     const thread = {

@@ -76,3 +76,10 @@
 
 - `createTemporalWorkflowTriggerDeps` (`intake.ts:179`) hardcodes `TASK_QUEUE` from `shared.ts` instead of accepting a configurable task queue parameter. If `config.temporal.taskQueue` differs from the constant, child workflows started by scheduled or manual pickup would be placed on the wrong queue. Pre-existing pattern affecting both the scheduled and manual CLI paths.
 - Webhook bridge/event ingestion remains explicitly deferred per task-11 scope.
+
+## From Task 12 review (20260429T230536031610Z)
+
+- ~~`worker.ts` connection cleanup: if `signalConnection.close()` throws in the `finally` block, `connection.close()` is never called. Use nested try/finally or `Promise.allSettled`-style cleanup. Also, if `Connection.connect` throws before the `try` block, the already-opened `NativeConnection` leaks.~~ **Resolved** in verification pass (20260429T231931990574Z): `openWorkerConnections` and `closeWorkerConnections` now handle both failure modes with independent try/catch blocks. Covered by tests.
+- ~~Late progress signals can throw `WorkflowNotFoundError` if the workflow completes between activity start and signal delivery. Add catch at the signal callsite in `worker.ts` or `activity-deps.ts`.~~ **Resolved** in verification pass (20260429T231931990574Z): `signalActivityProgress` in `activity-deps.ts` now catches `WorkflowNotFoundError`.
+- `forwardFallbackTurnEvents` in `activity-agent-turn.ts` is likely dead code — `assertCodexTurnResult` already maps `items` → `events`. If intended for future non-Codex adapters, add a comment; otherwise remove.
+- AC5 liveness/silence fallback is not implemented. The spec says "may", so acceptable for now, but implement a heartbeat-based liveness indicator if workflows appear frozen during long agent turns.

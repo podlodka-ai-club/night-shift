@@ -6,7 +6,6 @@ import {
   DEFAULT_BACKLOG_STATUS,
   DEFAULT_BLOCKED_STATUS,
   DEFAULT_BRANCH_PREFIX,
-  DEFAULT_FILE_PATH_PREFIX,
   DEFAULT_IN_REVIEW_STATUS,
   DEFAULT_READY_STATUS,
   TASK_QUEUE,
@@ -46,14 +45,12 @@ const orchestratorConfigSchema = z.object({
     inReviewStatusName: z.string().default(DEFAULT_IN_REVIEW_STATUS),
     blockedStatusName: z.string().default(DEFAULT_BLOCKED_STATUS),
     branchPrefix: z.string().default(DEFAULT_BRANCH_PREFIX),
-    filePathPrefix: z.string().default(DEFAULT_FILE_PATH_PREFIX),
   }).default({
     backlogStatusName: DEFAULT_BACKLOG_STATUS,
     readyStatusName: DEFAULT_READY_STATUS,
     inReviewStatusName: DEFAULT_IN_REVIEW_STATUS,
     blockedStatusName: DEFAULT_BLOCKED_STATUS,
     branchPrefix: DEFAULT_BRANCH_PREFIX,
-    filePathPrefix: DEFAULT_FILE_PATH_PREFIX,
   }),
 });
 
@@ -79,12 +76,18 @@ export function resolveOrchestratorConfigPath(options: LoadOrchestratorConfigOpt
     }
     return resolvedPath;
   }
-  for (const filename of CONFIG_FILENAMES) {
-    const resolvedPath = path.resolve(cwd, filename);
-    if (existsSync(resolvedPath)) {
-      return resolvedPath;
+
+  const parentDirectory = path.dirname(cwd);
+  const candidateDirectories = cwd === parentDirectory ? [cwd] : [cwd, parentDirectory];
+  for (const directory of candidateDirectories) {
+    for (const filename of CONFIG_FILENAMES) {
+      const resolvedPath = path.resolve(directory, filename);
+      if (existsSync(resolvedPath)) {
+        return resolvedPath;
+      }
     }
   }
+
   return undefined;
 }
 
