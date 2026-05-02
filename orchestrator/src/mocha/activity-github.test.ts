@@ -393,14 +393,19 @@ describe('github activities', () => {
 
   it('reads pull request review context from GitHub', async () => {
     const fetchCalls: FetchCall[] = [];
-    const { getPullRequestDetails, getPullRequestDiff, listPullRequestFiles, listPullRequestReviewComments } = createActivityTestRig({
+    const { getPullRequestDetails, getPullRequestDiff, listPullRequestFiles, listPullRequestReviewComments, listOpenPullRequestFeedback } = createActivityTestRig({
       github: { fetch: createFetchSequenceMock([
         jsonResponse({ number: 42, html_url: 'https://github.com/Mugenor/orchestrator-testing/pull/42', draft: true, head: { sha: 'abc123' } }),
         new Response('diff --git a/src/index.ts b/src/index.ts', { status: 200 }),
         jsonResponse([{ filename: 'src/index.ts', patch: '@@\n+export const ok = true;' }]),
         jsonResponse([{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }]),
+        jsonResponse([{ number: 42, html_url: 'https://github.com/Mugenor/orchestrator-testing/pull/42', draft: true, head: { sha: 'abc123' } }]),
+        jsonResponse([{ body: '<!-- night-shift:review:summary -->\nNeeds a narrower API.' }, { body: '' }, { body: 'Human review note' }]),
+        jsonResponse([{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }]),
       ], fetchCalls) },
     });
+
+    const worktree = buildWorktreeContext();
 
     assert.deepStrictEqual(await getPullRequestDetails({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), {
       pullRequestNumber: 42,
@@ -411,6 +416,10 @@ describe('github activities', () => {
     assert.strictEqual(await getPullRequestDiff({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), 'diff --git a/src/index.ts b/src/index.ts');
     assert.deepStrictEqual(await listPullRequestFiles({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]);
     assert.deepStrictEqual(await listPullRequestReviewComments({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), [{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }]);
+    assert.deepStrictEqual(await listOpenPullRequestFeedback({ worktree }), {
+      reviewBodies: ['<!-- night-shift:review:summary -->\nNeeds a narrower API.', 'Human review note'],
+      reviewComments: [{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }],
+    });
     assert.strictEqual(String(fetchCalls[1].init?.headers && (fetchCalls[1].init?.headers as Record<string, string>).Accept), 'application/vnd.github.v3.diff');
   });
 

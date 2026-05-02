@@ -7,10 +7,12 @@ import type {
   EnsureProjectStatusOptionsInput,
   IssueComment,
   IssueCommentInput,
+  ListOpenPullRequestFeedbackInput,
   ListedProjectIssue,
   ListIssueCommentsInput,
   ListProjectIssuesByStatusInput,
   MoveProjectItemStatusInput,
+  OpenPullRequestFeedback,
   OpenPullRequestInput,
   PullRequestChangedFile,
   PullRequestDetails,
@@ -29,6 +31,7 @@ import {
   createPullRequestReviewActivity,
   getPullRequestDetailsActivity,
   getPullRequestDiffActivity,
+  listOpenPullRequestFeedbackActivity,
   listPullRequestFilesActivity,
   listPullRequestReviewCommentsActivity,
   listIssueCommentsActivity,
@@ -92,6 +95,10 @@ export function createGitHubActivities(deps: GitHubActivityDeps) {
 
     async listPullRequestReviewComments(input: PullRequestReviewContextInput): Promise<PullRequestReviewComment[]> {
       return listPullRequestReviewCommentsActivity(deps, input);
+    },
+
+    async listOpenPullRequestFeedback(input: ListOpenPullRequestFeedbackInput): Promise<OpenPullRequestFeedback> {
+      return listOpenPullRequestFeedbackActivity(deps, input);
     },
 
     async setPullRequestReady(input: SetPullRequestReadyInput): Promise<void> {

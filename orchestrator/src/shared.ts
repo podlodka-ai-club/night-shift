@@ -235,6 +235,15 @@ export interface PullRequestReviewComment {
   line?: number;
 }
 
+export interface OpenPullRequestFeedback {
+  reviewBodies: string[];
+  reviewComments: PullRequestReviewComment[];
+}
+
+export interface ListOpenPullRequestFeedbackInput {
+  worktree: WorktreeContext;
+}
+
 export interface GetPullRequestDetailsInput {
   repoOwner: string;
   repoName: string;

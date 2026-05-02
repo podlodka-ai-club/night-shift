@@ -40,6 +40,7 @@ const {
   commitAndPush,
   openPullRequest,
   listIssueComments,
+  listOpenPullRequestFeedback,
   getPullRequestDetails,
   getPullRequestDiff,
   listPullRequestFiles,
@@ -279,6 +280,7 @@ export async function automateTopReadyIssue(
         {
           createWorktreeForIssueIfNeeded,
           listIssueComments,
+          listOpenPullRequestFeedback,
           readOpenSpecChangeFiles,
           runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
           writeRepositoryFiles,

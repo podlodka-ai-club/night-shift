@@ -4,6 +4,7 @@ import {
   type CreatedPullRequest,
   type IssueComment,
   type MoveProjectItemStatusInput,
+  type OpenPullRequestFeedback,
   type OpenSpecChangeFile,
   type QualityGateResult,
   type RepositoryFile,
@@ -25,6 +26,7 @@ export interface RunImplementPhaseInput {
 export interface RunImplementPhaseDeps {
   createWorktreeForIssueIfNeeded: (input: { issue: SelectedProjectIssue; branchPrefix?: string; filePathPrefix?: string }) => Promise<WorktreeContext>;
   listIssueComments: (input: { repoOwner: string; repoName: string; issueNumber: number }) => Promise<IssueComment[]>;
+  listOpenPullRequestFeedback: (input: { worktree: WorktreeContext }) => Promise<OpenPullRequestFeedback>;
   readOpenSpecChangeFiles: (input: { worktree: WorktreeContext; changeName: string }) => Promise<OpenSpecChangeFile[]>;
   runAgentSequence: (input: { worktree: WorktreeContext; steps: [AgentStep, ...AgentStep[]] }) => Promise<{ outputs?: Record<string, unknown> }>;
   writeRepositoryFiles: (input: { worktree: WorktreeContext; files: RepositoryFile[] }) => Promise<void>;
@@ -72,6 +74,8 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
     return { outcome: 'needs_input', worktree, changeName, summaryCommentBody };
   }
 
+  const pullRequestFeedback = await deps.listOpenPullRequestFeedback({ worktree });
+
   input.onProgress?.(`Moving issue #${input.issue.issueNumber} into In progress for Implement.`);
   await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.inProgressOptionId));
 
@@ -80,7 +84,7 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
 
   for (let attempt = 1; attempt <= MAX_IMPLEMENT_ATTEMPTS; attempt += 1) {
     try {
-      latestResponse = await generateImplementResponse(deps, worktree, input.issue, changeName, issueComments, specBundleFiles, retryFeedback);
+      latestResponse = await generateImplementResponse(deps, worktree, input.issue, changeName, issueComments, pullRequestFeedback, specBundleFiles, retryFeedback);
     } catch (error) {
       if (!(error instanceof ImplementPhaseContractError)) throw error;
       const summaryCommentBody = buildDeterministicFailureSummaryComment(input.issue, changeName, error.message);
@@ -141,6 +145,7 @@ async function generateImplementResponse(
   issue: SelectedProjectIssue,
   changeName: string,
   issueComments: readonly IssueComment[],
+  pullRequestFeedback: OpenPullRequestFeedback,
   specBundleFiles: readonly OpenSpecChangeFile[],
   retryFeedback: ImplementRetryFeedback | undefined,
 ): Promise<ImplementResponse> {
@@ -148,7 +153,7 @@ async function generateImplementResponse(
     const steps: [AgentStep, ...AgentStep[]] = [{
       id: 'implement',
       kind: 'structured',
-      prompt: buildImplementPrompt({ issue, changeName, specBundleFiles, issueComments, retryFeedback }),
+      prompt: buildImplementPrompt({ issue, changeName, specBundleFiles, issueComments, pullRequestFeedback, retryFeedback }),
       schemaId: 'implement-response-v1',
       resultKey: IMPLEMENT_RESPONSE_OUTPUT_KEY,
     }];

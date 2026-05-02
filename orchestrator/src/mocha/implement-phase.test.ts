@@ -18,6 +18,10 @@ describe('implement phase', () => {
         { id: 1, body: 'Operator note: keep the change set small.' },
         { id: 2, body: '<!-- night-shift:implement:summary -->\nold summary' },
       ],
+      pullRequestFeedback: {
+        reviewBodies: ['<!-- night-shift:review:summary -->\n## Review requested changes\nPlease tighten the public API.'],
+        reviewComments: [{ id: 9, body: '<!-- night-shift:review:finding -->\nGuard the undefined path.\n\nRef: spec-7', path: 'src/index.ts', line: 8 }],
+      },
       retryFeedback: {
         attempt: 1,
         failure: 'make check failed: src/index.ts(1,1): error TS1005',
@@ -28,6 +32,12 @@ describe('implement phase', () => {
     assert.doesNotMatch(prompt, /night-shift:implement:summary/);
     assert.match(prompt, /proposal\.md/);
     assert.match(prompt, /# Proposal/);
+    assert.match(prompt, /Review requested changes/);
+    assert.match(prompt, /Please tighten the public API\./);
+    assert.match(prompt, /Inline comment 1 \(src\/index\.ts:8\)/);
+    assert.match(prompt, /Guard the undefined path\./);
+    assert.doesNotMatch(prompt, /night-shift:review:summary/);
+    assert.doesNotMatch(prompt, /night-shift:review:finding/);
     assert.match(prompt, /Previous attempt #1 failed with: make check failed/i);
   });
 
@@ -44,6 +54,13 @@ describe('implement phase', () => {
       {
         async createWorktreeForIssueIfNeeded() { calls.push('createWorktree'); return worktree; },
         async listIssueComments() { calls.push('listIssueComments'); return []; },
+        async listOpenPullRequestFeedback() {
+          calls.push('listOpenPullRequestFeedback');
+          return {
+            reviewBodies: ['<!-- night-shift:review:summary -->\n## Review requested changes\nPlease wire the retry through the existing helper.'],
+            reviewComments: [{ id: 9, body: '<!-- night-shift:review:finding -->\nKeep the helper pure.', path: 'src/index.ts', line: 1 }],
+          };
+        },
         async readOpenSpecChangeFiles() {
           calls.push('readOpenSpecChangeFiles');
           return [
@@ -54,6 +71,8 @@ describe('implement phase', () => {
         async runAgentSequence(input: any) {
           runAgentSequenceCallCount += 1;
           calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+          assert.match(input.steps[0].prompt, /Please wire the retry through the existing helper\./);
+          assert.match(input.steps[0].prompt, /Keep the helper pure\./);
           if (runAgentSequenceCallCount === 2) {
             assert.match(input.steps[0].prompt, /Previous attempt #1 failed with: make check failed/i);
             assert.match(input.steps[0].prompt, /src\/index\.ts\(1,1\): error TS1005/);
@@ -117,6 +136,7 @@ describe('implement phase', () => {
       'createWorktree',
       'listIssueComments',
       'readOpenSpecChangeFiles',
+      'listOpenPullRequestFeedback',
       `move:${issue.inProgressOptionId}`,
       'runAgentSequence:1',
       'writeRepositoryFiles',
@@ -141,6 +161,7 @@ describe('implement phase', () => {
       {
         async createWorktreeForIssueIfNeeded() { calls.push('createWorktree'); return worktree; },
         async listIssueComments() { calls.push('listIssueComments'); return []; },
+        async listOpenPullRequestFeedback() { calls.push('listOpenPullRequestFeedback'); return { reviewBodies: [], reviewComments: [] }; },
         async readOpenSpecChangeFiles() { calls.push('readOpenSpecChangeFiles'); return [{ path: 'proposal.md', content: '# Proposal' }]; },
         async runAgentSequence() { calls.push('runAgentSequence'); throw new Error('should not run the agent without an approved spec bundle'); },
         async writeRepositoryFiles() { calls.push('writeRepositoryFiles'); },

@@ -40,6 +40,7 @@ export const {
   listIssueComments,
   getPullRequestDetails,
   getPullRequestDiff,
+  listOpenPullRequestFeedback,
   listPullRequestFiles,
   listPullRequestReviewComments,
   setPullRequestReady,
