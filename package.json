@@ -1,0 +1,5 @@
+{
+  "name": "agent-orchestrator",
+  "private": true,
+  "workspaces": ["orchestrator", "e2e"]
+}

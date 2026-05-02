@@ -1,0 +1,37 @@
+{
+  "artifactPath": null,
+  "previousReviewPath": null,
+  "artifactSlug": "diff-only",
+  "runId": "20260428T194428344120Z",
+  "repoRoot": "/Users/ich776/pocs/agent-orchestrator",
+  "branch": "feat/temporal-simplest-workflow",
+  "requestedScope": "Task 8 deterministic phases migration truly final pass: pickup/manual intake only (no webhook support). After adding direct buildManualCandidate coverage and repeated runPickupIntake idempotency coverage, report only any remaining material findings.",
+  "extraInstructions": null,
+  "reviewMode": "branch-only",
+  "actualReviewMode": "branch-only",
+  "reviewer": "auggie",
+  "requiredModel": "opus4.6",
+  "reviewStatus": "completed_with_fallback",
+  "reviewLifecycleStatus": "full_review_completed",
+  "fallbackReason": "no authoritative artifact was supplied beyond the in-repo task spec",
+  "verification": {
+    "attempted": false,
+    "fixed": 0,
+    "partiallyFixed": 0,
+    "notFixed": 0,
+    "notApplicable": 0
+  },
+  "counts": {
+    "mustFix": 1,
+    "shouldFix": 5,
+    "outOfScope": 5,
+    "rejected": 4
+  },
+  "artifacts": {
+    "runDir": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T194428344120Z",
+    "review": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T194428344120Z/review.md",
+    "meta": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T194428344120Z/meta.json",
+    "techDebt": "/Users/ich776/pocs/agent-orchestrator/.ai/tech-debt.md",
+    "prompt": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T194428344120Z/auggie-review-prompt.md"
+  }
+}

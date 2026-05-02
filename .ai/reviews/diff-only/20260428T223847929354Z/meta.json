@@ -1,0 +1,37 @@
+{
+  "artifactPath": null,
+  "previousReviewPath": null,
+  "artifactSlug": "diff-only",
+  "runId": "20260428T223847929354Z",
+  "repoRoot": "/Users/ich776/pocs/agent-orchestrator",
+  "branch": "feat/temporal-simplest-workflow",
+  "requestedScope": "Task 9 final policy semantics on the current branch: steady-state cleanup policy, corrupt/stale worktree recovery, retry-safe non-force push behavior, README/Makefile/test-harness follow-ups, and live-proof alignment. Report only remaining material findings.",
+  "extraInstructions": null,
+  "reviewMode": "branch-only",
+  "actualReviewMode": "branch-only",
+  "reviewer": "auggie",
+  "requiredModel": "opus4.6",
+  "reviewStatus": "complete",
+  "reviewLifecycleStatus": "complete",
+  "fallbackReason": "no authoritative artifact supplied",
+  "verification": {
+    "attempted": true,
+    "fixed": 0,
+    "partiallyFixed": 0,
+    "notFixed": 1,
+    "notApplicable": 0
+  },
+  "counts": {
+    "mustFix": 0,
+    "shouldFix": 1,
+    "outOfScope": 0,
+    "rejected": 4
+  },
+  "artifacts": {
+    "runDir": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T223847929354Z",
+    "review": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T223847929354Z/review.md",
+    "meta": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T223847929354Z/meta.json",
+    "techDebt": "/Users/ich776/pocs/agent-orchestrator/.ai/tech-debt.md",
+    "prompt": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T223847929354Z/auggie-review-prompt.md"
+  }
+}

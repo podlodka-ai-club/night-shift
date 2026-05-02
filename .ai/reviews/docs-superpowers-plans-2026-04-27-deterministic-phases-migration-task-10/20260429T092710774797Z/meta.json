@@ -1,0 +1,37 @@
+{
+  "artifactPath": "docs/superpowers/plans/2026-04-27-deterministic-phases-migration/task-10.md",
+  "previousReviewPath": ".ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-10/20260429T090852608332Z/review.md",
+  "artifactSlug": "docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-10",
+  "runId": "20260429T092710774797Z",
+  "repoRoot": "/Users/ich776/pocs/agent-orchestrator",
+  "branch": "feat/temporal-simplest-workflow",
+  "requestedScope": "Task 10 donor-compatible configuration loading plus self-review fallback cleanup",
+  "extraInstructions": null,
+  "reviewMode": "verify-then-review",
+  "actualReviewMode": "verify-then-review",
+  "reviewer": "auggie",
+  "requiredModel": "opus4.6",
+  "reviewStatus": "completed",
+  "reviewLifecycleStatus": "verification_completed_full_review_completed",
+  "fallbackReason": null,
+  "verification": {
+    "attempted": true,
+    "fixed": 5,
+    "partiallyFixed": 0,
+    "notFixed": 0,
+    "notApplicable": 0
+  },
+  "counts": {
+    "mustFix": 0,
+    "shouldFix": 0,
+    "outOfScope": 0,
+    "rejected": 0
+  },
+  "artifacts": {
+    "runDir": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-10/20260429T092710774797Z",
+    "review": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-10/20260429T092710774797Z/review.md",
+    "meta": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-10/20260429T092710774797Z/meta.json",
+    "techDebt": "/Users/ich776/pocs/agent-orchestrator/.ai/tech-debt.md",
+    "prompt": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-10/20260429T092710774797Z/auggie-review-prompt.md"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "artifactPath": null,
+  "previousReviewPath": ".ai/reviews/diff-only/20260428T223847929354Z/review.md",
+  "artifactSlug": "diff-only",
+  "runId": "20260428T224857699796Z",
+  "repoRoot": "/Users/ich776/pocs/agent-orchestrator",
+  "branch": "feat/temporal-simplest-workflow",
+  "requestedScope": "Task 9 final policy semantics on the current branch after addressing the prior review finding. Report only any remaining material findings.",
+  "extraInstructions": "In the Review Metadata section, set 'Verification Attempted' to exactly true or false with no extra text.",
+  "reviewMode": "verify-then-review",
+  "actualReviewMode": "verify-then-review",
+  "reviewer": "auggie",
+  "requiredModel": "opus4.6",
+  "reviewStatus": "completed",
+  "reviewLifecycleStatus": "verification_completed_full_review_completed",
+  "fallbackReason": null,
+  "verification": {
+    "attempted": true,
+    "fixed": 0,
+    "partiallyFixed": 0,
+    "notFixed": 0,
+    "notApplicable": 1
+  },
+  "counts": {
+    "mustFix": 0,
+    "shouldFix": 0,
+    "outOfScope": 0,
+    "rejected": 1
+  },
+  "artifacts": {
+    "runDir": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T224857699796Z",
+    "review": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T224857699796Z/review.md",
+    "meta": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T224857699796Z/meta.json",
+    "techDebt": "/Users/ich776/pocs/agent-orchestrator/.ai/tech-debt.md",
+    "prompt": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/diff-only/20260428T224857699796Z/auggie-review-prompt.md"
+  }
+}

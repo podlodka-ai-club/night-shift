@@ -1,0 +1,37 @@
+{
+  "artifactPath": "docs/superpowers/plans/2026-04-27-deterministic-phases-migration/task-2.md",
+  "previousReviewPath": ".ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-2/20260427T231034353018Z/review.md",
+  "artifactSlug": "docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-2",
+  "runId": "20260427T232327645250Z",
+  "repoRoot": "/Users/ich776/pocs/agent-orchestrator",
+  "branch": "feat/temporal-simplest-workflow",
+  "requestedScope": "Task 2 deterministic phases migration implementation in agent-orchestrator",
+  "extraInstructions": "Verify the previous Task 2 should-fix findings around repair-prompt truncation, pending structured checkpoint re-validation, AgentSession naming cleanup, helper happy-path coverage, json-schema source alignment, and heartbeat protocol documentation. Focus on any remaining concrete material findings against Task 2 acceptance criteria. Local make check is green.",
+  "reviewMode": "verify-then-review",
+  "actualReviewMode": "verify-then-review",
+  "reviewer": "auggie",
+  "requiredModel": "opus4.6",
+  "reviewStatus": "completed",
+  "reviewLifecycleStatus": "verification_found_unresolved_issues",
+  "fallbackReason": null,
+  "verification": {
+    "attempted": true,
+    "fixed": 4,
+    "partiallyFixed": 2,
+    "notFixed": 1,
+    "notApplicable": 0
+  },
+  "counts": {
+    "mustFix": 0,
+    "shouldFix": 3,
+    "outOfScope": 1,
+    "rejected": 2
+  },
+  "artifacts": {
+    "runDir": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-2/20260427T232327645250Z",
+    "review": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-2/20260427T232327645250Z/review.md",
+    "meta": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-2/20260427T232327645250Z/meta.json",
+    "techDebt": "/Users/ich776/pocs/agent-orchestrator/.ai/tech-debt.md",
+    "prompt": "/Users/ich776/pocs/agent-orchestrator/.ai/reviews/docs-superpowers-plans-2026-04-27-deterministic-phases-migration-task-2/20260427T232327645250Z/auggie-review-prompt.md"
+  }
+}
