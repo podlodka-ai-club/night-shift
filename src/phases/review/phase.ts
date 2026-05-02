@@ -12,7 +12,7 @@ import {
 import type { GitHubClient } from "../../github/client.js";
 import { GitHubApiError } from "../../github/errors.js";
 import type { ResolvedNightShiftConfig } from "../../config/schema.js";
-import { ReviewerResponseJsonSchema, parseReviewerResponse, renderReviewerMessage } from "./prompt.js";
+import { REVIEWER_SYSTEM_PROMPT, ReviewerResponseJsonSchema, parseReviewerResponse, renderReviewerMessage } from "./prompt.js";
 import type { SpecBundleFile, RetryContext } from "./prompt.js";
 import { renderEscalationCommentBody, renderLineCommentBody, renderSummaryBody } from "./rendering.js";
 import {
@@ -252,6 +252,7 @@ export async function runReviewPhase(
     const session = deps.agent.openSession({
       role: "reviewer",
       model: deps.reviewerModel,
+      systemPrompt: REVIEWER_SYSTEM_PROMPT,
       ...(deps.workingDirectory !== undefined
         ? { workingDirectory: deps.workingDirectory }
         : {}),

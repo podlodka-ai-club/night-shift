@@ -19,6 +19,25 @@ export const PRICING: Readonly<Record<string, ModelPricing>> = Object.freeze({
     outputPer1M: 2.0,
     cachedInputPer1M: 0.025,
   },
+  // Anthropic Claude family. Numbers are list prices for the latest tier
+  // (Sonnet 4.x / Opus 4.x / Haiku 4.5). Cached input uses the standard
+  // prompt-caching read rate. Override via `pricingOverrides` when running
+  // against beta or discounted tiers.
+  "claude-sonnet-4-6": {
+    inputPer1M: 3.0,
+    outputPer1M: 15.0,
+    cachedInputPer1M: 0.3,
+  },
+  "claude-opus-4-7": {
+    inputPer1M: 15.0,
+    outputPer1M: 75.0,
+    cachedInputPer1M: 1.5,
+  },
+  "claude-haiku-4-5": {
+    inputPer1M: 1.0,
+    outputPer1M: 5.0,
+    cachedInputPer1M: 0.1,
+  },
 });
 
 /**

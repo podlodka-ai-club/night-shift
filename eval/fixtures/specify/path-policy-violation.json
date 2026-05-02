@@ -1,0 +1,14 @@
+{
+  "id": "path-policy-violation",
+  "ticket": {
+    "title": "Add a CHANGELOG entry policy",
+    "description": "Every PR should add a line under `## Unreleased` in CHANGELOG.md. The specifier draft tries to edit CHANGELOG.md directly, which is outside the change folder allowed by the schema.",
+    "labels": ["chore"]
+  },
+  "priorDraft": [],
+  "operatorComments": [],
+  "recordedFinalText": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# CHANGELOG entry policy\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] Add policy doc\"},{\"path\":\"CHANGELOG.md\",\"content\":\"## Unreleased\\n- Adopt policy\"}],\"openQuestions\":[],\"assumptions\":[],\"risks\":[]}",
+  "recordedUsage": { "input_tokens": 800, "cached_input_tokens": 400, "output_tokens": 140 },
+  "recordedCostMicroUsd": 1700,
+  "expected": { "status": "schema_error" }
+}

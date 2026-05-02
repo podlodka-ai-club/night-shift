@@ -1,0 +1,27 @@
+{
+  "id": "refined-bug-fix",
+  "ticket": {
+    "title": "Login button is unresponsive on Safari iOS",
+    "description": "When tapping the login button on iPhone Safari, nothing happens. Other browsers work. Repro: open the app on iOS 17 Safari, tap login.",
+    "labels": ["bug"]
+  },
+  "specBundle": [
+    {
+      "path": "proposal.md",
+      "content": "# Fix iOS Safari login button\n\nThe login button does not fire its onClick handler on iOS Safari due to a passive touch listener interaction. Switch to a non-passive touchend handler so the click event reaches the React onClick.\n\n## Acceptance criteria\n- Tapping the login button in iOS 17 Safari triggers the existing onLogin handler.\n- Existing desktop click behavior unchanged.\n"
+    },
+    {
+      "path": "tasks.md",
+      "content": "- [ ] Replace passive touch listener with explicit touchend handler in `src/components/LoginButton.tsx`\n- [ ] Add a regression test that simulates a touchend event\n- [ ] Manually verify on iOS 17 Safari simulator\n"
+    }
+  ],
+  "operatorComments": [],
+  "recordedFinalText": "{\"filesWritten\":[{\"path\":\"src/components/LoginButton.tsx\",\"content\":\"import { useEffect, useRef } from 'react';\\n\\nexport function LoginButton({ onLogin }: { onLogin: () => void }) {\\n  const ref = useRef<HTMLButtonElement>(null);\\n  useEffect(() => {\\n    const node = ref.current;\\n    if (!node) return;\\n    const handler = () => onLogin();\\n    node.addEventListener('touchend', handler, { passive: false });\\n    return () => node.removeEventListener('touchend', handler);\\n  }, [onLogin]);\\n  return <button ref={ref} onClick={onLogin}>Log in</button>;\\n}\\n\"},{\"path\":\"src/components/__test__/LoginButton.test.tsx\",\"content\":\"import { fireEvent, render } from '@testing-library/react';\\nimport { LoginButton } from '../LoginButton.js';\\n\\ntest('touchend triggers onLogin', () => {\\n  const onLogin = vi.fn();\\n  const { getByRole } = render(<LoginButton onLogin={onLogin} />);\\n  fireEvent.touchEnd(getByRole('button'));\\n  expect(onLogin).toHaveBeenCalledTimes(1);\\n});\\n\"}],\"commitMessage\":\"fix(login): wire non-passive touchend so iOS Safari fires onLogin\",\"summary\":\"Replaced the passive touch listener on LoginButton with an explicit non-passive touchend handler so iOS Safari delivers the click. Added a regression test that fires a synthetic touchend.\",\"followUps\":[\"Manual verification on a real iOS 17 device is still pending.\"]}",
+  "recordedUsage": {
+    "input_tokens": 1500,
+    "cached_input_tokens": 800,
+    "output_tokens": 600
+  },
+  "recordedCostMicroUsd": 6500,
+  "expected": { "status": "produced", "minFilesWritten": 1 }
+}

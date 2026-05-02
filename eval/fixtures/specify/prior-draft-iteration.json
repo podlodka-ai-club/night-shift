@@ -1,0 +1,25 @@
+{
+  "id": "prior-draft-iteration",
+  "ticket": {
+    "title": "Move SQLite path out of hard-coded `~/.taskflow/db.sqlite`",
+    "description": "Operators want to run multiple TaskFlow instances on one host and need to point each at a separate SQLite file. The path is currently hard-coded.\n\nA prior specifier draft exists on the change branch (see prior_draft below). The operator left a comment asking us to also cover the WebDAV sync path which references the same hard-coded location.",
+    "labels": ["enhancement", "ops"]
+  },
+  "priorDraft": [
+    {
+      "path": "openspec/changes/configurable-db-path/proposal.md",
+      "content": "# Configurable SQLite path (DRAFT 1)\n\nAdd TASKFLOW_DB env var. Done.\n"
+    },
+    {
+      "path": "openspec/changes/configurable-db-path/tasks.md",
+      "content": "- [ ] Read TASKFLOW_DB at startup\n"
+    }
+  ],
+  "operatorComments": [
+    "Don't forget the sync module also references ~/.taskflow/db.sqlite directly — see packages/server/src/sync.ts."
+  ],
+  "recordedFinalText": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# Configurable SQLite path (DRAFT 2)\\n\\n## Problem\\n\\nThe SQLite path is hard-coded in two places:\\n\\n1. `packages/server/src/db.ts` — primary DB connection.\\n2. `packages/server/src/sync.ts` — WebDAV sync target.\\n\\nThis blocks running multiple TaskFlow instances on one host.\\n\\n## Approach\\n\\nIntroduce a single config field `database.path` (default `~/.taskflow/db.sqlite`), readable from `~/.taskflow/config.toml` and overridable via `TASKFLOW_DB`. Both db.ts and sync.ts consume this same resolved path.\\n\\n## Migration\\n\\nNone required: existing operators see the same default. Operators with custom paths run `tf migrate` once after upgrade.\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] Add `database.path` to config schema (packages/shared/config.ts)\\n- [ ] Resolve config at startup; export resolvedDbPath\\n- [ ] db.ts uses resolvedDbPath\\n- [ ] sync.ts uses resolvedDbPath\\n- [ ] `tf migrate` accepts an explicit --db override\\n- [ ] Test: two instances with different TASKFLOW_DB do not share state\"}],\"openQuestions\":[],\"assumptions\":[\"Tilde expansion happens at config-resolution time, not at use sites\"],\"risks\":[\"Sync code path is less tested; misconfiguration could silently sync to the default path instead of the configured one — add an integration test that asserts the sync writer points at the resolved path\"]}",
+  "recordedUsage": { "input_tokens": 1800, "cached_input_tokens": 900, "output_tokens": 480 },
+  "recordedCostMicroUsd": 6500,
+  "expected": { "status": "refined", "maxOpenQuestions": 0 }
+}

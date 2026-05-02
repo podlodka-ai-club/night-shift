@@ -1,0 +1,27 @@
+{
+  "id": "parse-error-prose",
+  "ticket": {
+    "title": "Bump TypeScript to 5.5",
+    "description": "Upgrade the typescript devDependency to ^5.5.0 and fix any new type errors.",
+    "labels": ["chore"]
+  },
+  "specBundle": [
+    {
+      "path": "proposal.md",
+      "content": "# Bump typescript to ^5.5\n\nUpdate package.json and verify `tsc --noEmit` passes.\n"
+    },
+    {
+      "path": "tasks.md",
+      "content": "- [ ] Bump typescript in package.json\n- [ ] Run typecheck and fix new errors\n"
+    }
+  ],
+  "operatorComments": [],
+  "recordedFinalText": "Sure, here is the patch:\n\n```json\n{\"filesWritten\": []}\n```\n",
+  "recordedUsage": {
+    "input_tokens": 700,
+    "cached_input_tokens": 0,
+    "output_tokens": 40
+  },
+  "recordedCostMicroUsd": 800,
+  "expected": { "status": "parse_error" }
+}

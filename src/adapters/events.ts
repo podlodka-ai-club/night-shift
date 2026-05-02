@@ -45,6 +45,14 @@ export const AgentStreamEventSchema = z.discriminatedUnion("kind", [
   z
     .object({ kind: z.literal("reasoning"), text: z.string() })
     .merge(RawProviderEvent),
+  // `source.kind` is the canonical category for cross-adapter aggregation
+  // (e.g. "show all shell calls"). `tool` is the most-specific identifier the
+  // provider exposes within that category and is shaped by the provider's
+  // tool catalog: Claude returns the SDK tool name ("Bash", "Glob", "Edit",
+  // "Read"); Codex shell calls return the command string itself, since
+  // `command_execution` is the only shell tool and the command is the only
+  // discriminator between calls. Do NOT filter on `tool` across providers —
+  // use `source.kind` for that.
   z
     .object({
       kind: z.literal("tool-use"),

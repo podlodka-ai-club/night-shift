@@ -1,0 +1,14 @@
+{
+  "id": "multi-capability-recurrence",
+  "ticket": {
+    "title": "Add weekly + monthly recurrence support to tasks",
+    "description": "Right now `tf add --recur daily:1` works but `tf add --recur weekly:2` and `--recur monthly:1` either crash or silently drop the recurrence on the round-trip through the API.\n\nWe need: (1) shared schema accepts weekly+monthly variants; (2) server creates the next instance correctly on completion; (3) CLI --recur flag round-trips through the API and is shown in `tf list -v`.\n\nThe RecurrenceRule lives in packages/shared/schemas.ts. Server logic for instance creation lives in packages/server/src/recurrence.ts.",
+    "labels": ["feature", "domain"]
+  },
+  "priorDraft": [],
+  "operatorComments": [],
+  "recordedFinalText": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# Add weekly + monthly recurrence\\n\\n## Problem\\n\\nThe RecurrenceRule schema and the server's recurrence engine only support daily. Weekly and monthly are claimed in the README but the round-trip silently fails.\\n\\n## Approach\\n\\n1. Extend `packages/shared` RecurrenceRule schema to accept weekly and monthly with `interval >= 1`.\\n2. Implement instance creation in `packages/server/src/recurrence.ts`: weekly = anchorDay-of-week + interval weeks; monthly = anchor day-of-month + interval months, skipping months without that day.\\n3. CLI `--recur` parses the kind:interval syntax for all three kinds.\\n4. `tf list -v` shows the recurrence summary line.\\n\\n## Test plan\\n\\nUnit tests for each kind covering DST, leap day, end-of-month wrap.\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] Extend RecurrenceRuleSchema (weekly, monthly variants)\\n- [ ] Implement weekly instance creation in recurrence.ts\\n- [ ] Implement monthly instance creation with end-of-month wrap\\n- [ ] CLI --recur parser accepts all three kinds\\n- [ ] `tf list -v` renders recurrence summary\\n- [ ] DST + leap-day unit tests\"},{\"path\":\"specs/recurrence/spec.md\",\"content\":\"# Recurrence capability\\n\\n## Rules\\n\\n- daily: every N days from the last completion timestamp.\\n- weekly: anchor on the day-of-week of the source task; spawn N weeks later.\\n- monthly: anchor on the day-of-month; if the target month has no such day (e.g. Feb 30), skip until a month that does.\\n\\n## Boundary\\n\\nUse date-fns UTC helpers exclusively. Never compare local times.\"}],\"openQuestions\":[],\"assumptions\":[\"Anchor day of recurrence is taken from the source task's createdAt, not its due date\",\"end-of-month wrap policy: skip rather than clamp\"],\"risks\":[\"Existing daily-only tasks may have implicit nulls in the recurrence column that need a backfill\"]}",
+  "recordedUsage": { "input_tokens": 2400, "cached_input_tokens": 1500, "output_tokens": 720 },
+  "recordedCostMicroUsd": 9800,
+  "expected": { "status": "refined", "maxOpenQuestions": 0 }
+}

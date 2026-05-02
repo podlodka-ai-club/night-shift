@@ -27,12 +27,26 @@ vocabulary (`session-started`, `turn-started`, `text-delta`,
 `rawProviderEvent` field so downstream code can reach for provider-specific
 data when needed — but we strive never to need it.
 
+### `tool` vs `source.kind` semantics
+
+On `tool-use` events the two fields play different roles:
+
+- `source.kind` — canonical category, low cardinality (`shell`, `file-change`,
+  `web-search`, `mcp`, `todo`, `other`). Use this for cross-adapter
+  aggregation, filtering, or policy ("block all shell calls").
+- `tool` — the most-specific identifier the provider exposes within the
+  category. **Provider-shaped, not canonical.** Claude returns SDK tool names
+  (`Bash`, `Glob`, `Edit`, `Read`); Codex shell calls return the command
+  string itself, because `command_execution` is the only shell tool and the
+  command is the only discriminator. Do not filter on `tool` across providers
+  — use `source.kind` for that.
+
 ## Provided adapters
 
 | Adapter               | Provider        | Notes                                        |
 | --------------------- | --------------- | -------------------------------------------- |
-| `CodexAdapter`        | `codex`         | Shells out to the Codex CLI via the SDK      |
-| `ClaudeAgentAdapter`  | `claude-agent`  | M1 stub — throws on `openSession`            |
+| `CodexAdapter`        | `codex`         | Drives `@openai/codex-sdk` (Codex harness as a library) |
+| `ClaudeAgentAdapter`  | `claude-agent`  | Drives `@anthropic-ai/claude-agent-sdk`      |
 | `InMemoryFakeAdapter` | `fake`          | Deterministic scripted sessions for tests    |
 
 ## Auto-emission contract (`instrumentSession`)
@@ -76,6 +90,7 @@ shadowed by custom factories.
 ## Module boundary
 
 `src/adapters/**` may import from `src/contracts/**`, `@openai/codex-sdk`,
-`zod`, `node:fs/promises`, `node:path`, and its own siblings. It MUST NOT
-import from `src/config/**` at runtime (type-only imports are allowed). The
-`npm run lint:boundaries` script enforces this.
+`@anthropic-ai/claude-agent-sdk`, `zod`, `node:fs/promises`, `node:path`, and
+its own siblings. It MUST NOT import from `src/config/**` at runtime
+(type-only imports are allowed). The `npm run lint:boundaries` script enforces
+this.
