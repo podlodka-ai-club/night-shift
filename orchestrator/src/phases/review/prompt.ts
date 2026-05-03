@@ -1,6 +1,6 @@
 import { isNightShiftMarkerComment } from '../../comment-markers';
 import type { OpenSpecChangeFile, PullRequestChangedFile, PullRequestDetails, PullRequestReviewComment, SelectedProjectIssue } from '../../shared';
-import { wrapUntrustedInput } from '../prompt-hardening';
+import { renderPromptContextHeading, wrapUntrustedInput } from '../prompt-hardening';
 
 const DEFAULT_MAX_DIFF_CHARACTERS = 12_000;
 export const REVIEWER_SYSTEM_PROMPT = [
@@ -84,7 +84,15 @@ export function buildReviewPrompt(input: BuildReviewPromptInput): string {
 }
 
 function renderIssue(issue: SelectedProjectIssue): string {
-  return [`# Ticket ${issue.issueNumber}: ${issue.issueTitle}`, '', `URL: ${issue.issueUrl}`, '', '## Description', issue.taskDescription.trim() || '_(no description provided)_'].join('\n');
+  return [
+    `# Ticket ${issue.issueNumber}: ${issue.issueTitle}`,
+    '',
+    `URL: ${issue.issueUrl}`,
+    ...(issue.labels && issue.labels.length > 0 ? [`Labels: ${issue.labels.join(', ')}`] : []),
+    '',
+    '## Description',
+    issue.taskDescription.trim() || '_(no description provided)_',
+  ].join('\n');
 }
 
 function renderSpecBundle(files: readonly OpenSpecChangeFile[]): string {
@@ -94,11 +102,11 @@ function renderSpecBundle(files: readonly OpenSpecChangeFile[]): string {
 
 function renderDiff(diff: string, changedFiles: readonly PullRequestChangedFile[], maxDiffCharacters: number): string {
   const trimmedDiff = diff.trim();
-  if (Buffer.byteLength(trimmedDiff, 'utf8') <= maxDiffCharacters) {
+  if (utf8ByteLength(trimmedDiff) <= maxDiffCharacters) {
     return wrapUntrustedInput('git-diff', ['```diff', trimmedDiff || '(empty diff)', '```'].join('\n'));
   }
 
-  const truncatedDiff = Buffer.from(trimmedDiff, 'utf8').subarray(0, maxDiffCharacters).toString('utf8');
+  const truncatedDiff = truncateUtf8(trimmedDiff, maxDiffCharacters);
   return wrapUntrustedInput('git-diff', [
     '```diff',
     truncatedDiff,
@@ -123,7 +131,14 @@ function renderReviewComments(comments: readonly PullRequestReviewComment[]): st
   if (visibleComments.length === 0) return undefined;
   return [
     '## Existing review comments',
-    wrapUntrustedInput('github-review-comments', visibleComments.map((comment) => `- **${comment.path}${comment.line ? `:${comment.line}` : ''}**: ${comment.body.replace(/\s+/g, ' ').trim()}`).join('\n')),
+    wrapUntrustedInput('github-review-comments', visibleComments.map((comment, index) => {
+      const location = `${comment.path}${comment.line ? `:${comment.line}` : ''}`;
+      return [
+        renderPromptContextHeading({ fallbackLabel: `Comment ${index + 1}`, location, authorLogin: comment.authorLogin, createdAt: comment.createdAt }),
+        comment.body.trim(),
+        '',
+      ].join('\n');
+    }).join('\n')),
   ].join('\n');
 }
 
@@ -142,4 +157,12 @@ function summarizePatch(patch: string | undefined): { additions: number; deletio
     additions: (patch.match(/^\+[^+]/gm) ?? []).length,
     deletions: (patch.match(/^-[^-]/gm) ?? []).length,
   };
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  return new TextDecoder().decode(new TextEncoder().encode(value).subarray(0, maxBytes));
 }

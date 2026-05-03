@@ -7,11 +7,12 @@ import { SpecifyPhaseContractError } from '../phases/specify/errors';
 
 describe('specify phase', () => {
   it('renders donor-faithful specify prompt markers for ticket, comments, draft, retry context, and response instructions', () => {
+    const issue = { ...buildSelectedIssue(), labels: ['api', 'p1'] } as any;
     const prompt = buildSpecifyPrompt({
-      issue: buildSelectedIssue(),
+      issue,
       changeName: '7-demo-change',
       issueComments: [
-        { id: 1, body: 'Customer note: keep the API small.' },
+        { id: 1, body: 'Customer note: keep the API small.', authorLogin: 'customer', createdAt: '2026-05-03T10:15:00Z' } as any,
         { id: 2, body: '<!-- night-shift:specify:summary -->\nold summary' },
       ],
       currentDraftFiles: [{ path: 'proposal.md', content: '# Existing Proposal' }],
@@ -24,8 +25,9 @@ describe('specify phase', () => {
     assert.match(SPECIFY_SYSTEM_PROMPT, /Your final message MUST be a single JSON object matching the provided schema\./);
     assert.match(prompt, /^<untrusted-input source="github-ticket">[\s\S]*# Ticket 7: Create a dummy PR/m);
     assert.match(prompt, /URL: https:\/\/github\.com\/Mugenor\/orchestrator-testing\/issues\/7/);
+    assert.match(prompt, /Labels: api, p1/);
     assert.match(prompt, /## Description\nImplement the requested repository change for issue 7\./);
-    assert.match(prompt, /## Comments\n<untrusted-input source="github-comments">[\s\S]*Customer note: keep the API small\./);
+    assert.match(prompt, /## Comments\n<untrusted-input source="github-comments">[\s\S]*### @customer — 2026-05-03T10:15:00Z[\s\S]*Customer note: keep the API small\./);
     assert.doesNotMatch(prompt, /night-shift:specify:summary/);
     assert.match(prompt, /## Current draft\nThe following files already exist on the ticket branch\. Revise them as needed\./);
     assert.match(prompt, /<untrusted-input source="prior-draft">[\s\S]*### proposal\.md[\s\S]*```markdown[\s\S]*# Existing Proposal/);

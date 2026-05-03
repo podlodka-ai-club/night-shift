@@ -18,13 +18,15 @@ const SCHEMA = {
 const PROMPT = "Return JSON with answer='pong', letters as the array ['p','o','n','g'], and count=4.";
 
 async function runOne(provider: AgentProvider, model: string): Promise<void> {
+  console.log(`\n===== ${provider} (${model}) =====`);
+  const startedAt = Date.now();
   const result = await RUNNER({
     worktreePath: WORKTREE_PATH,
     prompt: PROMPT,
     outputSchema: SCHEMA,
     parseOutput: (value) => {
       const verdict = validateOutputSchemaSmokeValue(value);
-      if (!verdict.ok) {
+      if (verdict.ok === false) {
         throw new Error(verdict.reason);
       }
       return verdict.payload;
@@ -32,6 +34,7 @@ async function runOne(provider: AgentProvider, model: string): Promise<void> {
     provider,
     model,
   });
+  const wallMs = Date.now() - startedAt;
   const verdict = validateOutputSchemaSmokeText(result.finalText);
   const expectedLetters = ['p', 'o', 'n', 'g'];
   const payloadMatches = verdict.ok
@@ -40,11 +43,19 @@ async function runOne(provider: AgentProvider, model: string): Promise<void> {
     && verdict.payload.letters.length === expectedLetters.length
     && verdict.payload.letters.every((value, index) => value.toLowerCase() === expectedLetters[index]);
 
-  console.log(`\n===== ${provider} (${model}) =====`);
   console.log('finalText:', result.finalText);
+  if (verdict.ok) {
+    console.log('parsed:', verdict.payload);
+  }
   console.log('usage:', result.usage);
   console.log('costMicroUsd:', result.costMicroUsd);
-  console.log('VERDICT:', verdict.ok && payloadMatches ? 'ok' : verdict.ok ? 'mismatch (schema valid, payload wrong)' : `validation failed: ${verdict.reason}`);
+  console.log('wallMs:', wallMs);
+  const verdictMessage = verdict.ok
+    ? payloadMatches
+      ? 'ok'
+      : 'mismatch (schema valid, payload wrong)'
+    : `validation failed: ${verdict.reason}`;
+  console.log('VERDICT:', verdictMessage);
 }
 
 async function main(): Promise<void> {

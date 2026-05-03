@@ -36,10 +36,14 @@ interface PullRequestReviewCommentResponse {
   body: string;
   path: string;
   line?: number | null;
+  user?: { login?: string | null } | null;
+  created_at?: string | null;
 }
 
 interface PullRequestReviewResponse {
   body?: string | null;
+  user?: { login?: string | null } | null;
+  created_at?: string | null;
 }
 
 const MARK_PULL_REQUEST_READY_MUTATION = `
@@ -72,8 +76,13 @@ export async function openPullRequestActivity(deps: GitHubActivityDeps, input: O
 
 export async function listIssueCommentsActivity(deps: GitHubActivityDeps, input: ListIssueCommentsInput): Promise<IssueComment[]> {
   const repoPath = buildRepoApiPath(input.repoOwner, input.repoName);
-  const comments = await githubRest<Array<{ id: number; body: string }>>(deps, `${repoPath}/issues/${input.issueNumber}/comments`);
-  return comments.map((comment) => ({ id: comment.id, body: comment.body }));
+  const comments = await githubRest<Array<{ id: number; body: string; user?: { login?: string | null } | null; created_at?: string | null }>>(deps, `${repoPath}/issues/${input.issueNumber}/comments`);
+  return comments.map((comment) => ({
+    id: comment.id,
+    body: comment.body,
+    ...(comment.user?.login ? { authorLogin: comment.user.login } : {}),
+    ...(comment.created_at ? { createdAt: comment.created_at } : {}),
+  }));
 }
 
 export async function addIssueLabelsActivity(deps: GitHubActivityDeps, input: AddIssueLabelsInput): Promise<void> {
@@ -130,6 +139,8 @@ export async function listPullRequestReviewCommentsActivity(
     body: comment.body,
     path: comment.path,
     ...(comment.line === null || comment.line === undefined ? {} : { line: comment.line }),
+    ...(comment.user?.login ? { authorLogin: comment.user.login } : {}),
+    ...(comment.created_at ? { createdAt: comment.created_at } : {}),
   }));
 }
 
@@ -208,15 +219,19 @@ export async function upsertPullRequestReviewCommentActivity(
 async function listPullRequestReviewsActivity(
   deps: GitHubActivityDeps,
   input: PullRequestReviewContextInput,
-): Promise<string[]> {
+): Promise<OpenPullRequestFeedback['reviewBodies']> {
   const repoPath = buildRepoApiPath(input.repoOwner, input.repoName);
   const reviews = await githubRest<PullRequestReviewResponse[]>(
     deps,
     `${repoPath}/pulls/${input.pullRequestNumber}/reviews?per_page=100`,
   );
   return reviews
-    .map((review) => review.body?.trim() ?? '')
-    .filter((body) => body.length > 0);
+    .map((review) => ({
+      body: review.body?.trim() ?? '',
+      ...(review.user?.login ? { authorLogin: review.user.login } : {}),
+      ...(review.created_at ? { createdAt: review.created_at } : {}),
+    }))
+    .filter((review) => review.body.length > 0);
 }
 
 export async function commentOnIssueActivity(deps: GitHubActivityDeps, input: IssueCommentInput): Promise<void> {

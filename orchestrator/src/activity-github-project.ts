@@ -58,6 +58,7 @@ interface ProjectItemNode {
         body: string;
         url: string;
         createdAt: string;
+        labels?: { nodes: Array<{ name: string }> };
         repository: { name: string; owner: { login: string }; defaultBranchRef: null | { name: string } };
       }
     | { __typename: string };
@@ -133,6 +134,11 @@ const PROJECT_FIELDS_FRAGMENT = `
             body
             url
             createdAt
+            labels(first: 20) {
+              nodes {
+                name
+              }
+            }
             repository {
               name
               owner {
@@ -499,6 +505,7 @@ function buildListedProjectIssue(
     issueTitle: issue.title,
     taskDescription: buildTaskDescription(issue.title, issue.body),
     issueUrl: issue.url,
+    ...(issue.labels?.nodes.length ? { labels: issue.labels.nodes.map((label) => label.name) } : {}),
     repoOwner: issue.repository.owner.login,
     repoName: issue.repository.name,
     defaultBranch: issue.repository.defaultBranchRef?.name ?? 'main',

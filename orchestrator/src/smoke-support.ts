@@ -21,6 +21,20 @@ export interface OutputSchemaSmokePayload {
   count: number;
 }
 
+export function renderProviderItemTrace(events: readonly AgentProgressEvent[]): string[] {
+  const lines: string[] = [];
+
+  for (const event of events) {
+    if (event.type !== 'provider-item') {
+      continue;
+    }
+
+    lines.push(renderProviderItemTraceLine(event.payload));
+  }
+
+  return lines;
+}
+
 export function summarizeToolActivity(events: readonly AgentProgressEvent[]): ToolActivitySummary {
   const providerItemTypes: string[] = [];
   let totalProviderItems = 0;
@@ -162,6 +176,47 @@ function readProviderItemType(value: unknown): string | undefined {
   return isRecord(value) && typeof value.type === 'string' ? value.type : undefined;
 }
 
+function renderProviderItemTraceLine(value: unknown): string {
+  if (!isRecord(value)) {
+    return '[provider-item]';
+  }
+
+  const type = readProviderItemType(value);
+  if (!type) {
+    return '[provider-item]';
+  }
+  if (type === 'assistant') {
+    const snapshot = normalizeTraceText(extractAssistantTextSnapshot(value));
+    return snapshot ? `[assistant] ${snapshot}` : '[assistant]';
+  }
+  if (type === 'result') {
+    const subtype = readTraceString(value, ['subtype']);
+    return subtype ? `[result] ${subtype}` : '[result]';
+  }
+  if (type === 'tool_progress') {
+    const toolName = readTraceString(value, ['tool_name', 'tool', 'name']);
+    return toolName ? `[tool-use] ${toolName}` : '[tool-use]';
+  }
+  if (type === 'tool_use_summary') {
+    const summary = readTraceString(value, ['summary']);
+    return summary ? `[tool-result] ${summary}` : '[tool-result]';
+  }
+  if (type === 'tool_result') {
+    const label = readTraceString(value, ['toolCallId', 'tool_call_id', 'tool_name', 'tool']);
+    const status = readTraceString(value, ['status']);
+    return status && label ? `[tool-result] ${label} status=${status}` : label ? `[tool-result] ${label}` : '[tool-result]';
+  }
+  if (type === 'mcp_tool_call') {
+    const toolName = readTraceString(value, ['tool', 'tool_name', 'name']) ?? 'unknown';
+    const status = readTraceString(value, ['status']);
+    return status ? `[tool-call] ${toolName} status=${status}` : `[tool-call] ${toolName}`;
+  }
+  if (type === 'user' && value.tool_use_result !== undefined) {
+    return '[tool-result] user.tool_use_result';
+  }
+  return `[${type}]`;
+}
+
 function extractAssistantTextSnapshot(value: Record<string, any>): string {
   const blocks = isRecord(value.message) && Array.isArray(value.message.content)
     ? value.message.content
@@ -177,4 +232,21 @@ function extractAssistantTextSnapshot(value: Record<string, any>): string {
 
 function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === 'object' && value !== null;
+}
+
+function readTraceString(value: Record<string, any>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === 'string') {
+      const normalized = normalizeTraceText(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+  return undefined;
+}
+
+function normalizeTraceText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }

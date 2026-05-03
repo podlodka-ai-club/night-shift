@@ -19,17 +19,25 @@ export const DEFAULT_AGENT_MODEL_BY_PROVIDER: Readonly<Record<AgentProvider, str
   claude: 'claude-sonnet-4-6',
 });
 
+const AGENT_PROVIDER_ALIASES = Object.freeze({
+  codex: 'codex',
+  openai: 'codex',
+  claude: 'claude',
+  'claude-agent': 'claude',
+  anthropic: 'claude',
+} satisfies Record<string, AgentProvider>);
+
 export function normalizeAgentProvider(value: string | undefined): AgentProvider | undefined {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) {
     return undefined;
   }
-  if (normalized === 'codex') {
-    return 'codex';
+
+  const aliasedProvider = AGENT_PROVIDER_ALIASES[normalized as keyof typeof AGENT_PROVIDER_ALIASES];
+  if (aliasedProvider) {
+    return aliasedProvider;
   }
-  if (normalized === 'claude' || normalized === 'claude-agent') {
-    return 'claude';
-  }
+
   throw new Error(`Unsupported provider "${value}". Supported providers: ${AGENT_PROVIDERS.join(', ')}`);
 }
 

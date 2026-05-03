@@ -7,20 +7,21 @@ import { runImplementPhase } from '../phases/implement/phase';
 
 describe('implement phase', () => {
   it('renders donor-faithful implement prompt markers for spec bundle, review feedback, retry context, and response instructions', () => {
+    const issue = { ...buildSelectedIssue(), labels: ['backend', 'urgent'] } as any;
     const prompt = buildImplementPrompt({
-      issue: buildSelectedIssue(),
+      issue,
       changeName: '7-demo-change',
       specBundleFiles: [
         { path: 'proposal.md', content: '# Proposal' },
         { path: 'tasks.md', content: '# Tasks' },
       ],
       issueComments: [
-        { id: 1, body: 'Operator note: keep the change set small.' },
+        { id: 1, body: 'Operator note: keep the change set small.', authorLogin: 'operator', createdAt: '2026-05-03T11:00:00Z' } as any,
         { id: 2, body: '<!-- night-shift:implement:summary -->\nold summary' },
       ],
       pullRequestFeedback: {
-        reviewBodies: ['<!-- night-shift:review:summary -->\n## Review requested changes\nPlease tighten the public API.'],
-        reviewComments: [{ id: 9, body: '<!-- night-shift:review:finding -->\nGuard the undefined path.\n\nRef: spec-7', path: 'src/index.ts', line: 8 }],
+        reviewBodies: [{ body: '<!-- night-shift:review:summary -->\n## Review requested changes\nPlease tighten the public API.', authorLogin: 'reviewer', createdAt: '2026-05-03T11:20:00Z' }],
+        reviewComments: [{ id: 9, body: '<!-- night-shift:review:finding -->\nGuard the undefined path.\n\nRef: spec-7', path: 'src/index.ts', line: 8, authorLogin: 'reviewer', createdAt: '2026-05-03T11:30:00Z' } as any],
       },
       retryFeedback: {
         attempt: 1,
@@ -33,13 +34,14 @@ describe('implement phase', () => {
     assert.match(IMPLEMENT_SYSTEM_PROMPT, /ENGINEERING HYGIENE — apply when reasoning:/);
     assert.match(IMPLEMENT_SYSTEM_PROMPT, /Your final message MUST be a single JSON object matching the provided schema\./);
     assert.match(prompt, /^<untrusted-input source="github-ticket">[\s\S]*# Ticket 7: Create a dummy PR/m);
+    assert.match(prompt, /Labels: backend, urgent/);
     assert.doesNotMatch(prompt, /^Change folder: openspec\/changes\//m);
     assert.match(prompt, /## Spec bundle\n<untrusted-input source="spec-bundle">[\s\S]*### proposal\.md[\s\S]*```markdown[\s\S]*# Proposal/);
-    assert.match(prompt, /## Comments\n<untrusted-input source="github-comments">[\s\S]*Operator note: keep the change set small\./);
+    assert.match(prompt, /## Comments\n<untrusted-input source="github-comments">[\s\S]*### @operator — 2026-05-03T11:00:00Z[\s\S]*Operator note: keep the change set small\./);
     assert.doesNotMatch(prompt, /night-shift:implement:summary/);
     assert.match(prompt, /Review requested changes/);
     assert.match(prompt, /Please tighten the public API\./);
-    assert.match(prompt, /## Existing review feedback\n<untrusted-input source="github-review-feedback">[\s\S]*### Review 1[\s\S]*Review requested changes[\s\S]*### src\/index\.ts:8[\s\S]*Guard the undefined path\./);
+    assert.match(prompt, /## Existing review feedback\n<untrusted-input source="github-review-feedback">[\s\S]*### Review 1 — @reviewer — 2026-05-03T11:20:00Z[\s\S]*Review requested changes[\s\S]*### src\/index\.ts:8 — @reviewer — 2026-05-03T11:30:00Z[\s\S]*Guard the undefined path\./);
     assert.match(prompt, /Guard the undefined path\./);
     assert.doesNotMatch(prompt, /night-shift:review:summary/);
     assert.doesNotMatch(prompt, /night-shift:review:finding/);
@@ -68,7 +70,7 @@ describe('implement phase', () => {
         async listOpenPullRequestFeedback() {
           calls.push('listOpenPullRequestFeedback');
           return {
-            reviewBodies: ['<!-- night-shift:review:summary -->\n## Review requested changes\nPlease wire the retry through the existing helper.'],
+            reviewBodies: [{ body: '<!-- night-shift:review:summary -->\n## Review requested changes\nPlease wire the retry through the existing helper.', authorLogin: 'reviewer', createdAt: '2026-05-03T11:20:00Z' }],
             reviewComments: [{ id: 9, body: '<!-- night-shift:review:finding -->\nKeep the helper pure.', path: 'src/index.ts', line: 1 }],
           };
         },

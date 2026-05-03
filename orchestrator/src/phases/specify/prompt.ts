@@ -1,7 +1,7 @@
 import { isNightShiftMarkerComment } from '../../comment-markers';
 import type { IssueComment, OpenSpecChangeFile, SelectedProjectIssue } from '../../shared';
 import { buildChangeName } from '../change-name';
-import { wrapUntrustedInput } from '../prompt-hardening';
+import { renderPromptContextHeading, wrapUntrustedInput } from '../prompt-hardening';
 
 export const SPECIFY_SYSTEM_PROMPT = [
   'You are the Specifier role in the Night-Shift system.',
@@ -76,6 +76,7 @@ function renderIssue(issue: SelectedProjectIssue): string {
     `# Ticket ${issue.issueNumber}: ${issue.issueTitle}`,
     '',
     `URL: ${issue.issueUrl}`,
+    ...(issue.labels && issue.labels.length > 0 ? [`Labels: ${issue.labels.join(', ')}`] : []),
     '',
     '## Description',
     issue.taskDescription.trim() || '_(no description provided)_',
@@ -90,7 +91,11 @@ function renderIssueComments(issueComments: readonly IssueComment[]): string | u
 
   return wrapUntrustedInput(
     'github-comments',
-    visibleComments.map((comment, index) => [`### Comment ${index + 1}`, comment.body.trim(), ''].join('\n')).join('\n'),
+    visibleComments.map((comment, index) => [
+      renderPromptContextHeading({ fallbackLabel: `Comment ${index + 1}`, authorLogin: comment.authorLogin, createdAt: comment.createdAt }),
+      comment.body.trim(),
+      '',
+    ].join('\n')).join('\n'),
   );
 }
 
