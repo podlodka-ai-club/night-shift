@@ -182,6 +182,16 @@ export function createFakeAgentDeps(baseDeps: AgentActivityDeps): AgentActivityD
       threads.set(state.id, state);
       return createThread(baseDeps, state);
     },
+    createClaudeSession: (worktreePath) => {
+      const state = createThreadState(`fake-thread-${nextThreadId++}`, worktreePath);
+      threads.set(state.id, state);
+      return createThread(baseDeps, state);
+    },
+    resumeClaudeSession: (worktreePath, threadId) => {
+      const state = threads.get(threadId) ?? createThreadState(threadId, worktreePath);
+      threads.set(state.id, state);
+      return createThread(baseDeps, state);
+    },
   };
 }
 

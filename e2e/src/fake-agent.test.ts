@@ -142,6 +142,28 @@ describe('createFakeAgentDeps', () => {
   it('exports a deterministic specify escalation helper for Backlog recovery', () => {
     assert.strictEqual(buildFakeAgentSpecifyEscalationResponse('run-123').resolution.resumeStatus, 'Backlog');
   });
+
+  it('mirrors deterministic fake sessions through the Claude adapter hooks too', async () => {
+    const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
+    const deps = createFakeAgentDeps(buildBaseDeps());
+    const firstSession = deps.createClaudeSession(worktreePath);
+
+    const firstResponse = await firstSession.run('Review the PR.\n## PR Diff\n```diff\n+ok\n```\nE2E_RUN_MARKER: run-456', {
+      outputSchema: { type: 'object' },
+    });
+    assert.ok(firstSession.id);
+    const resumedSession = deps.resumeClaudeSession(worktreePath, firstSession.id);
+    const secondResponse = await resumedSession.run('Review the PR.\n## PR Diff\n```diff\n+ok\n```\nE2E_RUN_MARKER: run-456', {
+      outputSchema: { type: 'object' },
+    });
+
+    assert.deepStrictEqual(JSON.parse(firstResponse.finalResponse), buildFakeAgentReviewResponse('run-456', 1));
+    assert.deepStrictEqual(JSON.parse(secondResponse.finalResponse), {
+      commitMessage: 'test: fake e2e change for run-456',
+      pullRequestTitle: 'test: fake e2e PR for run-456',
+      pullRequestBody: '## Summary\n- create the deterministic fake e2e change\n- run marker: run-456',
+    });
+  });
 });
 
 function buildBaseDeps(): AgentActivityDeps {
@@ -164,6 +186,12 @@ function buildBaseDeps(): AgentActivityDeps {
       throw new Error('resumeCodexThread should be overridden');
     },
     getAgentProfile: () => ({ model: 'gpt-5.3-codex', reasoningEffort: 'low' }),
+    createClaudeSession: () => {
+      throw new Error('createClaudeSession should be overridden');
+    },
+    resumeClaudeSession: () => {
+      throw new Error('resumeClaudeSession should be overridden');
+    },
     getCancellationSignal: () => undefined,
     getHeartbeatDetails: () => undefined,
     heartbeat: () => undefined,

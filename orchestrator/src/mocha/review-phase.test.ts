@@ -46,6 +46,24 @@ describe('review phase', () => {
     assert.ok(prompt.indexOf('## Retry feedback') < prompt.indexOf('## Response'));
   });
 
+  it('truncates UTF-8 diffs at code point boundaries without replacement characters', () => {
+    const prompt = buildReviewPrompt({
+      issue: buildSelectedIssue(),
+      changeName: '7-demo-change',
+      pullRequest: { pullRequestNumber: 42, pullRequestUrl: 'https://github.com/Mugenor/orchestrator-testing/pull/42', headSha: 'abc123', isDraft: false },
+      specBundleFiles: [],
+      diff: '🌙🌙',
+      changedFiles: [{ path: 'src/index.ts', patch: '@@\n+export const moon = true;' }],
+      reviewComments: [],
+      maxDiffCharacters: 5,
+    });
+
+    assert.match(prompt, /diff truncated at 5 bytes/);
+    assert.doesNotMatch(prompt, /�/);
+    assert.match(prompt, /```diff\n🌙\n```/);
+    assert.match(prompt, /### Changed files breakdown/);
+  });
+
   it('decides ready-to-merge for warning-only findings and escalates on the final retry with errors', () => {
     assert.strictEqual(decideReviewVerdict([{ severity: 'warning', message: 'note' }], 0), 'ready-to-merge');
     assert.strictEqual(decideReviewVerdict([{ severity: 'error', message: 'fix it' }], 0), 'needs-fix');

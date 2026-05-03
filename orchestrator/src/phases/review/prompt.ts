@@ -3,6 +3,8 @@ import type { OpenSpecChangeFile, PullRequestChangedFile, PullRequestDetails, Pu
 import { wrapUntrustedInput } from '../prompt-hardening';
 
 const DEFAULT_MAX_DIFF_CHARACTERS = 12_000;
+const UTF8_ENCODER = new TextEncoder();
+const UTF8_DECODER = new TextDecoder();
 export const REVIEWER_SYSTEM_PROMPT = [
   'You are the Reviewer role in the Night-Shift system.',
   'Given a ticket, its approved spec bundle, and a pull request diff, identify',
@@ -94,11 +96,12 @@ function renderSpecBundle(files: readonly OpenSpecChangeFile[]): string {
 
 function renderDiff(diff: string, changedFiles: readonly PullRequestChangedFile[], maxDiffCharacters: number): string {
   const trimmedDiff = diff.trim();
-  if (Buffer.byteLength(trimmedDiff, 'utf8') <= maxDiffCharacters) {
+  const encodedDiff = UTF8_ENCODER.encode(trimmedDiff);
+  if (encodedDiff.length <= maxDiffCharacters) {
     return wrapUntrustedInput('git-diff', ['```diff', trimmedDiff || '(empty diff)', '```'].join('\n'));
   }
 
-  const truncatedDiff = Buffer.from(trimmedDiff, 'utf8').subarray(0, maxDiffCharacters).toString('utf8');
+  const truncatedDiff = decodeUtf8Prefix(encodedDiff, maxDiffCharacters);
   return wrapUntrustedInput('git-diff', [
     '```diff',
     truncatedDiff,
@@ -116,6 +119,43 @@ function renderDiff(diff: string, changedFiles: readonly PullRequestChangedFile[
           return `| ${file.path} | +${additions} | -${deletions} |`;
         })),
   ].join('\n'));
+}
+
+function decodeUtf8Prefix(encodedValue: Uint8Array, maxBytes: number): string {
+  const sliceEnd = Math.min(Math.max(maxBytes, 0), encodedValue.length);
+  if (sliceEnd === 0) {
+    return '';
+  }
+
+  let safeSliceEnd = sliceEnd;
+  let codePointStart = safeSliceEnd - 1;
+  const minCodePointStart = Math.max(safeSliceEnd - 4, 0);
+  while (codePointStart > minCodePointStart && isUtf8ContinuationByte(encodedValue[codePointStart])) {
+    codePointStart -= 1;
+  }
+
+  if (codePointStart + utf8CodePointLength(encodedValue[codePointStart]) > safeSliceEnd) {
+    safeSliceEnd = codePointStart;
+  }
+
+  return UTF8_DECODER.decode(encodedValue.slice(0, safeSliceEnd));
+}
+
+function isUtf8ContinuationByte(byte: number): boolean {
+  return (byte & 0b1100_0000) === 0b1000_0000;
+}
+
+function utf8CodePointLength(byte: number): number {
+  if ((byte & 0b1000_0000) === 0) {
+    return 1;
+  }
+  if ((byte & 0b1110_0000) === 0b1100_0000) {
+    return 2;
+  }
+  if ((byte & 0b1111_0000) === 0b1110_0000) {
+    return 3;
+  }
+  return 4;
 }
 
 function renderReviewComments(comments: readonly PullRequestReviewComment[]): string | undefined {
