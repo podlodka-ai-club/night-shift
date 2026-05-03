@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 import path from 'node:path';
+import { hasJudgeFailure } from '../eval/live-judge';
 import {
   loadImplementReplayFixtures,
   runImplementReplaySuite,
@@ -19,6 +20,8 @@ Options:
   --mode <mode>       replay (default) or live
   --worktree <dir>    Repository/worktree path for live mode (default: current working directory)
   --timeout-ms <n>    Live-mode timeout per fixture in milliseconds (default: 300000)
+  --judge             Run an additional judge pass in live mode
+  --max-revisions <n> Live-mode judge revisions to allow per fixture (default: 0, max: 2)
   --fixture <id>      Run only the fixture with this id (repeatable)
   --json              Emit machine-readable JSON to stdout instead of a table.
   --help              Show this message.
@@ -39,7 +42,7 @@ type CliOptions = {
   json: boolean;
 } & (
   | { mode: 'replay' }
-  | { mode: 'live'; worktreePath: string; timeoutMs: number }
+  | { mode: 'live'; worktreePath: string; timeoutMs: number; judge?: { maxRevisions: number } }
 );
 
 interface Writer {
@@ -63,6 +66,7 @@ const DEFAULT_DEPS: EvalImplementCliDeps = {
 };
 
 const DEFAULT_LIVE_TIMEOUT_MS = 300_000;
+const MAX_JUDGE_REVISIONS = 2;
 
 class EvalImplementCliUsageError extends Error {
   constructor(
@@ -83,6 +87,8 @@ export function parseEvalImplementCliArgs(argv: ReadonlyArray<string>): CliOptio
       mode: { type: 'string', default: 'replay' },
       worktree: { type: 'string' },
       'timeout-ms': { type: 'string' },
+      judge: { type: 'boolean', default: false },
+      'max-revisions': { type: 'string' },
       fixture: { type: 'string', multiple: true, default: [] },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
@@ -108,12 +114,18 @@ export function parseEvalImplementCliArgs(argv: ReadonlyArray<string>): CliOptio
 
   if (values.mode === 'live') {
     const timeoutMs = parseTimeoutMs(values['timeout-ms']);
+    const judge = parseJudgeOptions(values.judge === true, values['max-revisions']);
     return {
       ...baseOptions,
       mode: 'live',
       worktreePath: path.resolve(values.worktree ?? process.cwd()),
       timeoutMs,
+      ...(judge ? { judge } : {}),
     };
+  }
+
+  if (values.judge === true || values['max-revisions'] !== undefined) {
+    throw new EvalImplementCliUsageError(64, '--judge and --max-revisions are only supported in live mode\n', 'stderr');
   }
 
   return {
@@ -141,12 +153,21 @@ export async function main(argv: ReadonlyArray<string> = process.argv.slice(2), 
   }
 
   const suite = options.mode === 'live'
-    ? await deps.runLiveSuite(loadedFixtures, { worktreePath: options.worktreePath, timeoutMs: options.timeoutMs })
+    ? await deps.runLiveSuite(loadedFixtures, {
+      worktreePath: options.worktreePath,
+      timeoutMs: options.timeoutMs,
+      ...(options.judge ? { judge: options.judge } : {}),
+    })
     : deps.runReplaySuite(loadedFixtures);
   if (options.json) {
-    deps.stdout.write(JSON.stringify({ mode: options.mode, results: suite.results, summary: suite.summary }, null, 2) + '\n');
+    deps.stdout.write(JSON.stringify({
+      mode: options.mode,
+      results: suite.results,
+      summary: suite.summary,
+      ...(suite.judgeSummary ? { judgeSummary: suite.judgeSummary } : {}),
+    }, null, 2) + '\n');
   } else {
-    deps.stdout.write(renderText(options.mode, suite.results, suite.summary));
+    deps.stdout.write(renderText(options.mode, suite.results, suite.summary, suite.judgeSummary));
   }
 
   const fixturesById = new Map(loadedFixtures.map((fixture) => [fixture.id, fixture]));
@@ -180,8 +201,34 @@ function parseTimeoutMs(value: string | undefined): number {
   return parsed;
 }
 
+function parseJudgeOptions(enabled: boolean, maxRevisionsValue: string | undefined): { maxRevisions: number } | undefined {
+  if (!enabled && maxRevisionsValue === undefined) {
+    return undefined;
+  }
+  if (!enabled) {
+    throw new EvalImplementCliUsageError(64, '--max-revisions requires --judge\n', 'stderr');
+  }
+
+  const maxRevisions = parseNonNegativeInt(maxRevisionsValue ?? '0', '--max-revisions');
+  if (maxRevisions > MAX_JUDGE_REVISIONS) {
+    throw new EvalImplementCliUsageError(64, `--max-revisions must be <= ${MAX_JUDGE_REVISIONS}\n`, 'stderr');
+  }
+  return { maxRevisions };
+}
+
+function parseNonNegativeInt(value: string, flag: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new EvalImplementCliUsageError(64, `invalid ${flag} "${value}" (expected a non-negative integer)\n`, 'stderr');
+  }
+  return parsed;
+}
+
 function isFailureResult(result: ImplementReplayResult, fixture: ImplementReplayFixture | undefined): boolean {
   if (result.expectationMismatch) {
+    return true;
+  }
+  if (hasJudgeFailure(result)) {
     return true;
   }
   if (result.status === 'parse_error' || result.status === 'schema_error') {
@@ -205,14 +252,27 @@ function isDirectCliExecution(argv: ReadonlyArray<string> = process.argv): boole
   ].some((suffix) => normalizedEntrypoint.endsWith(suffix));
 }
 
-function renderText(mode: CliOptions['mode'], results: readonly ImplementReplayResult[], summary: ImplementReplaySummary): string {
+function renderText(
+  mode: CliOptions['mode'],
+  results: readonly ImplementReplayResult[],
+  summary: ImplementReplaySummary,
+  judgeSummary?: { byVerdict: Record<'pass' | 'revise' | 'error', number>; totalJudgeCostMicroUsd: number; totalJudgeTokens: number; totalRevisions: number },
+): string {
   const lines = [`Implement eval — ${mode} mode`, '─'.repeat(40)];
   for (const result of results) {
-    const flag = result.expectationMismatch ? 'FAIL' : 'ok  ';
+    const flag = result.expectationMismatch || hasJudgeFailure(result) ? 'FAIL' : 'ok  ';
     const cost = `$${(result.costMicroUsd / 1_000_000).toFixed(4)}`;
-    lines.push(`  ${flag}  ${result.id.padEnd(28)} status=${result.status.padEnd(13)} files=${result.filesWrittenCount} cost=${cost}`);
+    const judgeLabel = result.judge ? ` judge=${result.judge.finalVerdict}` : '';
+    lines.push(`  ${flag}  ${result.id.padEnd(28)} status=${result.status.padEnd(13)} files=${result.filesWrittenCount} cost=${cost}${judgeLabel}`);
     if (result.expectationMismatch) {
       lines.push(`        mismatch: ${result.expectationMismatch}`);
+    }
+    const latestJudgeAttempt = result.judge?.attempts[result.judge.attempts.length - 1];
+    if (latestJudgeAttempt?.summary) {
+      lines.push(`        judge: ${latestJudgeAttempt.summary}`);
+    }
+    if (latestJudgeAttempt?.errorMessage) {
+      lines.push(`        judge-error: ${latestJudgeAttempt.errorMessage}`);
     }
   }
   lines.push('─'.repeat(40));
@@ -224,6 +284,14 @@ function renderText(mode: CliOptions['mode'], results: readonly ImplementReplayR
   lines.push(`  expectationMismatches:${summary.expectationMismatches}`);
   lines.push(`  totalCost:            $${(summary.totalCostMicroUsd / 1_000_000).toFixed(4)}`);
   lines.push(`  totalTokens:          ${summary.totalTokens}`);
+  if (judgeSummary) {
+    lines.push(`  judge.pass:           ${judgeSummary.byVerdict.pass}`);
+    lines.push(`  judge.revise:         ${judgeSummary.byVerdict.revise}`);
+    lines.push(`  judge.error:          ${judgeSummary.byVerdict.error}`);
+    lines.push(`  judge.totalCost:      $${(judgeSummary.totalJudgeCostMicroUsd / 1_000_000).toFixed(4)}`);
+    lines.push(`  judge.totalTokens:    ${judgeSummary.totalJudgeTokens}`);
+    lines.push(`  judge.totalRevisions: ${judgeSummary.totalRevisions}`);
+  }
   return `${lines.join('\n')}\n`;
 }
 

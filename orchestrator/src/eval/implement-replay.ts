@@ -3,6 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { getAgentSchema } from '../agent-schema-registry';
 import { parseImplementResponse } from '../phases/implement/response';
+import type { LiveJudgeReport, LiveJudgeSummary } from './live-judge';
 import { recordedUsageSchema, totalRecordedTokens, toErrorMessage, ZERO_RECORDED_USAGE } from './replay-common';
 
 const implementReplayStatusSchema = z.enum(['produced', 'empty', 'parse_error', 'schema_error']);
@@ -63,6 +64,7 @@ export interface ImplementReplayResult {
   totalTokens: number;
   errorMessage?: string;
   expectationMismatch?: string;
+  judge?: LiveJudgeReport;
 }
 
 export interface ImplementReplaySummary {
@@ -78,6 +80,7 @@ export interface ImplementReplaySuiteResult {
   schemaId: typeof IMPLEMENT_REPLAY_SCHEMA_ID;
   results: ImplementReplayResult[];
   summary: ImplementReplaySummary;
+  judgeSummary?: LiveJudgeSummary;
 }
 
 export async function loadImplementReplayFixtures(fixturesDir: string): Promise<ImplementReplayFixture[]> {

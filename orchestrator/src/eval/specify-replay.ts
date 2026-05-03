@@ -3,6 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { getAgentSchema } from '../agent-schema-registry';
 import { parseSpecifyResponse } from '../phases/specify/response';
+import type { LiveJudgeReport, LiveJudgeSummary } from './live-judge';
 import { recordedUsageSchema, totalRecordedTokens, toErrorMessage, ZERO_RECORDED_USAGE } from './replay-common';
 
 const specifyReplayStatusSchema = z.enum(['refined', 'needs_input', 'parse_error', 'schema_error']);
@@ -62,6 +63,7 @@ export interface SpecifyReplayResult {
   totalTokens: number;
   errorMessage?: string;
   expectationMismatch?: string;
+  judge?: LiveJudgeReport;
 }
 
 export interface SpecifyReplaySummary {
@@ -77,6 +79,7 @@ export interface SpecifyReplaySuiteResult {
   schemaId: typeof SPECIFY_REPLAY_SCHEMA_ID;
   results: SpecifyReplayResult[];
   summary: SpecifyReplaySummary;
+  judgeSummary?: LiveJudgeSummary;
 }
 
 export async function loadSpecifyReplayFixtures(fixturesDir: string): Promise<SpecifyReplayFixture[]> {

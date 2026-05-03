@@ -70,6 +70,31 @@ describe('specify eval cli', () => {
     });
   });
 
+  it('parses optional judge flags for live mode and rejects them in replay mode', () => {
+    const parsed = parseEvalSpecifyCliArgs([
+      '--fixtures', fixturesDir,
+      '--mode', 'live',
+      '--worktree', '/tmp/live-repo',
+      '--judge',
+      '--max-revisions', '1',
+    ]) as any;
+
+    assert.deepStrictEqual(parsed, {
+      fixturesDir: path.resolve(fixturesDir),
+      fixtureIds: [],
+      json: false,
+      mode: 'live',
+      worktreePath: path.resolve('/tmp/live-repo'),
+      timeoutMs: 300000,
+      judge: { maxRevisions: 1 },
+    });
+
+    assert.throws(
+      () => parseEvalSpecifyCliArgs(['--fixtures', fixturesDir, '--judge']),
+      /live mode/i,
+    );
+  });
+
   it('dispatches live mode through the live suite and preserves the CLI JSON shape', async () => {
     let stdout = '';
     const exitCode = await main(
@@ -114,6 +139,71 @@ describe('specify eval cli', () => {
     assert.strictEqual(parsed.mode, 'live');
     assert.strictEqual(parsed.results[0]?.id, 'live-specify');
     assert.strictEqual(parsed.summary.total, 1);
+  });
+
+  it('includes judge telemetry in live-mode JSON output and treats revise verdicts as failures', async () => {
+    let stdout = '';
+    const exitCode = await main(
+      ['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--judge', '--json'],
+      {
+        loadFixtures: async () => [{ id: 'live-specify' } as any],
+        runReplaySuite: () => {
+          throw new Error('replay suite should not run in live mode');
+        },
+        runLiveSuite: async (_fixtures, options) => {
+          assert.deepStrictEqual((options as any).judge, { maxRevisions: 0 });
+          return {
+            schemaId: 'specify-response-v1',
+            results: [{
+              id: 'live-specify',
+              status: 'refined',
+              openQuestionsCount: 0,
+              assumptionsCount: 0,
+              risksCount: 0,
+              filesCount: 2,
+              costMicroUsd: 0,
+              totalTokens: 42,
+              judge: {
+                maxRevisions: 0,
+                revisionCount: 0,
+                finalVerdict: 'revise',
+                attempts: [{
+                  attempt: 1,
+                  verdict: 'revise',
+                  summary: 'The proposal should tighten the acceptance criteria.',
+                  issues: [{ code: 'definition-of-done', message: 'Add a checkable acceptance criterion.' }],
+                  costMicroUsd: 10,
+                  totalTokens: 4,
+                }],
+              },
+            }],
+            summary: {
+              total: 1,
+              byStatus: { refined: 1, needs_input: 0, parse_error: 0, schema_error: 0 },
+              totalCostMicroUsd: 0,
+              totalTokens: 42,
+              avgCostMicroUsd: 0,
+              expectationMismatches: 0,
+            },
+            judgeSummary: {
+              totalFixtures: 1,
+              byVerdict: { pass: 0, revise: 1, error: 0 },
+              totalJudgeCostMicroUsd: 10,
+              totalJudgeTokens: 4,
+              totalRevisions: 0,
+            },
+          } as any;
+        },
+        stdout: { write: (chunk: string) => { stdout += chunk; return true; } },
+        stderr: { write: () => true },
+      },
+    );
+
+    assert.strictEqual(exitCode, 1);
+    const parsed = JSON.parse(stdout) as any;
+    assert.strictEqual(parsed.mode, 'live');
+    assert.strictEqual(parsed.results[0]?.judge?.finalVerdict, 'revise');
+    assert.strictEqual(parsed.judgeSummary?.byVerdict?.revise, 1);
   });
 });
 

@@ -5,6 +5,61 @@ import { runImplementLiveFixture, runImplementLiveSuite } from '../eval/implemen
 import { IMPLEMENT_SYSTEM_PROMPT } from '../phases/implement/prompt';
 
 describe('implement live eval harness', () => {
+  it('can run an optional judge pass with no revision and surface a revise verdict transparently', async () => {
+    const fixture = {
+      id: 'live-implement-judge',
+      ticket: {
+        title: 'Add guardrails to eval output rendering',
+        description: 'Keep implementation scoped to the requested guardrails.',
+        labels: ['feature'],
+      },
+      specBundle: [
+        { path: 'proposal.md', content: '# Proposal' },
+        { path: 'tasks.md', content: '- [ ] Update render path only' },
+      ],
+      operatorComments: ['Do not pull in unrelated refactors.'],
+    };
+
+    let callCount = 0;
+    const result = await runImplementLiveFixture(fixture as any, {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 0 },
+      turnRunner: async (request) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            finalText: JSON.stringify({
+              filesWritten: [{ path: 'src/cli/eval.ts', content: 'export const guardrails = true;\n' }],
+              commitMessage: 'feat(cli): add guardrails',
+              summary: 'Adds the requested guardrails.',
+              followUps: [],
+            }),
+            usage: { input_tokens: 90, cached_input_tokens: 15, output_tokens: 20 },
+            costMicroUsd: 500,
+          };
+        }
+        assert.match(request.prompt, /Candidate response JSON/);
+        return {
+          finalText: JSON.stringify({
+            verdict: 'revise',
+            summary: 'The response does not explain how the acceptance criteria map to the changed file.',
+            issues: [{ code: 'dod-mapping', message: 'summary should map the requested guardrail to the concrete change.' }],
+          }),
+          usage: { input_tokens: 12, cached_input_tokens: 0, output_tokens: 4 },
+          costMicroUsd: 35,
+        };
+      },
+    });
+
+    assert.strictEqual(result.status, 'produced');
+    assert.strictEqual(result.totalTokens, 110);
+    assert.strictEqual(result.costMicroUsd, 500);
+    assert.strictEqual((result as any).judge?.finalVerdict, 'revise');
+    assert.strictEqual((result as any).judge?.revisionCount, 0);
+    assert.strictEqual((result as any).judge?.attempts[0]?.issues[0]?.code, 'dod-mapping');
+    assert.strictEqual((result as any).judge?.attempts[0]?.costMicroUsd, 35);
+  });
+
   it('reuses current prompt/schema wiring and preserves the replay result model', async () => {
     const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown }> = [];
     const fixture = {
@@ -104,5 +159,40 @@ describe('implement live eval harness', () => {
     assert.strictEqual(calls, 0);
     assert.strictEqual(suite.results[0]?.status, 'parse_error');
     assert.match(suite.results[0]?.errorMessage ?? '', /requires fixture\.ticket/i);
+  });
+
+  it('records judge runner failures as transparent judge errors in suite-level telemetry', async () => {
+    const suite = await runImplementLiveSuite([
+      {
+        id: 'implement-judge-runtime-error',
+        ticket: { title: 'Judge runtime error', description: 'Keep the implementation result but surface judge failure.', labels: [] },
+        specBundle: [
+          { path: 'proposal.md', content: '# Proposal' },
+          { path: 'tasks.md', content: '- [ ] Preserve generator result' },
+        ],
+        operatorComments: [],
+      } as any,
+    ], {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 0 },
+      turnRunner: async (request) => {
+        if (!request.prompt.includes('Candidate response JSON')) {
+          return {
+            finalText: JSON.stringify({
+              filesWritten: [{ path: 'src/eval.ts', content: 'export const ok = true;\n' }],
+              commitMessage: 'feat: keep generator result',
+              summary: 'Keeps the generated implementation result.',
+              followUps: [],
+            }),
+          };
+        }
+        throw new Error('judge transport failed');
+      },
+    });
+
+    assert.strictEqual(suite.results[0]?.status, 'produced');
+    assert.strictEqual((suite.results[0] as any)?.judge?.finalVerdict, 'error');
+    assert.match((suite.results[0] as any)?.judge?.attempts[0]?.errorMessage ?? '', /judge transport failed/i);
+    assert.deepStrictEqual((suite as any).judgeSummary?.byVerdict, { pass: 0, revise: 0, error: 1 });
   });
 });

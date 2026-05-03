@@ -5,6 +5,95 @@ import { runSpecifyLiveFixture, runSpecifyLiveSuite } from '../eval/specify-live
 import { SPECIFY_SYSTEM_PROMPT } from '../phases/specify/prompt';
 
 describe('specify live eval harness', () => {
+  it('can run an optional judge pass with a bounded single revision and report both verdicts transparently', async () => {
+    const fixture = {
+      id: 'live-specify-judge',
+      ticket: {
+        title: 'Tighten dashboard loading-state expectations',
+        description: 'The spec should define a checkable loading-state outcome.',
+        labels: ['enhancement'],
+      },
+      priorDraft: [{ path: 'proposal.md', content: '# Draft proposal' }],
+      operatorComments: ['Make the definition of done explicit.'],
+    };
+    const calls: string[] = [];
+
+    const result = await runSpecifyLiveFixture(fixture as any, {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 1 },
+      turnRunner: async (request) => {
+        calls.push(request.prompt);
+        if (calls.length === 1) {
+          return {
+            finalText: JSON.stringify({
+              files: [
+                { path: 'proposal.md', content: '# Proposal' },
+                { path: 'tasks.md', content: '- [ ] Improve loading feedback' },
+              ],
+              openQuestions: ['Should the acceptance criteria mention a measurable threshold?'],
+              assumptions: [],
+              risks: [],
+            }),
+            usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 30 },
+            costMicroUsd: 700,
+          };
+        }
+        if (calls.length === 2) {
+          return {
+            finalText: JSON.stringify({
+              verdict: 'revise',
+              summary: 'The proposal still leaves the success condition too vague.',
+              issues: [{ code: 'definition-of-done', message: 'proposal.md should add a checkable acceptance criterion.' }],
+            }),
+            usage: { input_tokens: 15, cached_input_tokens: 0, output_tokens: 5 },
+            costMicroUsd: 50,
+          };
+        }
+        if (calls.length === 3) {
+          assert.match(request.prompt, /definition-of-done/i);
+          return {
+            finalText: JSON.stringify({
+              files: [
+                { path: 'proposal.md', content: '# Proposal\n\nDefinition of done: loading feedback is visible within one second.' },
+                { path: 'tasks.md', content: '- [ ] Add a measurable loading-state check' },
+              ],
+              openQuestions: [],
+              assumptions: [],
+              risks: [],
+            }),
+            usage: { input_tokens: 40, cached_input_tokens: 10, output_tokens: 15 },
+            costMicroUsd: 300,
+          };
+        }
+        return {
+          finalText: JSON.stringify({
+            verdict: 'pass',
+            summary: 'The revised proposal is reviewable as written.',
+            issues: [],
+          }),
+          usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 4 },
+          costMicroUsd: 25,
+        };
+      },
+    });
+
+    assert.strictEqual(result.status, 'refined');
+    assert.strictEqual(result.totalTokens, 185);
+    assert.strictEqual(result.costMicroUsd, 1000);
+    assert.strictEqual((result as any).judge?.finalVerdict, 'pass');
+    assert.strictEqual((result as any).judge?.revisionCount, 1);
+    assert.deepStrictEqual((result as any).judge?.attempts.map((attempt: any) => ({
+      attempt: attempt.attempt,
+      verdict: attempt.verdict,
+    })), [
+      { attempt: 1, verdict: 'revise' },
+      { attempt: 2, verdict: 'pass' },
+    ]);
+    assert.strictEqual((result as any).judge?.attempts[0]?.issues[0]?.code, 'definition-of-done');
+    assert.strictEqual((result as any).judge?.attempts[0]?.costMicroUsd, 50);
+    assert.strictEqual((result as any).judge?.attempts[1]?.costMicroUsd, 25);
+  });
+
   it('reuses current prompt/schema wiring and preserves the replay result model', async () => {
     const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown }> = [];
     const fixture = {
@@ -99,5 +188,42 @@ describe('specify live eval harness', () => {
     assert.strictEqual(suite.results[0]?.status, 'parse_error');
     assert.match(suite.results[0]?.errorMessage ?? '', /codex transport failed/i);
     assert.strictEqual(suite.summary.byStatus.parse_error, 1);
+  });
+
+  it('records judge parse failures as transparent judge errors without discarding the produced live result', async () => {
+    const suite = await runSpecifyLiveSuite([
+      {
+        id: 'judge-parse-error',
+        ticket: { title: 'Judge parse error', description: 'Keep the generated result, but surface the judge failure.', labels: [] },
+        priorDraft: [{ path: 'proposal.md', content: '# Proposal' }],
+        operatorComments: [],
+      } as any,
+    ], {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 0 },
+      turnRunner: async (_request) => {
+        if (!_request.prompt.includes('Candidate response JSON')) {
+          return {
+            finalText: JSON.stringify({
+              files: [
+                { path: 'proposal.md', content: '# Proposal' },
+                { path: 'tasks.md', content: '- [ ] Keep judge failures transparent' },
+              ],
+              openQuestions: [],
+              assumptions: [],
+              risks: [],
+            }),
+          };
+        }
+        return {
+          finalText: 'not-json',
+        };
+      },
+    });
+
+    assert.strictEqual(suite.results[0]?.status, 'refined');
+    assert.strictEqual((suite.results[0] as any)?.judge?.finalVerdict, 'error');
+    assert.match((suite.results[0] as any)?.judge?.attempts[0]?.errorMessage ?? '', /valid JSON/i);
+    assert.deepStrictEqual((suite as any).judgeSummary?.byVerdict, { pass: 0, revise: 0, error: 1 });
   });
 });
