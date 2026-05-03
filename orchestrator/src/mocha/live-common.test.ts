@@ -1,6 +1,7 @@
 import assert from 'assert';
 import path from 'node:path';
 import { describe, it } from 'mocha';
+import { DEFAULT_AGENT_MODEL_BY_PROVIDER } from '../agent-provider';
 import { createDefaultLiveTurnRunner } from '../eval/live-common';
 
 describe('default live turn runner', () => {
@@ -80,5 +81,30 @@ describe('default live turn runner', () => {
     assert.strictEqual(signalCalls, 1);
     assert.strictEqual(observedSignal, signal);
     assert.strictEqual(result.finalText, 'plain text response');
+  });
+
+  it('resolves the shared default provider selection when live requests omit provider details', async () => {
+    const sessionCalls: Array<{ worktreePath: string; selection: { provider: string; model: string } }> = [];
+    const runner = createDefaultLiveTurnRunner({
+      createSession: (worktreePath: string, selection) => {
+        sessionCalls.push({ worktreePath, selection });
+        return {
+          id: 'thread-default',
+          run: async () => ({ finalResponse: 'plain text response' }),
+        };
+      },
+      heartbeat: () => undefined,
+      getCancellationSignal: () => undefined,
+    });
+
+    await runner({
+      worktreePath: './tmp/live-eval-repo',
+      prompt: 'Return plain text only.',
+    });
+
+    assert.deepStrictEqual(sessionCalls, [{
+      worktreePath: path.resolve('./tmp/live-eval-repo'),
+      selection: { provider: 'codex', model: DEFAULT_AGENT_MODEL_BY_PROVIDER.codex },
+    }]);
   });
 });

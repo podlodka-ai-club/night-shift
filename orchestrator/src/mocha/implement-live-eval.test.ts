@@ -107,7 +107,7 @@ describe('implement live eval harness', () => {
   });
 
   it('reuses current prompt/schema wiring and preserves the replay result model', async () => {
-    const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown }> = [];
+    const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown; provider?: string; model?: string }> = [];
     const fixture = {
       id: 'live-implement',
       ticket: {
@@ -125,6 +125,8 @@ describe('implement live eval harness', () => {
 
     const result = await runImplementLiveFixture(fixture as any, {
       worktreePath: '/tmp/eval-worktree',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
       turnRunner: async (request) => {
         calls.push(request);
         return {
@@ -142,6 +144,8 @@ describe('implement live eval harness', () => {
 
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0]?.worktreePath, '/tmp/eval-worktree');
+    assert.strictEqual(calls[0]?.provider, 'claude');
+    assert.strictEqual(calls[0]?.model, 'claude-sonnet-4-6');
     assert.strictEqual(calls[0]?.systemPrompt, IMPLEMENT_SYSTEM_PROMPT);
     assert.deepStrictEqual(calls[0]?.outputSchema, getAgentSchema('implement-response-v1').jsonSchema);
     assert.match(calls[0]?.prompt ?? '', /Add a strict mode flag to eval output/);
@@ -156,6 +160,51 @@ describe('implement live eval harness', () => {
     assert.strictEqual(result.totalTokens, 265);
     assert.strictEqual(result.costMicroUsd, 991);
     assert.strictEqual(result.expectationMismatch, undefined);
+  });
+
+  it('forwards independent provider selections to generator and judge turns', async () => {
+    const calls: Array<{ provider?: string; model?: string; prompt: string }> = [];
+
+    const result = await runImplementLiveFixture({
+      id: 'provider-routing',
+      ticket: {
+        title: 'Route provider selections independently',
+        description: 'Use Claude for generation and Codex for the judge pass.',
+        labels: ['feature'],
+      },
+      specBundle: [
+        { path: 'proposal.md', content: '# Proposal' },
+        { path: 'tasks.md', content: '- [ ] Keep provider routing explicit' },
+      ],
+      operatorComments: [],
+    } as any, {
+      worktreePath: '/tmp/eval-worktree',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      judge: { maxRevisions: 0, provider: 'codex', model: 'gpt-5.3-codex' },
+      turnRunner: async (request) => {
+        calls.push(request);
+        if (!request.prompt.includes('Candidate response JSON')) {
+          return {
+            finalText: JSON.stringify({
+              filesWritten: [{ path: 'src/eval.ts', content: 'export const routed = true;\n' }],
+              commitMessage: 'feat: keep provider routing explicit',
+              summary: 'Keeps provider routing explicit between generator and judge.',
+              followUps: [],
+            }),
+          };
+        }
+        return {
+          finalText: JSON.stringify({ verdict: 'pass', summary: 'Looks good.', issues: [] }),
+        };
+      },
+    });
+
+    assert.strictEqual(result.status, 'produced');
+    assert.deepStrictEqual(calls.map((call) => ({ provider: call.provider, model: call.model })), [
+      { provider: 'claude', model: 'claude-sonnet-4-6' },
+      { provider: 'codex', model: 'gpt-5.3-codex' },
+    ]);
   });
 
   it('captures live runner failures as parse errors so the suite remains comparable', async () => {

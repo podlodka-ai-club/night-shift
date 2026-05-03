@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { runAgentTurnWithHeartbeat, runStructuredAgentTurn } from '../activity-agent-turn';
 import { createActivityDependencies } from '../activities';
-import { createCodexAgentAdapter, type AgentProgressEvent, type AgentSession, type AgentTurnResult } from '../activity-deps';
+import { createProviderAgentAdapter, type AgentProgressEvent, type AgentSession, type AgentTurnResult } from '../activity-deps';
+import { resolveAgentProviderSelection, type AgentProviderSelection } from '../agent-provider';
 import type { IssueComment, SelectedProjectIssue } from '../shared';
 import { recordedUsageSchema, type RecordedUsage } from './replay-common';
 
@@ -12,6 +13,8 @@ export interface LiveTurnRequest {
   outputSchema?: unknown;
   parseOutput?: (value: unknown) => unknown;
   timeoutMs?: number;
+  provider?: string;
+  model?: string;
 }
 
 export interface LiveTurnResult {
@@ -23,7 +26,7 @@ export interface LiveTurnResult {
 export type LiveTurnRunner = (request: LiveTurnRequest) => Promise<LiveTurnResult>;
 
 interface DefaultLiveTurnRunnerDeps {
-  createSession: (worktreePath: string) => AgentSession;
+  createSession: (worktreePath: string, selection: AgentProviderSelection) => AgentSession;
   heartbeat: (details: unknown) => void;
   getCancellationSignal: () => AbortSignal | undefined;
 }
@@ -50,7 +53,8 @@ export function createDefaultLiveTurnRunner(deps: DefaultLiveTurnRunnerDeps = cr
 
   return async (request) => {
     const worktreePath = path.resolve(request.worktreePath);
-    const session = deps.createSession(worktreePath);
+    const selection = resolveAgentProviderSelection({ provider: request.provider, model: request.model });
+    const session = deps.createSession(worktreePath, selection);
     let usageFromEvents: RecordedUsage | undefined;
     const timeoutSignal = request.timeoutMs ? AbortSignal.timeout(request.timeoutMs) : undefined;
     const turnDeps = {
@@ -153,9 +157,8 @@ export function buildLiveEvalComments(commentBodies: readonly string[]): IssueCo
 
 function createDefaultLiveTurnRunnerDeps(): DefaultLiveTurnRunnerDeps {
   const deps = createActivityDependencies();
-  const adapter = createCodexAgentAdapter(deps);
   return {
-    createSession: (worktreePath) => adapter.createSession(worktreePath),
+    createSession: (worktreePath, selection) => createProviderAgentAdapter(selection, deps).createSession(worktreePath),
     heartbeat: deps.heartbeat,
     getCancellationSignal: deps.getCancellationSignal,
   };

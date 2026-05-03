@@ -141,7 +141,7 @@ describe('specify live eval harness', () => {
   });
 
   it('reuses current prompt/schema wiring and preserves the replay result model', async () => {
-    const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown }> = [];
+    const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown; provider?: string; model?: string }> = [];
     const fixture = {
       id: 'live-specify',
       ticket: {
@@ -156,6 +156,8 @@ describe('specify live eval harness', () => {
 
     const result = await runSpecifyLiveFixture(fixture as any, {
       worktreePath: '/tmp/eval-worktree',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
       turnRunner: async (request) => {
         calls.push(request);
         return {
@@ -176,6 +178,8 @@ describe('specify live eval harness', () => {
 
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0]?.worktreePath, '/tmp/eval-worktree');
+    assert.strictEqual(calls[0]?.provider, 'claude');
+    assert.strictEqual(calls[0]?.model, 'claude-sonnet-4-6');
     assert.strictEqual(calls[0]?.systemPrompt, SPECIFY_SYSTEM_PROMPT);
     assert.deepStrictEqual(calls[0]?.outputSchema, getAgentSchema('specify-response-v1').jsonSchema);
     assert.match(calls[0]?.prompt ?? '', /Improve the operator dashboard load flow/);
@@ -189,6 +193,51 @@ describe('specify live eval harness', () => {
     assert.strictEqual(result.totalTokens, 155);
     assert.strictEqual(result.costMicroUsd, 777);
     assert.strictEqual(result.expectationMismatch, undefined);
+  });
+
+  it('forwards independent provider selections to generator and judge turns', async () => {
+    const calls: Array<{ provider?: string; model?: string; prompt: string }> = [];
+
+    const result = await runSpecifyLiveFixture({
+      id: 'provider-routing',
+      ticket: {
+        title: 'Route provider selections independently',
+        description: 'Use Claude for generation and Codex for the judge pass.',
+        labels: ['enhancement'],
+      },
+      priorDraft: [{ path: 'proposal.md', content: '# Proposal' }],
+      operatorComments: [],
+    } as any, {
+      worktreePath: '/tmp/eval-worktree',
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      judge: { maxRevisions: 0, provider: 'codex', model: 'gpt-5.3-codex' },
+      turnRunner: async (request) => {
+        calls.push(request);
+        if (!request.prompt.includes('Candidate response JSON')) {
+          return {
+            finalText: JSON.stringify({
+              files: [
+                { path: 'proposal.md', content: '# Proposal' },
+                { path: 'tasks.md', content: '- [ ] Keep provider routing explicit' },
+              ],
+              openQuestions: [],
+              assumptions: [],
+              risks: [],
+            }),
+          };
+        }
+        return {
+          finalText: JSON.stringify({ verdict: 'pass', summary: 'Looks good.', issues: [] }),
+        };
+      },
+    });
+
+    assert.strictEqual(result.status, 'refined');
+    assert.deepStrictEqual(calls.map((call) => ({ provider: call.provider, model: call.model })), [
+      { provider: 'claude', model: 'claude-sonnet-4-6' },
+      { provider: 'codex', model: 'gpt-5.3-codex' },
+    ]);
   });
 
   it('reports missing live fixture inputs as parse errors without calling the runner', async () => {

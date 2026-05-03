@@ -27,6 +27,8 @@ export interface ImplementLiveSuiteOptions {
   turnRunner?: LiveTurnRunner;
   timeoutMs?: number;
   judge?: LiveJudgeOptions;
+  provider?: string;
+  model?: string;
 }
 
 const EMPTY_PULL_REQUEST_FEEDBACK: OpenPullRequestFeedback = {
@@ -142,6 +144,8 @@ export async function runImplementLiveFixture(
         outputSchema: schemaDefinition.jsonSchema,
         parseOutput: (value) => schemaDefinition.schema.parse(value),
         timeoutMs: options.timeoutMs,
+        provider: options.provider,
+        model: options.model,
       });
       totalUsage = addRecordedUsage(totalUsage, turn.usage);
       totalCostMicroUsd += turn.costMicroUsd ?? 0;
@@ -171,6 +175,8 @@ export async function runImplementLiveFixture(
       turnRunner: judgeTurnRunner,
       timeoutMs: options.timeoutMs,
       systemPrompt: IMPLEMENT_JUDGE_SYSTEM_PROMPT,
+      provider: options.judge?.provider ?? options.provider,
+      model: options.judge?.model ?? options.model,
     });
     judgeAttempts.push(judge.attempt);
 
@@ -187,8 +193,9 @@ export async function runImplementLiveFixture(
     }
 
     revisionCount += 1;
-    prompt = buildImplementRevisionPrompt(fixture, finalText, formatJudgeFeedback(judge.parsedVerdict), attempt);
+    const previousAttempt = attempt;
     attempt += 1;
+    prompt = buildImplementRevisionPrompt(fixture, finalText, formatJudgeFeedback(judge.parsedVerdict), previousAttempt);
   }
 }
 

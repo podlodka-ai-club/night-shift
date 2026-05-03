@@ -25,6 +25,8 @@ export interface SpecifyLiveSuiteOptions {
   turnRunner?: LiveTurnRunner;
   timeoutMs?: number;
   judge?: LiveJudgeOptions;
+  provider?: string;
+  model?: string;
 }
 
 const SPECIFY_JUDGE_SYSTEM_PROMPT = buildPromptHardeningPreamble('You are reviewing a live specify eval output for operator-facing quality.');
@@ -116,6 +118,8 @@ export async function runSpecifyLiveFixture(
         outputSchema: schemaDefinition.jsonSchema,
         parseOutput: (value) => schemaDefinition.schema.parse(value),
         timeoutMs: options.timeoutMs,
+        provider: options.provider,
+        model: options.model,
       });
       totalUsage = addRecordedUsage(totalUsage, turn.usage);
       totalCostMicroUsd += turn.costMicroUsd ?? 0;
@@ -145,6 +149,8 @@ export async function runSpecifyLiveFixture(
       turnRunner: judgeTurnRunner,
       timeoutMs: options.timeoutMs,
       systemPrompt: SPECIFY_JUDGE_SYSTEM_PROMPT,
+      provider: options.judge?.provider ?? options.provider,
+      model: options.judge?.model ?? options.model,
     });
     judgeAttempts.push(judge.attempt);
 

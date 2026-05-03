@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { RequestedAgentProviderSelection } from '../agent-provider';
 import type { LiveTurnRunner } from './live-common';
 import { totalRecordedTokens, toErrorMessage, ZERO_RECORDED_USAGE } from './replay-common';
 
@@ -39,7 +40,7 @@ export interface LiveJudgeSummary {
   totalRevisions: number;
 }
 
-export interface LiveJudgeOptions {
+export interface LiveJudgeOptions extends RequestedAgentProviderSelection {
   maxRevisions?: number;
   turnRunner?: LiveTurnRunner;
 }
@@ -61,6 +62,8 @@ interface RunLiveJudgeInput {
   turnRunner: LiveTurnRunner;
   timeoutMs?: number;
   systemPrompt?: string;
+  provider?: string;
+  model?: string;
 }
 
 export async function runLiveJudge(
@@ -72,6 +75,8 @@ export async function runLiveJudge(
       prompt: input.prompt,
       systemPrompt: input.systemPrompt,
       timeoutMs: input.timeoutMs,
+      provider: input.provider,
+      model: input.model,
     });
     const usage = turn.usage ?? ZERO_RECORDED_USAGE;
     const costMicroUsd = turn.costMicroUsd ?? 0;
