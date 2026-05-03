@@ -1,5 +1,6 @@
 import assert from 'assert';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'mocha';
 import {
@@ -37,6 +38,28 @@ describe('implement replay eval harness', () => {
       'retry-jitter': 'produced',
       'schema-error-absolute-path': 'schema_error',
     });
+  });
+
+  it('includes the fixture path when schema-invalid fixtures fail to load', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'implement-replay-fixtures-'));
+    const fixturePath = path.join(tempDir, 'invalid.json');
+    try {
+      await writeFile(fixturePath, JSON.stringify({
+        id: 'missing-spec-bundle',
+        ticket: { title: 'Invalid fixture', description: 'Missing the required spec bundle.', labels: [] },
+        operatorComments: [],
+        recordedFinalText: JSON.stringify({ filesWritten: [], commitMessage: 'x', summary: 'x', followUps: [] }),
+      }, null, 2), 'utf8');
+      await assert.rejects(
+        () => loadImplementReplayFixtures(tempDir),
+        (error: unknown) => {
+          assert.match(String(error), /invalid\.json/);
+          return true;
+        },
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('reports expectation mismatches with expected and observed statuses', () => {

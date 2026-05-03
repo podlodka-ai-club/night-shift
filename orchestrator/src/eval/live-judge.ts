@@ -44,6 +44,16 @@ export interface LiveJudgeOptions {
   turnRunner?: LiveTurnRunner;
 }
 
+export const MAX_LIVE_JUDGE_REVISIONS = 2;
+
+export function normalizeLiveJudgeMaxRevisions(maxRevisions: number | undefined): number {
+  if (typeof maxRevisions !== 'number' || !Number.isFinite(maxRevisions)) {
+    return 0;
+  }
+
+  return Math.min(MAX_LIVE_JUDGE_REVISIONS, Math.max(0, Math.trunc(maxRevisions)));
+}
+
 interface RunLiveJudgeInput {
   attempt: number;
   worktreePath: string;

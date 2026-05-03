@@ -91,11 +91,17 @@ export async function loadImplementReplayFixtures(fixturesDir: string): Promise<
 
   return Promise.all(fixtureFiles.map(async (entry) => {
     const fixturePath = path.join(fixturesDir, entry.name);
-    const rawFixture = await readFile(fixturePath, 'utf8');
-    return {
-      ...implementReplayFixtureSchema.parse(JSON.parse(rawFixture)),
-      fixturePath,
-    } satisfies ImplementReplayFixture;
+    try {
+      const rawFixture = await readFile(fixturePath, 'utf8');
+      return {
+        ...implementReplayFixtureSchema.parse(JSON.parse(rawFixture)),
+        fixturePath,
+      } satisfies ImplementReplayFixture;
+    } catch (error) {
+      const wrappedError = new Error(`Failed to load replay fixture ${fixturePath}: ${toErrorMessage(error)}`) as Error & { cause?: unknown };
+      wrappedError.cause = error;
+      throw wrappedError;
+    }
   }));
 }
 

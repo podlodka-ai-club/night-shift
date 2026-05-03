@@ -1,6 +1,7 @@
 import path from 'node:path';
+import { runAgentTurnWithHeartbeat, runStructuredAgentTurn } from '../activity-agent-turn';
 import { createActivityDependencies } from '../activities';
-import { createCodexAgentAdapter, type AgentProgressEvent, type AgentTurnResult } from '../activity-deps';
+import { createCodexAgentAdapter, type AgentProgressEvent, type AgentSession, type AgentTurnResult } from '../activity-deps';
 import type { IssueComment, SelectedProjectIssue } from '../shared';
 import { recordedUsageSchema, type RecordedUsage } from './replay-common';
 
@@ -9,6 +10,7 @@ export interface LiveTurnRequest {
   prompt: string;
   systemPrompt?: string;
   outputSchema?: unknown;
+  parseOutput?: (value: unknown) => unknown;
   timeoutMs?: number;
 }
 
@@ -19,6 +21,12 @@ export interface LiveTurnResult {
 }
 
 export type LiveTurnRunner = (request: LiveTurnRequest) => Promise<LiveTurnResult>;
+
+interface DefaultLiveTurnRunnerDeps {
+  createSession: (worktreePath: string) => AgentSession;
+  heartbeat: (details: unknown) => void;
+  getCancellationSignal: () => AbortSignal | undefined;
+}
 
 export function addRecordedUsage(left: RecordedUsage | undefined, right: RecordedUsage | undefined): RecordedUsage | undefined {
   if (!left) {
@@ -34,26 +42,72 @@ export function addRecordedUsage(left: RecordedUsage | undefined, right: Recorde
   };
 }
 
-export function createDefaultLiveTurnRunner(): LiveTurnRunner {
-  const deps = createActivityDependencies();
-  const adapter = createCodexAgentAdapter(deps);
+export function createDefaultLiveTurnRunner(deps: DefaultLiveTurnRunnerDeps = createDefaultLiveTurnRunnerDeps()): LiveTurnRunner {
+  const heartbeatDeps = {
+    heartbeat: deps.heartbeat,
+    getCancellationSignal: deps.getCancellationSignal,
+  };
 
   return async (request) => {
     const worktreePath = path.resolve(request.worktreePath);
-    const session = adapter.createSession(worktreePath);
+    const session = deps.createSession(worktreePath);
     let usageFromEvents: RecordedUsage | undefined;
-    const signal = request.timeoutMs ? AbortSignal.timeout(request.timeoutMs) : undefined;
-    const turn = await session.run(request.prompt, {
-      outputSchema: request.outputSchema,
-      systemPrompt: request.systemPrompt,
-      ...(signal ? { signal } : {}),
-      onEvent: (event) => {
-        const usage = parseUsageFromEvent(event);
-        if (usage) {
-          usageFromEvents = usage;
-        }
+    const timeoutSignal = request.timeoutMs ? AbortSignal.timeout(request.timeoutMs) : undefined;
+    const turnDeps = {
+      heartbeat: heartbeatDeps.heartbeat,
+      getCancellationSignal: () => mergeAbortSignals(heartbeatDeps.getCancellationSignal(), timeoutSignal),
+    };
+    const handleEvent = (event: AgentProgressEvent) => {
+      const usage = parseUsageFromEvent(event);
+      if (usage) {
+        usageFromEvents = addRecordedUsage(usageFromEvents, usage);
+      }
+    };
+
+    if (request.outputSchema !== undefined && request.parseOutput) {
+      const structuredTurns: AgentTurnResult[] = [];
+      const structuredSession: AgentSession = {
+        id: session.id,
+        run: async (prompt, options) => {
+          const turn = await session.run(prompt, options);
+          structuredTurns.push(turn);
+          return turn;
+        },
+      };
+      const turn = await runStructuredAgentTurn(turnDeps, structuredSession, {
+        stepId: 'live-eval',
+        prompt: request.prompt,
+        systemPrompt: request.systemPrompt,
+        contract: {
+          jsonSchema: request.outputSchema,
+          parse: request.parseOutput,
+        },
+        getCheckpointDetails: () => buildLiveTurnCheckpoint(session),
+        onEvent: handleEvent,
+      });
+      const usage = aggregateUsageFromTurns(structuredTurns) ?? usageFromEvents;
+      const costMicroUsd = sumTurnCost(structuredTurns);
+
+      return {
+        finalText: turn.finalResponse,
+        ...(usage ? { usage } : {}),
+        ...(typeof costMicroUsd === 'number' ? { costMicroUsd } : {}),
+      };
+    }
+
+    const signal = turnDeps.getCancellationSignal();
+    const turn = await runAgentTurnWithHeartbeat(
+      turnDeps,
+      session,
+      request.prompt,
+      {
+        outputSchema: request.outputSchema,
+        systemPrompt: request.systemPrompt,
+        ...(signal ? { signal } : {}),
+        onEvent: handleEvent,
       },
-    });
+      () => buildLiveTurnCheckpoint(session),
+    );
     const usage = parseUsageFromTurn(turn) ?? usageFromEvents;
 
     return {
@@ -95,6 +149,55 @@ export function buildLiveEvalIssue(fixtureId: string, title: string, description
 
 export function buildLiveEvalComments(commentBodies: readonly string[]): IssueComment[] {
   return commentBodies.map((body, index) => ({ id: index + 1, body }));
+}
+
+function createDefaultLiveTurnRunnerDeps(): DefaultLiveTurnRunnerDeps {
+  const deps = createActivityDependencies();
+  const adapter = createCodexAgentAdapter(deps);
+  return {
+    createSession: (worktreePath) => adapter.createSession(worktreePath),
+    heartbeat: deps.heartbeat,
+    getCancellationSignal: deps.getCancellationSignal,
+  };
+}
+
+function buildLiveTurnCheckpoint(session: AgentSession): { threadId?: string; completedStepIds: string[]; outputs: Record<string, never> } {
+  return {
+    ...(session.id ? { threadId: session.id } : {}),
+    completedStepIds: [],
+    outputs: {},
+  };
+}
+
+function aggregateUsageFromTurns(turns: readonly AgentTurnResult[]): RecordedUsage | undefined {
+  let total: RecordedUsage | undefined;
+  for (const turn of turns) {
+    const usage = parseUsageFromTurn(turn);
+    if (!usage) {
+      return undefined;
+    }
+    total = addRecordedUsage(total, usage);
+  }
+  return total;
+}
+
+function sumTurnCost(turns: readonly AgentTurnResult[]): number | undefined {
+  let sawCost = false;
+  let totalCostMicroUsd = 0;
+  for (const turn of turns) {
+    if (typeof turn.costMicroUsd === 'number') {
+      sawCost = true;
+      totalCostMicroUsd += turn.costMicroUsd;
+    }
+  }
+  return sawCost ? totalCostMicroUsd : undefined;
+}
+
+function mergeAbortSignals(left: AbortSignal | undefined, right: AbortSignal | undefined): AbortSignal | undefined {
+  if (left && right) {
+    return AbortSignal.any([left, right]);
+  }
+  return left ?? right;
 }
 
 function parseUsageFromEvent(event: AgentProgressEvent): RecordedUsage | undefined {

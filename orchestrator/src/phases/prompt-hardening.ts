@@ -23,7 +23,10 @@ export function wrapUntrustedInput(source: string, body: string): string {
 
 function normalizeBody(body: string): string {
   const trimmed = body.trim();
-  return trimmed.length > 0 ? trimmed : '(empty)';
+  if (trimmed.length === 0) {
+    return '(empty)';
+  }
+  return trimmed.replaceAll('</untrusted-input>', '&lt;/untrusted-input>');
 }
 
 function escapeAttribute(value: string): string {

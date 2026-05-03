@@ -76,6 +76,27 @@ describe('structured agent turn helper', () => {
     assert.strictEqual(result.parsedOutput.commitMessage, 'feat: valid metadata');
   });
 
+  it('keeps repair turn internals out of the public result shape', async () => {
+    const result = await runStructuredAgentTurn(
+      buildDeps(),
+      {
+        id: 'thread-123',
+        async run() {
+          return {
+            finalResponse: JSON.stringify({
+              commitMessage: 'feat: valid metadata',
+              pullRequestTitle: 'feat: valid metadata',
+              pullRequestBody: '## Summary\n- fixed',
+            }),
+          };
+        },
+      },
+      { stepId: 'change-metadata', prompt: 'Return metadata', contract, getCheckpointDetails: buildCheckpoint },
+    );
+
+    assert.deepStrictEqual(Object.keys(result).sort(), ['finalResponse', 'parsedOutput']);
+  });
+
   it('truncates oversized invalid output in the repair prompt', async () => {
     const prompts: string[] = [];
     const oversizedOriginalPrompt = `Return metadata\n${'p'.repeat(20_000)}`;

@@ -1,5 +1,6 @@
 import assert from 'assert';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'mocha';
 import {
@@ -45,6 +46,23 @@ describe('specify replay eval harness', () => {
       'refined-minimal-spec-bundle': 'refined',
       'schema-error-missing-required-file': 'schema_error',
     });
+  });
+
+  it('includes the fixture path when malformed fixture JSON fails to load', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'specify-replay-fixtures-'));
+    const fixturePath = path.join(tempDir, 'broken.json');
+    try {
+      await writeFile(fixturePath, '{not valid json', 'utf8');
+      await assert.rejects(
+        () => loadSpecifyReplayFixtures(tempDir),
+        (error: unknown) => {
+          assert.match(String(error), /broken\.json/);
+          return true;
+        },
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('reports expectation mismatches with expected and observed statuses', () => {

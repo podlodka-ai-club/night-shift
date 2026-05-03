@@ -1,7 +1,14 @@
 import { getAgentSchema } from '../agent-schema-registry';
 import { buildPromptHardeningPreamble, wrapUntrustedInput } from '../phases/prompt-hardening';
 import { buildSpecifyChangeName, buildSpecifyPrompt, SPECIFY_SYSTEM_PROMPT } from '../phases/specify/prompt';
-import { formatJudgeFeedback, runLiveJudge, summariseJudgeReports, type LiveJudgeAttempt, type LiveJudgeOptions } from './live-judge';
+import {
+  formatJudgeFeedback,
+  normalizeLiveJudgeMaxRevisions,
+  runLiveJudge,
+  summariseJudgeReports,
+  type LiveJudgeAttempt,
+  type LiveJudgeOptions,
+} from './live-judge';
 import { toErrorMessage } from './replay-common';
 import {
   evaluateSpecifyResponse,
@@ -83,6 +90,7 @@ export async function runSpecifyLiveFixture(
   const changeName = buildSpecifyChangeName(issue);
   const turnRunner = options.turnRunner ?? createDefaultLiveTurnRunner();
   const judgeTurnRunner = options.judge?.turnRunner ?? turnRunner;
+  const schemaDefinition = getAgentSchema(SPECIFY_REPLAY_SCHEMA_ID);
   const basePrompt = buildSpecifyPrompt({
     issue,
     changeName,
@@ -96,7 +104,7 @@ export async function runSpecifyLiveFixture(
   let finalText: string | undefined;
   let attempt = 1;
   let revisionCount = 0;
-  const maxRevisions = Math.max(0, options.judge?.maxRevisions ?? 0);
+  const maxRevisions = normalizeLiveJudgeMaxRevisions(options.judge?.maxRevisions);
   const judgeAttempts: LiveJudgeAttempt[] = [];
 
   while (true) {
@@ -105,7 +113,8 @@ export async function runSpecifyLiveFixture(
         worktreePath: options.worktreePath,
         prompt,
         systemPrompt: SPECIFY_SYSTEM_PROMPT,
-        outputSchema: getAgentSchema(SPECIFY_REPLAY_SCHEMA_ID).jsonSchema,
+        outputSchema: schemaDefinition.jsonSchema,
+        parseOutput: (value) => schemaDefinition.schema.parse(value),
         timeoutMs: options.timeoutMs,
       });
       totalUsage = addRecordedUsage(totalUsage, turn.usage);

@@ -94,6 +94,25 @@ describe('implement eval cli', () => {
       () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--judge']),
       /live mode/i,
     );
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--worktree', '/tmp/live-repo']),
+      /live mode/i,
+    );
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--timeout-ms', '5000']),
+      /live mode/i,
+    );
+  });
+
+  it('rejects malformed numeric inputs instead of truncating them', () => {
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--timeout-ms', '1foo']),
+      /positive integer/i,
+    );
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--judge', '--max-revisions', '1.5']),
+      /non-negative integer/i,
+    );
   });
 
   it('dispatches live mode through the live suite and preserves the CLI JSON shape', async () => {
@@ -207,6 +226,59 @@ describe('implement eval cli', () => {
     assert.strictEqual(parsed.mode, 'live');
     assert.strictEqual(parsed.results[0]?.judge?.finalVerdict, 'error');
     assert.strictEqual(parsed.judgeSummary?.byVerdict?.error, 1);
+  });
+
+  it('prints replay parse/schema error details in text mode', async () => {
+    let stdout = '';
+    const exitCode = await main(
+      ['--fixtures', fixturesDir],
+      {
+        loadFixtures: async () => [{ id: 'parse-error' } as any],
+        runReplaySuite: () => ({
+          schemaId: 'implement-response-v1',
+          results: [{
+            id: 'parse-error',
+            status: 'parse_error',
+            filesWrittenCount: 0,
+            totalContentChars: 0,
+            commitMessageLength: 0,
+            summaryLength: 0,
+            followUpsCount: 0,
+            costMicroUsd: 0,
+            totalTokens: 0,
+            errorMessage: 'Response was not valid JSON: Unexpected token x',
+          }],
+          summary: {
+            total: 1,
+            byStatus: { produced: 0, empty: 0, parse_error: 1, schema_error: 0 },
+            totalCostMicroUsd: 0,
+            totalTokens: 0,
+            avgCostMicroUsd: 0,
+            expectationMismatches: 0,
+          },
+        }) as any,
+        runLiveSuite: async () => { throw new Error('live suite should not run in replay mode'); },
+        stdout: { write: (chunk: string) => { stdout += chunk; return true; } },
+        stderr: { write: () => true },
+      },
+    );
+
+    assert.strictEqual(exitCode, 1);
+    assert.match(stdout, /Response was not valid JSON: Unexpected token x/);
+  });
+
+  it('documents judge revise/error failures in the help text', async () => {
+    let stdout = '';
+    const exitCode = await main(['--help'], {
+      loadFixtures: async () => [],
+      runReplaySuite: () => { throw new Error('should not run'); },
+      runLiveSuite: async () => { throw new Error('should not run'); },
+      stdout: { write: (chunk: string) => { stdout += chunk; return true; } },
+      stderr: { write: () => true },
+    });
+
+    assert.strictEqual(exitCode, 0);
+    assert.match(stdout, /judge revise\/error/i);
   });
 });
 

@@ -60,6 +60,52 @@ describe('implement live eval harness', () => {
     assert.strictEqual((result as any).judge?.attempts[0]?.costMicroUsd, 35);
   });
 
+  it('caps direct judge revision requests at two revisions inside the harness', async () => {
+    let callCount = 0;
+
+    const result = await runImplementLiveFixture({
+      id: 'live-implement-max-revisions',
+      ticket: {
+        title: 'Bound implement judge retries',
+        description: 'Keep live implement eval bounded for direct callers.',
+        labels: ['feature'],
+      },
+      specBundle: [
+        { path: 'proposal.md', content: '# Proposal' },
+        { path: 'tasks.md', content: '- [ ] Keep judge retries bounded' },
+      ],
+      operatorComments: [],
+    } as any, {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 99 },
+      turnRunner: async (request) => {
+        callCount += 1;
+        if (request.prompt.includes('Candidate response JSON')) {
+          return {
+            finalText: JSON.stringify({
+              verdict: 'revise',
+              summary: 'The summary still does not map the change back to the acceptance criteria.',
+              issues: [{ code: 'dod-mapping', message: 'Explain how the written file satisfies the requested guardrail.' }],
+            }),
+          };
+        }
+        return {
+          finalText: JSON.stringify({
+            filesWritten: [{ path: 'src/eval.ts', content: 'export const bounded = true;\n' }],
+            commitMessage: 'feat: bound judge retries',
+            summary: 'Keeps direct live-eval judge retries bounded.',
+            followUps: [],
+          }),
+        };
+      },
+    });
+
+    assert.strictEqual(callCount, 6);
+    assert.strictEqual((result as any).judge?.maxRevisions, 2);
+    assert.strictEqual((result as any).judge?.revisionCount, 2);
+    assert.deepStrictEqual((result as any).judge?.attempts.map((attempt: any) => attempt.verdict), ['revise', 'revise', 'revise']);
+  });
+
   it('reuses current prompt/schema wiring and preserves the replay result model', async () => {
     const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown }> = [];
     const fixture = {

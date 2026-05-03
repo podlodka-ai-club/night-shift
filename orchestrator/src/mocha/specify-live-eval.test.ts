@@ -94,6 +94,52 @@ describe('specify live eval harness', () => {
     assert.strictEqual((result as any).judge?.attempts[1]?.costMicroUsd, 25);
   });
 
+  it('caps direct judge revision requests at two revisions inside the harness', async () => {
+    let callCount = 0;
+
+    const result = await runSpecifyLiveFixture({
+      id: 'live-specify-max-revisions',
+      ticket: {
+        title: 'Bound judge retries',
+        description: 'Keep the live harness bounded even for direct callers.',
+        labels: ['enhancement'],
+      },
+      priorDraft: [{ path: 'proposal.md', content: '# Proposal' }],
+      operatorComments: [],
+    } as any, {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 99 },
+      turnRunner: async (request) => {
+        callCount += 1;
+        if (request.prompt.includes('Candidate response JSON')) {
+          return {
+            finalText: JSON.stringify({
+              verdict: 'revise',
+              summary: 'Still missing a measurable definition of done.',
+              issues: [{ code: 'definition-of-done', message: 'Add a checkable success condition.' }],
+            }),
+          };
+        }
+        return {
+          finalText: JSON.stringify({
+            files: [
+              { path: 'proposal.md', content: '# Proposal' },
+              { path: 'tasks.md', content: '- [ ] Add a measurable success condition' },
+            ],
+            openQuestions: ['What exact threshold should the definition of done use?'],
+            assumptions: [],
+            risks: [],
+          }),
+        };
+      },
+    });
+
+    assert.strictEqual(callCount, 6);
+    assert.strictEqual((result as any).judge?.maxRevisions, 2);
+    assert.strictEqual((result as any).judge?.revisionCount, 2);
+    assert.deepStrictEqual((result as any).judge?.attempts.map((attempt: any) => attempt.verdict), ['revise', 'revise', 'revise']);
+  });
+
   it('reuses current prompt/schema wiring and preserves the replay result model', async () => {
     const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown }> = [];
     const fixture = {

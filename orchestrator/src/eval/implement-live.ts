@@ -3,7 +3,14 @@ import { buildChangeName } from '../phases/change-name';
 import { buildPromptHardeningPreamble, wrapUntrustedInput } from '../phases/prompt-hardening';
 import { buildImplementPrompt, IMPLEMENT_SYSTEM_PROMPT, type ImplementRetryFeedback } from '../phases/implement/prompt';
 import { type OpenPullRequestFeedback } from '../shared';
-import { formatJudgeFeedback, runLiveJudge, summariseJudgeReports, type LiveJudgeAttempt, type LiveJudgeOptions } from './live-judge';
+import {
+  formatJudgeFeedback,
+  normalizeLiveJudgeMaxRevisions,
+  runLiveJudge,
+  summariseJudgeReports,
+  type LiveJudgeAttempt,
+  type LiveJudgeOptions,
+} from './live-judge';
 import { toErrorMessage } from './replay-common';
 import {
   evaluateImplementResponse,
@@ -108,6 +115,7 @@ export async function runImplementLiveFixture(
   const issue = buildLiveEvalIssue(fixture.id, fixture.ticket.title, fixture.ticket.description);
   const turnRunner = options.turnRunner ?? createDefaultLiveTurnRunner();
   const judgeTurnRunner = options.judge?.turnRunner ?? turnRunner;
+  const schemaDefinition = getAgentSchema(IMPLEMENT_REPLAY_SCHEMA_ID);
   const basePrompt = buildImplementPrompt({
     issue,
     changeName: buildChangeName(issue),
@@ -122,7 +130,7 @@ export async function runImplementLiveFixture(
   let finalText: string | undefined;
   let attempt = 1;
   let revisionCount = 0;
-  const maxRevisions = Math.max(0, options.judge?.maxRevisions ?? 0);
+  const maxRevisions = normalizeLiveJudgeMaxRevisions(options.judge?.maxRevisions);
   const judgeAttempts: LiveJudgeAttempt[] = [];
 
   while (true) {
@@ -131,7 +139,8 @@ export async function runImplementLiveFixture(
         worktreePath: options.worktreePath,
         prompt,
         systemPrompt: IMPLEMENT_SYSTEM_PROMPT,
-        outputSchema: getAgentSchema(IMPLEMENT_REPLAY_SCHEMA_ID).jsonSchema,
+        outputSchema: schemaDefinition.jsonSchema,
+        parseOutput: (value) => schemaDefinition.schema.parse(value),
         timeoutMs: options.timeoutMs,
       });
       totalUsage = addRecordedUsage(totalUsage, turn.usage);

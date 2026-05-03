@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import path from 'node:path';
-import { hasJudgeFailure } from '../eval/live-judge';
+import { hasJudgeFailure, MAX_LIVE_JUDGE_REVISIONS } from '../eval/live-judge';
 import {
   loadSpecifyReplayFixtures,
   runSpecifyReplaySuite,
@@ -31,7 +31,7 @@ Notes:
   Prefer disposable worktrees or single-fixture runs to avoid cross-fixture contamination.
 
 Exit codes:
-  0  all selected fixtures passed (no unexpected parse/schema errors and no expectation mismatches)
+  0  all selected fixtures passed (no unexpected parse/schema errors, expectation mismatches, or judge revise/error failures)
   1  one or more failures
   64 usage error
 `;
@@ -66,7 +66,8 @@ const DEFAULT_DEPS: EvalSpecifyCliDeps = {
 };
 
 const DEFAULT_LIVE_TIMEOUT_MS = 300_000;
-const MAX_JUDGE_REVISIONS = 2;
+const NON_NEGATIVE_INTEGER_PATTERN = /^(0|[1-9][0-9]*)$/;
+const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/;
 
 class EvalSpecifyCliUsageError extends Error {
   constructor(
@@ -124,8 +125,14 @@ export function parseEvalSpecifyCliArgs(argv: ReadonlyArray<string>): CliOptions
     };
   }
 
-  if (values.judge === true || values['max-revisions'] !== undefined) {
-    throw new EvalSpecifyCliUsageError(64, '--judge and --max-revisions are only supported in live mode\n', 'stderr');
+  const liveOnlyFlags = [
+    values.judge === true ? '--judge' : undefined,
+    values['max-revisions'] !== undefined ? '--max-revisions' : undefined,
+    values.worktree !== undefined ? '--worktree' : undefined,
+    values['timeout-ms'] !== undefined ? '--timeout-ms' : undefined,
+  ].filter((flag): flag is string => flag !== undefined);
+  if (liveOnlyFlags.length > 0) {
+    throw new EvalSpecifyCliUsageError(64, `${liveOnlyFlags.join(', ')} ${liveOnlyFlags.length === 1 ? 'is' : 'are'} only supported in live mode\n`, 'stderr');
   }
 
   return {
@@ -194,8 +201,12 @@ function parseTimeoutMs(value: string | undefined): number {
     return DEFAULT_LIVE_TIMEOUT_MS;
   }
 
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!POSITIVE_INTEGER_PATTERN.test(value)) {
+    throw new EvalSpecifyCliUsageError(64, `invalid --timeout-ms "${value}" (expected a positive integer)\n`, 'stderr');
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
     throw new EvalSpecifyCliUsageError(64, `invalid --timeout-ms "${value}" (expected a positive integer)\n`, 'stderr');
   }
   return parsed;
@@ -210,15 +221,19 @@ function parseJudgeOptions(enabled: boolean, maxRevisionsValue: string | undefin
   }
 
   const maxRevisions = parseNonNegativeInt(maxRevisionsValue ?? '0', '--max-revisions');
-  if (maxRevisions > MAX_JUDGE_REVISIONS) {
-    throw new EvalSpecifyCliUsageError(64, `--max-revisions must be <= ${MAX_JUDGE_REVISIONS}\n`, 'stderr');
+  if (maxRevisions > MAX_LIVE_JUDGE_REVISIONS) {
+    throw new EvalSpecifyCliUsageError(64, `--max-revisions must be <= ${MAX_LIVE_JUDGE_REVISIONS}\n`, 'stderr');
   }
   return { maxRevisions };
 }
 
 function parseNonNegativeInt(value: string, flag: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  if (!NON_NEGATIVE_INTEGER_PATTERN.test(value)) {
+    throw new EvalSpecifyCliUsageError(64, `invalid ${flag} "${value}" (expected a non-negative integer)\n`, 'stderr');
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
     throw new EvalSpecifyCliUsageError(64, `invalid ${flag} "${value}" (expected a non-negative integer)\n`, 'stderr');
   }
   return parsed;
@@ -266,6 +281,9 @@ function renderText(
     lines.push(`  ${flag}  ${result.id.padEnd(28)} status=${result.status.padEnd(13)} oq=${result.openQuestionsCount} cost=${cost}${judgeLabel}`);
     if (result.expectationMismatch) {
       lines.push(`        mismatch: ${result.expectationMismatch}`);
+    }
+    if ((result.status === 'parse_error' || result.status === 'schema_error') && result.errorMessage) {
+      lines.push(`        error: ${result.errorMessage}`);
     }
     const latestJudgeAttempt = result.judge?.attempts[result.judge.attempts.length - 1];
     if (latestJudgeAttempt?.summary) {
