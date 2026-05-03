@@ -123,7 +123,6 @@ describe('implement eval cli', function () {
       '--mode', 'live',
       '--worktree', '/tmp/live-repo',
       '--judge',
-      '--max-revisions', '1',
     ]) as any;
 
     assert.deepStrictEqual(parsed, {
@@ -136,7 +135,7 @@ describe('implement eval cli', function () {
       provider: 'codex',
       model: 'gpt-5.3-codex',
       record: false,
-      judge: { maxRevisions: 1 },
+      judge: { maxRevisions: 1, provider: 'codex', model: 'gpt-5.3-codex' },
     });
 
     assert.throws(
@@ -150,6 +149,46 @@ describe('implement eval cli', function () {
     assert.throws(
       () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--timeout-ms', '5000']),
       /live mode/i,
+    );
+  });
+
+  it('parses independent judge provider/model flags and rejects invalid judge-only combinations', () => {
+    const parsed = parseEvalImplementCliArgs([
+      '--fixtures', fixturesDir,
+      '--mode', 'live',
+      '--worktree', '/tmp/live-repo',
+      '--provider', 'claude',
+      '--model', 'claude-sonnet-4-6',
+      '--judge',
+      '--judge-provider', 'codex',
+      '--judge-model', 'gpt-5.3-codex',
+      '--max-revisions', '2',
+    ]) as any;
+
+    assert.deepStrictEqual(parsed, {
+      fixturesDir: path.resolve(fixturesDir),
+      fixtureIds: [],
+      json: false,
+      mode: 'live',
+      worktreePath: path.resolve('/tmp/live-repo'),
+      timeoutMs: 300000,
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      record: false,
+      judge: { maxRevisions: 2, provider: 'codex', model: 'gpt-5.3-codex' },
+    });
+
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--judge-provider', 'claude']),
+      /requires --judge/i,
+    );
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--judge-model', 'claude-sonnet-4-6']),
+      /requires --judge/i,
+    );
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--judge', '--judge-provider', 'claude', '--judge-model', 'gpt-5.3-codex']),
+      /does not match provider/i,
     );
   });
 
@@ -347,7 +386,7 @@ describe('implement eval cli', function () {
           throw new Error('replay suite should not run in live mode');
         },
         runLiveSuite: async (_fixtures, options) => {
-          assert.deepStrictEqual((options as any).judge, { maxRevisions: 0 });
+          assert.deepStrictEqual((options as any).judge, { maxRevisions: 1, provider: 'codex', model: 'gpt-5.3-codex' });
           return {
             schemaId: 'implement-response-v1',
             results: [{
@@ -401,6 +440,56 @@ describe('implement eval cli', function () {
     assert.strictEqual(parsed.mode, 'live');
     assert.strictEqual(parsed.results[0]?.judge?.finalVerdict, 'error');
     assert.strictEqual(parsed.judgeSummary?.byVerdict?.error, 1);
+  });
+
+  it('passes explicit cross-provider judge selection through the live suite', async () => {
+    const exitCode = await main(
+      [
+        '--fixtures', fixturesDir,
+        '--mode', 'live',
+        '--worktree', '/tmp/live-repo',
+        '--provider', 'claude',
+        '--model', 'claude-sonnet-4-6',
+        '--judge',
+        '--judge-provider', 'codex',
+        '--judge-model', 'gpt-5.3-codex',
+      ],
+      {
+        loadFixtures: async () => [{ id: 'live-implement' } as any],
+        runReplaySuite: () => {
+          throw new Error('replay suite should not run in live mode');
+        },
+        runLiveSuite: async (_fixtures, options) => {
+          assert.deepStrictEqual((options as any).judge, { maxRevisions: 1, provider: 'codex', model: 'gpt-5.3-codex' });
+          return {
+            schemaId: 'implement-response-v1',
+            results: [{
+              id: 'live-implement',
+              status: 'produced',
+              filesWrittenCount: 1,
+              totalContentChars: 1,
+              commitMessageLength: 1,
+              summaryLength: 1,
+              followUpsCount: 0,
+              costMicroUsd: 0,
+              totalTokens: 0,
+            }],
+            summary: {
+              total: 1,
+              byStatus: { produced: 1, empty: 0, parse_error: 0, schema_error: 0 },
+              totalCostMicroUsd: 0,
+              totalTokens: 0,
+              avgCostMicroUsd: 0,
+              expectationMismatches: 0,
+            },
+          } as any;
+        },
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    assert.strictEqual(exitCode, 0);
   });
 
   it('prints replay parse/schema error details in text mode', async () => {

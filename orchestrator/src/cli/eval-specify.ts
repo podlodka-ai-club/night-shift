@@ -23,11 +23,14 @@ Options:
   --mode <mode>       replay (default) or live
   --provider <id>     Live-mode provider: codex (default) or claude
   --model <id>        Live-mode model id (default: provider default)
+  --judge-provider <id>
+                     Live-mode judge provider: codex (default) or claude
+  --judge-model <id> Live-mode judge model id (default: judge provider default)
   --worktree <dir>    Repository/worktree path for live mode (default: current working directory)
   --timeout-ms <n>    Live-mode timeout per fixture in milliseconds (default: 300000)
   --record            Live mode only: write successful generator output back into the source fixture file
   --judge             Run an additional judge pass in live mode
-  --max-revisions <n> Live-mode judge revisions to allow per fixture (default: 0, max: 2)
+  --max-revisions <n> Live-mode judge revisions to allow per fixture (default: 1, max: 2)
   --fixture <id>      Run only the fixture with this id (repeatable)
   --json              Emit machine-readable JSON to stdout instead of a table.
   --help              Show this message.
@@ -55,7 +58,7 @@ type CliOptions = {
     provider: string;
     model: string;
     record: boolean;
-    judge?: { maxRevisions: number };
+    judge?: { maxRevisions: number; provider: string; model: string };
   }
 );
 
@@ -102,6 +105,8 @@ export function parseEvalSpecifyCliArgs(argv: ReadonlyArray<string>): CliOptions
       mode: { type: 'string', default: 'replay' },
       provider: { type: 'string' },
       model: { type: 'string' },
+      'judge-provider': { type: 'string' },
+      'judge-model': { type: 'string' },
       worktree: { type: 'string' },
       'timeout-ms': { type: 'string' },
       record: { type: 'boolean', default: false },
@@ -136,7 +141,12 @@ export function parseEvalSpecifyCliArgs(argv: ReadonlyArray<string>): CliOptions
     }
     const timeoutMs = parseTimeoutMs(values['timeout-ms']);
     const selection = parseLiveSelection(values.provider, values.model);
-    const judge = parseJudgeOptions(values.judge === true, values['max-revisions']);
+    const judge = parseJudgeOptions(
+      values.judge === true,
+      values['max-revisions'],
+      values['judge-provider'],
+      values['judge-model'],
+    );
     return {
       ...baseOptions,
       mode: 'live',
@@ -157,6 +167,8 @@ export function parseEvalSpecifyCliArgs(argv: ReadonlyArray<string>): CliOptions
     values.provider !== undefined ? '--provider' : undefined,
     values.model !== undefined ? '--model' : undefined,
     values.judge === true ? '--judge' : undefined,
+    values['judge-provider'] !== undefined ? '--judge-provider' : undefined,
+    values['judge-model'] !== undefined ? '--judge-model' : undefined,
     values['max-revisions'] !== undefined ? '--max-revisions' : undefined,
     values.worktree !== undefined ? '--worktree' : undefined,
     values['timeout-ms'] !== undefined ? '--timeout-ms' : undefined,
@@ -265,19 +277,29 @@ function parseLiveSelection(provider: string | undefined, model: string | undefi
   }
 }
 
-function parseJudgeOptions(enabled: boolean, maxRevisionsValue: string | undefined): { maxRevisions: number } | undefined {
-  if (!enabled && maxRevisionsValue === undefined) {
+function parseJudgeOptions(
+  enabled: boolean,
+  maxRevisionsValue: string | undefined,
+  provider: string | undefined,
+  model: string | undefined,
+): { maxRevisions: number; provider: string; model: string } | undefined {
+  if (!enabled && maxRevisionsValue === undefined && provider === undefined && model === undefined) {
     return undefined;
   }
   if (!enabled) {
-    throw new EvalSpecifyCliUsageError(64, '--max-revisions requires --judge\n', 'stderr');
+    const requiredFlag =
+      maxRevisionsValue !== undefined ? '--max-revisions'
+        : provider !== undefined ? '--judge-provider'
+          : '--judge-model';
+    throw new EvalSpecifyCliUsageError(64, `${requiredFlag} requires --judge\n`, 'stderr');
   }
 
-  const maxRevisions = parseNonNegativeInt(maxRevisionsValue ?? '0', '--max-revisions');
+  const selection = parseLiveSelection(provider, model);
+  const maxRevisions = parseNonNegativeInt(maxRevisionsValue ?? '1', '--max-revisions');
   if (maxRevisions > MAX_LIVE_JUDGE_REVISIONS) {
     throw new EvalSpecifyCliUsageError(64, `--max-revisions must be <= ${MAX_LIVE_JUDGE_REVISIONS}\n`, 'stderr');
   }
-  return { maxRevisions };
+  return { maxRevisions, provider: selection.provider, model: selection.model };
 }
 
 function parseNonNegativeInt(value: string, flag: string): number {

@@ -55,15 +55,13 @@ export function normalizeLiveJudgeMaxRevisions(maxRevisions: number | undefined)
   return Math.min(MAX_LIVE_JUDGE_REVISIONS, Math.max(0, Math.trunc(maxRevisions)));
 }
 
-interface RunLiveJudgeInput {
+interface RunLiveJudgeInput extends RequestedAgentProviderSelection {
   attempt: number;
   worktreePath: string;
   prompt: string;
   turnRunner: LiveTurnRunner;
   timeoutMs?: number;
   systemPrompt?: string;
-  provider?: string;
-  model?: string;
 }
 
 export async function runLiveJudge(

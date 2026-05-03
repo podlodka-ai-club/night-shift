@@ -60,6 +60,92 @@ describe('implement live eval harness', () => {
     assert.strictEqual((result as any).judge?.attempts[0]?.costMicroUsd, 35);
   });
 
+  it('can run an optional judge pass with a bounded single revision and report both verdicts transparently', async () => {
+    const fixture = {
+      id: 'live-implement-judge-pass-after-revision',
+      ticket: {
+        title: 'Clarify implementation acceptance mapping',
+        description: 'The implementation response should clearly map files back to requested guardrails.',
+        labels: ['feature'],
+      },
+      specBundle: [
+        { path: 'proposal.md', content: '# Proposal' },
+        { path: 'tasks.md', content: '- [ ] Map changed files back to acceptance criteria' },
+      ],
+      operatorComments: ['Explain how the changed file satisfies the requested guardrail.'],
+    };
+    const calls: string[] = [];
+
+    const result = await runImplementLiveFixture(fixture as any, {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 1 },
+      turnRunner: async (request) => {
+        calls.push(request.prompt);
+        if (calls.length === 1) {
+          return {
+            finalText: JSON.stringify({
+              filesWritten: [{ path: 'src/cli/eval.ts', content: 'export const guardrails = true;\n' }],
+              commitMessage: 'feat(cli): tighten guardrails',
+              summary: 'Adds the requested guardrails.',
+              followUps: [],
+            }),
+            usage: { input_tokens: 90, cached_input_tokens: 15, output_tokens: 20 },
+            costMicroUsd: 500,
+          };
+        }
+        if (calls.length === 2) {
+          return {
+            finalText: JSON.stringify({
+              verdict: 'revise',
+              summary: 'The response still needs to map the changed file back to the acceptance criteria.',
+              issues: [{ code: 'dod-mapping', message: 'summary should explain how src/cli/eval.ts satisfies the requested guardrail.' }],
+            }),
+            usage: { input_tokens: 12, cached_input_tokens: 0, output_tokens: 4 },
+            costMicroUsd: 35,
+          };
+        }
+        if (calls.length === 3) {
+          assert.match(request.prompt, /dod-mapping/i);
+          return {
+            finalText: JSON.stringify({
+              filesWritten: [{ path: 'src/cli/eval.ts', content: 'export const guardrails = true;\n' }],
+              commitMessage: 'feat(cli): tighten guardrails',
+              summary: 'Updates src/cli/eval.ts so the requested guardrail is enforced directly in the CLI path.',
+              followUps: [],
+            }),
+            usage: { input_tokens: 35, cached_input_tokens: 10, output_tokens: 10 },
+            costMicroUsd: 250,
+          };
+        }
+        return {
+          finalText: JSON.stringify({
+            verdict: 'pass',
+            summary: 'The revised implementation is reviewable as written.',
+            issues: [],
+          }),
+          usage: { input_tokens: 9, cached_input_tokens: 0, output_tokens: 3 },
+          costMicroUsd: 20,
+        };
+      },
+    });
+
+    assert.strictEqual(result.status, 'produced');
+    assert.strictEqual(result.totalTokens, 155);
+    assert.strictEqual(result.costMicroUsd, 750);
+    assert.strictEqual((result as any).judge?.finalVerdict, 'pass');
+    assert.strictEqual((result as any).judge?.revisionCount, 1);
+    assert.deepStrictEqual((result as any).judge?.attempts.map((attempt: any) => ({
+      attempt: attempt.attempt,
+      verdict: attempt.verdict,
+    })), [
+      { attempt: 1, verdict: 'revise' },
+      { attempt: 2, verdict: 'pass' },
+    ]);
+    assert.strictEqual((result as any).judge?.attempts[0]?.issues[0]?.code, 'dod-mapping');
+    assert.strictEqual((result as any).judge?.attempts[0]?.costMicroUsd, 35);
+    assert.strictEqual((result as any).judge?.attempts[1]?.costMicroUsd, 20);
+  });
+
   it('caps direct judge revision requests at two revisions inside the harness', async () => {
     let callCount = 0;
 
@@ -331,6 +417,43 @@ describe('implement live eval harness', () => {
     assert.strictEqual(suite.results[0]?.status, 'produced');
     assert.strictEqual((suite.results[0] as any)?.judge?.finalVerdict, 'error');
     assert.match((suite.results[0] as any)?.judge?.attempts[0]?.errorMessage ?? '', /judge transport failed/i);
+    assert.deepStrictEqual((suite as any).judgeSummary?.byVerdict, { pass: 0, revise: 0, error: 1 });
+  });
+
+  it('records judge parse failures as transparent judge errors without discarding the produced live result', async () => {
+    const suite = await runImplementLiveSuite([
+      {
+        id: 'implement-judge-parse-error',
+        ticket: { title: 'Judge parse error', description: 'Keep the implementation result, but surface the malformed judge output.', labels: [] },
+        specBundle: [
+          { path: 'proposal.md', content: '# Proposal' },
+          { path: 'tasks.md', content: '- [ ] Preserve generated output' },
+        ],
+        operatorComments: [],
+      } as any,
+    ], {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 0 },
+      turnRunner: async (request) => {
+        if (!request.prompt.includes('Candidate response JSON')) {
+          return {
+            finalText: JSON.stringify({
+              filesWritten: [{ path: 'src/eval.ts', content: 'export const ok = true;\n' }],
+              commitMessage: 'feat: keep generated output',
+              summary: 'Keeps the generated implementation result.',
+              followUps: [],
+            }),
+          };
+        }
+        return {
+          finalText: 'not-json',
+        };
+      },
+    });
+
+    assert.strictEqual(suite.results[0]?.status, 'produced');
+    assert.strictEqual((suite.results[0] as any)?.judge?.finalVerdict, 'error');
+    assert.match((suite.results[0] as any)?.judge?.attempts[0]?.errorMessage ?? '', /valid JSON/i);
     assert.deepStrictEqual((suite as any).judgeSummary?.byVerdict, { pass: 0, revise: 0, error: 1 });
   });
 });

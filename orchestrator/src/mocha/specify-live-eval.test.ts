@@ -370,4 +370,39 @@ describe('specify live eval harness', () => {
     assert.match((suite.results[0] as any)?.judge?.attempts[0]?.errorMessage ?? '', /valid JSON/i);
     assert.deepStrictEqual((suite as any).judgeSummary?.byVerdict, { pass: 0, revise: 0, error: 1 });
   });
+
+  it('records judge runner failures as transparent judge errors in suite-level telemetry', async () => {
+    const suite = await runSpecifyLiveSuite([
+      {
+        id: 'specify-judge-runtime-error',
+        ticket: { title: 'Judge runtime error', description: 'Keep the specify result but surface judge transport failure.', labels: [] },
+        priorDraft: [{ path: 'proposal.md', content: '# Proposal' }],
+        operatorComments: [],
+      } as any,
+    ], {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 0 },
+      turnRunner: async (request) => {
+        if (!request.prompt.includes('Candidate response JSON')) {
+          return {
+            finalText: JSON.stringify({
+              files: [
+                { path: 'proposal.md', content: '# Proposal' },
+                { path: 'tasks.md', content: '- [ ] Preserve specify output' },
+              ],
+              openQuestions: [],
+              assumptions: [],
+              risks: [],
+            }),
+          };
+        }
+        throw new Error('judge transport failed');
+      },
+    });
+
+    assert.strictEqual(suite.results[0]?.status, 'refined');
+    assert.strictEqual((suite.results[0] as any)?.judge?.finalVerdict, 'error');
+    assert.match((suite.results[0] as any)?.judge?.attempts[0]?.errorMessage ?? '', /judge transport failed/i);
+    assert.deepStrictEqual((suite as any).judgeSummary?.byVerdict, { pass: 0, revise: 0, error: 1 });
+  });
 });
