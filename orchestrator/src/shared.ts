@@ -7,6 +7,7 @@ export const CANONICAL_PROJECT_STATUS_NAMES = [
   'In progress',
   'In review',
   'Ready to merge',
+  'Escalated',
   'Blocked',
 ] as const;
 export type ProjectStatusName = (typeof CANONICAL_PROJECT_STATUS_NAMES)[number];
@@ -15,6 +16,7 @@ export const DEFAULT_READY_STATUS = 'Ready';
 export const DEFAULT_IN_PROGRESS_STATUS = 'In progress';
 export const DEFAULT_IN_REVIEW_STATUS = 'In review';
 export const DEFAULT_READY_TO_MERGE_STATUS = 'Ready to merge';
+export const DEFAULT_ESCALATED_STATUS = 'Escalated';
 export const DEFAULT_BLOCKED_STATUS = 'Blocked';
 export const DEFAULT_BACKLOG_STATUS = 'Backlog';
 export const DEFAULT_REFINEMENT_STATUS = 'Refinement';
@@ -36,7 +38,7 @@ export const WORKFLOW_BLOCKED_REASONS = [
 ] as const;
 export type WorkflowBlockedReason = (typeof WORKFLOW_BLOCKED_REASONS)[number];
 
-export const WORKFLOW_SIGNAL_NAMES = ['specifyRetry', 'specReviewed', 'implementRetry', 'resume'] as const;
+export const WORKFLOW_SIGNAL_NAMES = ['specifyRetry', 'specReviewed', 'implementRetry', 'resume', 'resumeReviewOnly'] as const;
 export type WorkflowSignalName = (typeof WORKFLOW_SIGNAL_NAMES)[number];
 export const WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME = 'activityProgress';
 
@@ -50,7 +52,7 @@ export const BLOCKED_REASON_BOARD_SIGNAL_RULES = [
   { blockedReason: 'implement_needs_input', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
   { blockedReason: 'implement_needs_input', boardStatusName: 'Ready', signalName: 'implementRetry' },
   { blockedReason: 'review_escalation', boardStatusName: 'Ready', signalName: 'resume' },
-  { blockedReason: 'review_escalation', boardStatusName: 'In review', signalName: 'resume' },
+  { blockedReason: 'review_escalation', boardStatusName: 'In review', signalName: 'resumeReviewOnly' },
 ] as const satisfies ReadonlyArray<{
   blockedReason: WorkflowBlockedReason;
   boardStatusName: ProjectStatusName;
@@ -77,6 +79,7 @@ export interface AutomateReadyIssueInput {
   refinedStatusName?: string;
   readyStatusName?: string;
   inReviewStatusName?: string;
+  escalatedStatusName?: string;
   blockedStatusName?: string;
   branchPrefix?: string;
 }
@@ -96,6 +99,7 @@ export interface SelectedProjectIssue {
   inProgressOptionId: string;
   inReviewOptionId: string;
   readyToMergeOptionId: string;
+  escalatedOptionId: string;
   blockedOptionId: string;
   issueNumber: number;
   issueTitle: string;
@@ -110,6 +114,7 @@ export interface SelectedProjectIssue {
   readyStatusName: string;
   inReviewStatusName: string;
   readyToMergeStatusName: string;
+  escalatedStatusName: string;
 }
 
 export interface ListedProjectIssue extends SelectedProjectIssue {
@@ -151,16 +156,18 @@ export interface AgentStructuredStep {
 }
 
 export type AgentStep = AgentPromptStep | AgentStructuredStep;
-export type AgentSchemaId = 'change-metadata-v1' | 'specify-response-v1' | 'implement-response-v1' | 'reviewer-response-v1';
+export type AgentSchemaId = 'change-metadata-v1' | 'specify-response-v1' | 'implement-response-v1' | 'reviewer-response-v1' | 'escalation-response-v1';
 
 export const SPECIFY_RESPONSE_OUTPUT_KEY = 'specifyResponse';
 export const IMPLEMENT_RESPONSE_OUTPUT_KEY = 'implementResponse';
 export const REVIEWER_RESPONSE_OUTPUT_KEY = 'reviewerResponse';
+export const ESCALATION_RESPONSE_OUTPUT_KEY = 'escalationResponse';
 export const CHANGE_METADATA_OUTPUT_KEY = 'changeMetadata';
 export const AGENT_OUTPUT_KEYS = [
   SPECIFY_RESPONSE_OUTPUT_KEY,
   IMPLEMENT_RESPONSE_OUTPUT_KEY,
   REVIEWER_RESPONSE_OUTPUT_KEY,
+  ESCALATION_RESPONSE_OUTPUT_KEY,
   CHANGE_METADATA_OUTPUT_KEY,
 ] as const;
 
@@ -179,13 +186,18 @@ export interface ChangeMetadata {
   pullRequestBody: string;
 }
 
+export const AGENT_PROFILE_NAMES = ['default', 'escalation'] as const;
+export type AgentProfileName = (typeof AGENT_PROFILE_NAMES)[number];
+
 export interface RunAgentLegacyInput {
   worktree: WorktreeContext;
+  agentProfile?: AgentProfileName;
 }
 
 export interface RunAgentSequenceInput {
   worktree: WorktreeContext;
   steps: [AgentStep, ...AgentStep[]];
+  agentProfile?: AgentProfileName;
 }
 
 export interface CommitAndPushInput {

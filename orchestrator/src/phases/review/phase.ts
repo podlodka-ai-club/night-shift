@@ -15,6 +15,7 @@ export interface RunReviewPhaseInput {
   worktree: WorktreeContext;
   pullRequest: { pullRequestNumber: number; pullRequestUrl: string };
   reviewIteration?: number;
+  deferEscalatedStatus?: boolean;
   onProgress?: (message: string) => void;
 }
 
@@ -66,7 +67,9 @@ export async function runReviewPhase(input: RunReviewPhaseInput, deps: RunReview
   }
   const marker = verdict === 'escalate' ? 'review:escalation' : 'review:summary';
   await deps.upsertIssueComment({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, issueNumber: input.issue.issueNumber, marker, body: summaryCommentBody });
-  await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, verdict));
+  if (!(verdict === 'escalate' && input.deferEscalatedStatus)) {
+    await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, verdict));
+  }
 
   return { outcome: verdictToOutcome(verdict), verdict, response: normalizedResponse, pullRequestDetails, summaryCommentBody };
 }

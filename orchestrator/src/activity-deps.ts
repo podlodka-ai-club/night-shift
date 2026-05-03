@@ -2,10 +2,33 @@ import { access, appendFile, mkdir, readdir, readFile, realpath, rm, writeFile }
 import { Context } from '@temporalio/activity';
 import { WorkflowNotFoundError } from '@temporalio/common';
 import { execa } from 'execa';
+import { type AgentProfileName } from './shared';
 
 export const CODEX_COMMAND = 'codex';
 export const CODEX_MODEL = 'gpt-5.3-codex';
 export const CODEX_REASONING_EFFORT = 'low' as const;
+export const ESCALATION_CODEX_MODEL = 'gpt-5.4';
+export const ESCALATION_CODEX_REASONING_EFFORT = 'high' as const;
+
+export type AgentReasoningEffort = 'low' | 'medium' | 'high';
+
+export interface AgentProfile {
+  model: string;
+  reasoningEffort: AgentReasoningEffort;
+}
+
+export type AgentProfiles = Record<AgentProfileName, AgentProfile>;
+
+const DEFAULT_AGENT_PROFILES: AgentProfiles = {
+  default: {
+    model: CODEX_MODEL,
+    reasoningEffort: CODEX_REASONING_EFFORT,
+  },
+  escalation: {
+    model: ESCALATION_CODEX_MODEL,
+    reasoningEffort: ESCALATION_CODEX_REASONING_EFFORT,
+  },
+};
 
 export interface CommandOptions {
   cwd?: string;
@@ -40,8 +63,8 @@ export interface AgentSession {
 }
 
 export interface AgentAdapter {
-  createSession: (worktreePath: string) => AgentSession;
-  resumeSession: (worktreePath: string, threadId: string) => AgentSession;
+  createSession: (worktreePath: string, agentProfile?: AgentProfileName) => AgentSession;
+  resumeSession: (worktreePath: string, threadId: string, agentProfile?: AgentProfileName) => AgentSession;
 }
 
 export interface GitHubClientDeps {
@@ -69,8 +92,9 @@ export interface ClockDeps {
 }
 
 export interface AgentThreadDeps {
-  createCodexThread: (worktreePath: string) => AgentSession;
-  resumeCodexThread: (worktreePath: string, threadId: string) => AgentSession;
+  createCodexThread: (worktreePath: string, agentProfile?: AgentProfileName) => AgentSession;
+  resumeCodexThread: (worktreePath: string, threadId: string, agentProfile?: AgentProfileName) => AgentSession;
+  getAgentProfile: (agentProfile?: AgentProfileName) => AgentProfile;
   getCancellationSignal: () => AbortSignal | undefined;
 }
 
@@ -100,9 +124,12 @@ const dynamicImport = new Function('specifier', 'return import(specifier);') as 
 
 export interface CreateActivityDependenciesOptions {
   signalWorkflowProgress?: (workflowId: string, message: string) => Promise<void>;
+  agentProfiles?: Partial<AgentProfiles>;
 }
 
 export function createActivityDependencies(options: CreateActivityDependenciesOptions = {}): ActivityDependencies {
+  const agentProfiles = resolveAgentProfiles(options.agentProfiles);
+
   return {
     fetch: globalThis.fetch.bind(globalThis) as typeof fetch,
     getGitHubToken: () => getProcessGitHubToken(),
@@ -116,16 +143,17 @@ export function createActivityDependencies(options: CreateActivityDependenciesOp
     writeFile: (targetPath, data, encoding) => writeFile(targetPath, data, encoding),
     execFile: defaultExecFile,
     now: () => Date.now(),
-    createCodexThread: (worktreePath) =>
+    createCodexThread: (worktreePath, agentProfile = 'default') =>
       createLazyCodexSession('startThread', async () => {
         const { Codex } = await loadCodexSdk();
-        return new Codex().startThread(buildCodexThreadOptions(worktreePath));
+        return new Codex().startThread(buildCodexThreadOptions(worktreePath, agentProfiles[agentProfile]));
       }),
-    resumeCodexThread: (worktreePath, threadId) =>
+    resumeCodexThread: (worktreePath, threadId, agentProfile = 'default') =>
       createLazyCodexSession('resumeThread', async () => {
         const { Codex } = await loadCodexSdk();
-        return new Codex().resumeThread(threadId, buildCodexThreadOptions(worktreePath));
+        return new Codex().resumeThread(threadId, buildCodexThreadOptions(worktreePath, agentProfiles[agentProfile]));
       }),
+    getAgentProfile: (agentProfile = 'default') => agentProfiles[agentProfile],
     getHeartbeatDetails: () => getActivityHeartbeatDetails(),
     heartbeat: (details) => heartbeatActivity(details),
     signalProgress: async (message) => signalActivityProgress(options, message),
@@ -200,11 +228,11 @@ async function defaultExecFile(
   };
 }
 
-function buildCodexThreadOptions(worktreePath: string) {
+function buildCodexThreadOptions(worktreePath: string, agentProfile: AgentProfile) {
   return {
     approvalPolicy: 'never' as const,
-    model: CODEX_MODEL,
-    modelReasoningEffort: CODEX_REASONING_EFFORT,
+    model: agentProfile.model,
+    modelReasoningEffort: agentProfile.reasoningEffort,
     sandboxMode: 'workspace-write' as const,
     workingDirectory: worktreePath,
   };
@@ -212,8 +240,21 @@ function buildCodexThreadOptions(worktreePath: string) {
 
 export function createCodexAgentAdapter(deps: Pick<AgentThreadDeps, 'createCodexThread' | 'resumeCodexThread'>): AgentAdapter {
   return {
-    createSession: (worktreePath) => deps.createCodexThread(worktreePath),
-    resumeSession: (worktreePath, threadId) => deps.resumeCodexThread(worktreePath, threadId),
+    createSession: (worktreePath, agentProfile) => deps.createCodexThread(worktreePath, agentProfile),
+    resumeSession: (worktreePath, threadId, agentProfile) => deps.resumeCodexThread(worktreePath, threadId, agentProfile),
+  };
+}
+
+export function resolveAgentProfiles(overrides: Partial<AgentProfiles> | undefined): AgentProfiles {
+  return {
+    default: {
+      ...DEFAULT_AGENT_PROFILES.default,
+      ...overrides?.default,
+    },
+    escalation: {
+      ...DEFAULT_AGENT_PROFILES.escalation,
+      ...overrides?.escalation,
+    },
   };
 }
 

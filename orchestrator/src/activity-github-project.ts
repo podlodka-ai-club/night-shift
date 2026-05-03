@@ -2,6 +2,7 @@ import {
   CANONICAL_PROJECT_STATUS_NAMES,
   DEFAULT_BACKLOG_STATUS,
   DEFAULT_BLOCKED_STATUS,
+  DEFAULT_ESCALATED_STATUS,
   DEFAULT_IN_PROGRESS_STATUS,
   DEFAULT_IN_REVIEW_STATUS,
   DEFAULT_REFINED_STATUS,
@@ -89,6 +90,7 @@ const PROJECT_STATUS_COLORS: Record<ProjectStatusName, string> = {
   'In progress': 'YELLOW',
   'In review': 'PURPLE',
   'Ready to merge': 'GREEN',
+  Escalated: 'ORANGE',
   Blocked: 'RED',
 };
 
@@ -472,6 +474,7 @@ function buildListedProjectIssue(
   const refinedStatusName = input.refinedStatusName ?? DEFAULT_REFINED_STATUS;
   const readyStatusName = input.readyStatusName ?? DEFAULT_READY_STATUS;
   const inReviewStatusName = input.inReviewStatusName ?? DEFAULT_IN_REVIEW_STATUS;
+  const escalatedStatusName = input.escalatedStatusName ?? DEFAULT_ESCALATED_STATUS;
   const blockedStatusName = input.blockedStatusName ?? DEFAULT_BLOCKED_STATUS;
   const issue = projectItem.content;
   const currentStatusName = projectItem.fieldValueByName?.name;
@@ -490,6 +493,7 @@ function buildListedProjectIssue(
     inProgressOptionId: getRequiredStatusOption(statusField, DEFAULT_IN_PROGRESS_STATUS).id,
     inReviewOptionId: getRequiredStatusOption(statusField, inReviewStatusName).id,
     readyToMergeOptionId: getRequiredStatusOption(statusField, 'Ready to merge').id,
+    escalatedOptionId: getRequiredStatusOption(statusField, escalatedStatusName).id,
     blockedOptionId: getRequiredStatusOption(statusField, blockedStatusName).id,
     issueNumber: issue.number,
     issueTitle: issue.title,
@@ -504,6 +508,7 @@ function buildListedProjectIssue(
     readyStatusName,
     inReviewStatusName,
     readyToMergeStatusName: 'Ready to merge',
+    escalatedStatusName,
     currentStatusName,
     createdAt: issue.createdAt,
   };

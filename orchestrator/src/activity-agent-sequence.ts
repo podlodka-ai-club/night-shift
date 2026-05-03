@@ -12,11 +12,9 @@ import {
 import { AgentContractError, runAgentTurnWithHeartbeat, runStructuredAgentTurn } from './activity-agent-turn';
 import { buildTaskImplementationPrompt } from './agent-prompts';
 import { getAgentSchema } from './agent-schema-registry';
-import { type AgentSequenceResult, type AgentStep, type RunAgentLegacyInput, type RunAgentSequenceInput, type WorktreeContext } from './shared';
+import { type AgentProfileName, type AgentSequenceResult, type AgentStep, type RunAgentLegacyInput, type RunAgentSequenceInput, type WorktreeContext } from './shared';
 import {
   CODEX_COMMAND,
-  CODEX_MODEL,
-  CODEX_REASONING_EFFORT,
   createCodexAgentAdapter,
   execCommand,
   type AgentActivityDeps,
@@ -28,8 +26,8 @@ import {
 export function createAgentActivities(deps: AgentActivityDeps) {
   return {
     async runAgentLegacy(input: RunAgentLegacyInput): Promise<void> {
-      const { worktree } = input;
-      await codex(deps, worktree.worktreePath, buildTaskImplementationPrompt(worktree.taskDescription));
+      const { worktree, agentProfile } = input;
+      await codex(deps, worktree.worktreePath, buildTaskImplementationPrompt(worktree.taskDescription), agentProfile);
     },
 
     async runAgentSequence(input: RunAgentSequenceInput): Promise<AgentSequenceResult> {
@@ -38,7 +36,7 @@ export function createAgentActivities(deps: AgentActivityDeps) {
       }
 
       try {
-        return await runAgentSequenceSteps(deps, input.worktree, input.steps);
+        return await runAgentSequenceSteps(deps, input.worktree, input.steps, input.agentProfile);
       } catch (error) {
         if (error instanceof AgentContractError) {
           throw ApplicationFailure.fromError(error, { nonRetryable: true });
@@ -53,6 +51,7 @@ async function runAgentSequenceSteps(
   deps: AgentActivityDeps,
   worktree: WorktreeContext,
   steps: AgentStep[],
+  agentProfile: AgentProfileName | undefined,
 ): Promise<AgentSequenceResult> {
   assertUniqueStepIds(steps);
   const checkpoint = readAgentCheckpoint(deps.getHeartbeatDetails());
@@ -81,8 +80,8 @@ async function runAgentSequenceSteps(
 
   function getSession(): AgentSession {
     session ??= threadId
-      ? assertActivitySession(adapter.resumeSession(worktree.worktreePath, threadId), 'resumeCodexThread')
-      : assertActivitySession(adapter.createSession(worktree.worktreePath), 'createCodexThread');
+      ? assertActivitySession(adapter.resumeSession(worktree.worktreePath, threadId, agentProfile), 'resumeCodexThread')
+      : assertActivitySession(adapter.createSession(worktree.worktreePath, agentProfile), 'createCodexThread');
     return session;
   }
 
@@ -216,12 +215,13 @@ function assertActivitySession(value: unknown, methodName: 'createCodexThread' |
   return value as AgentSession;
 }
 
-function buildCodexArgs(prompt: string): string[] {
-  return ['exec', '--full-auto', '--model', CODEX_MODEL, '--config', `model_reasoning_effort="${CODEX_REASONING_EFFORT}"`, prompt];
+function buildCodexArgs(deps: Pick<AgentActivityDeps, 'getAgentProfile'>, prompt: string, agentProfile: AgentProfileName | undefined): string[] {
+  const profile = deps.getAgentProfile(agentProfile);
+  return ['exec', '--full-auto', '--model', profile.model, '--config', `model_reasoning_effort="${profile.reasoningEffort}"`, prompt];
 }
 
-function codex(deps: AgentActivityDeps, cwd: string, prompt: string): Promise<unknown> {
-  return execCommand(deps, CODEX_COMMAND, buildCodexArgs(prompt), { cwd, ...buildAgentTurnOptions(deps) });
+function codex(deps: AgentActivityDeps, cwd: string, prompt: string, agentProfile: AgentProfileName | undefined): Promise<unknown> {
+  return execCommand(deps, CODEX_COMMAND, buildCodexArgs(deps, prompt, agentProfile), { cwd, ...buildAgentTurnOptions(deps) });
 }
 
 function buildAgentTurnOptions(

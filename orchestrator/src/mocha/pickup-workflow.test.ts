@@ -92,6 +92,7 @@ function buildWorkflowInput(): AutomateReadyIssueInput {
     backlogStatusName: 'Backlog',
     readyStatusName: 'Ready',
     inReviewStatusName: 'In review',
+    escalatedStatusName: 'Escalated',
     blockedStatusName: 'Blocked',
     branchPrefix: 'orchestrator',
   };

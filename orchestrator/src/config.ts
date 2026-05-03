@@ -6,11 +6,24 @@ import {
   DEFAULT_BACKLOG_STATUS,
   DEFAULT_BLOCKED_STATUS,
   DEFAULT_BRANCH_PREFIX,
+  DEFAULT_ESCALATED_STATUS,
   DEFAULT_IN_REVIEW_STATUS,
   DEFAULT_READY_STATUS,
   TASK_QUEUE,
 } from './shared';
+import {
+  CODEX_MODEL,
+  CODEX_REASONING_EFFORT,
+  ESCALATION_CODEX_MODEL,
+  ESCALATION_CODEX_REASONING_EFFORT,
+  type AgentReasoningEffort,
+} from './activity-deps';
 import { z } from 'zod';
+
+const agentProfileSchema = z.object({
+  model: z.string(),
+  reasoningEffort: z.enum(['low', 'medium', 'high'] satisfies [AgentReasoningEffort, ...AgentReasoningEffort[]]),
+});
 
 const runtimeRequire = createRequire(__filename);
 
@@ -37,18 +50,27 @@ const orchestratorConfigSchema = z.object({
     intervalSeconds: z.number().int().positive().default(10),
     maxConcurrent: z.number().int().positive().default(5),
   }).default({ enabled: true, intervalSeconds: 10, maxConcurrent: 5 }),
+  agentProfiles: z.object({
+    default: agentProfileSchema.default({ model: CODEX_MODEL, reasoningEffort: CODEX_REASONING_EFFORT }),
+    escalation: agentProfileSchema.default({ model: ESCALATION_CODEX_MODEL, reasoningEffort: ESCALATION_CODEX_REASONING_EFFORT }),
+  }).default({
+    default: { model: CODEX_MODEL, reasoningEffort: CODEX_REASONING_EFFORT },
+    escalation: { model: ESCALATION_CODEX_MODEL, reasoningEffort: ESCALATION_CODEX_REASONING_EFFORT },
+  }),
   github: z.object({
     projectOwner: z.string().optional(),
     projectNumber: z.number().int().positive().optional(),
     backlogStatusName: z.string().default(DEFAULT_BACKLOG_STATUS),
     readyStatusName: z.string().default(DEFAULT_READY_STATUS),
     inReviewStatusName: z.string().default(DEFAULT_IN_REVIEW_STATUS),
+    escalatedStatusName: z.string().default(DEFAULT_ESCALATED_STATUS),
     blockedStatusName: z.string().default(DEFAULT_BLOCKED_STATUS),
     branchPrefix: z.string().default(DEFAULT_BRANCH_PREFIX),
   }).default({
     backlogStatusName: DEFAULT_BACKLOG_STATUS,
     readyStatusName: DEFAULT_READY_STATUS,
     inReviewStatusName: DEFAULT_IN_REVIEW_STATUS,
+    escalatedStatusName: DEFAULT_ESCALATED_STATUS,
     blockedStatusName: DEFAULT_BLOCKED_STATUS,
     branchPrefix: DEFAULT_BRANCH_PREFIX,
   }),

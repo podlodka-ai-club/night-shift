@@ -26,6 +26,7 @@ describe('worker pickup schedule bootstrap', () => {
             backlogStatusName: 'Backlog',
             readyStatusName: 'Ready',
             inReviewStatusName: 'In review',
+            escalatedStatusName: 'Escalated',
             blockedStatusName: 'Blocked',
             branchPrefix: 'orchestrator',
           },
@@ -165,6 +166,7 @@ function buildWorkerConfig(): ResolvedWorkerEntrypointConfig {
       backlogStatusName: 'Backlog',
       readyStatusName: 'Ready',
       inReviewStatusName: 'In review',
+      escalatedStatusName: 'Escalated',
       blockedStatusName: 'Blocked',
       branchPrefix: 'orchestrator',
     },
@@ -172,6 +174,10 @@ function buildWorkerConfig(): ResolvedWorkerEntrypointConfig {
       enabled: true,
       intervalSeconds: 10,
       maxConcurrent: 5,
+    },
+    agentProfiles: {
+      default: { model: 'gpt-5.3-codex', reasoningEffort: 'low' },
+      escalation: { model: 'gpt-5.4', reasoningEffort: 'high' },
     },
   };
 }

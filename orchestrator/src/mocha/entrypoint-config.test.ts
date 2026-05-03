@@ -22,6 +22,23 @@ describe('entrypoint config wiring', () => {
     );
   });
 
+  it('accepts Escalated as a manual client intake status', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-entrypoint-manual-escalated-'));
+    try {
+      await writeFile(
+        path.join(tempDir, 'orchestrator.config.ts'),
+        ['export default {', "  github: { projectOwner: 'acme', projectNumber: 42 },", '};'].join('\n'),
+        'utf8',
+      );
+
+      const resolved = await loadClientEntrypointConfig({ args: ['acme', '42', 'Escalated'], cwd: tempDir, env: {} });
+
+      assert.deepStrictEqual(resolved.command, { kind: 'manual', statusName: 'Escalated' });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('resolves client workflow input and pickup command from config-file defaults', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-entrypoint-config-'));
     try {
@@ -29,6 +46,9 @@ describe('entrypoint config wiring', () => {
         path.join(tempDir, 'orchestrator.config.ts'),
         [
           'export default {',
+          '  agentProfiles: {',
+          "    escalation: { model: 'gpt-5.4', reasoningEffort: 'high' },",
+          '  },',
           '  intake: { maxActions: 3 },',
           '  github: {',
           "    projectOwner: 'acme',",
@@ -36,6 +56,7 @@ describe('entrypoint config wiring', () => {
           "    backlogStatusName: 'Needs Spec',",
           "    readyStatusName: 'Queued',",
           "    inReviewStatusName: 'Reviewing',",
+          "    escalatedStatusName: 'Auto Recovery',",
           "    blockedStatusName: 'Paused',",
           "    branchPrefix: 'feature',",
           '  },',
@@ -52,8 +73,14 @@ describe('entrypoint config wiring', () => {
         backlogStatusName: 'Needs Spec',
         readyStatusName: 'Queued',
         inReviewStatusName: 'Reviewing',
+        escalatedStatusName: 'Auto Recovery',
         blockedStatusName: 'Paused',
         branchPrefix: 'feature',
+      });
+      assert.deepStrictEqual(resolved.temporal, {
+        address: 'localhost:7233',
+        namespace: 'default',
+        taskQueue: 'orchestrator',
       });
       assert.deepStrictEqual(resolved.command, { kind: 'pickup', maxActions: 3 });
     } finally {
@@ -101,6 +128,7 @@ describe('entrypoint config wiring', () => {
           backlogStatusName: 'Backlog',
           readyStatusName: 'Ready',
           inReviewStatusName: 'In review',
+          escalatedStatusName: 'Escalated',
           blockedStatusName: 'Blocked',
           branchPrefix: 'orchestrator',
         },
@@ -108,6 +136,10 @@ describe('entrypoint config wiring', () => {
           enabled: false,
           intervalSeconds: 30,
           maxConcurrent: 2,
+        },
+        agentProfiles: {
+          default: { model: 'gpt-5.3-codex', reasoningEffort: 'low' },
+          escalation: { model: 'gpt-5.4', reasoningEffort: 'high' },
         },
       });
     } finally {
@@ -138,6 +170,10 @@ describe('entrypoint config wiring', () => {
         intervalSeconds: 10,
         maxConcurrent: 5,
       });
+      assert.deepStrictEqual(resolved.agentProfiles, {
+        default: { model: 'gpt-5.3-codex', reasoningEffort: 'low' },
+        escalation: { model: 'gpt-5.4', reasoningEffort: 'high' },
+      });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -164,9 +200,13 @@ describe('entrypoint config wiring', () => {
         backlogStatusName: 'Backlog',
         readyStatusName: 'Ready',
         inReviewStatusName: 'In review',
+        escalatedStatusName: 'Escalated',
         blockedStatusName: 'Blocked',
         branchPrefix: 'orchestrator',
-        filePathPrefix: 'orchestrator-runs',
+      });
+      assert.deepStrictEqual(resolved.agentProfiles, {
+        default: { model: 'gpt-5.3-codex', reasoningEffort: 'low' },
+        escalation: { model: 'gpt-5.4', reasoningEffort: 'high' },
       });
     } finally {
       if (originalOwner === undefined) delete process.env.GITHUB_PROJECT_OWNER;
@@ -234,6 +274,7 @@ describe('entrypoint config wiring', () => {
           "    backlogStatusName: 'Config Backlog',",
           "    readyStatusName: 'Config Ready',",
           "    inReviewStatusName: 'Config Review',",
+          "    escalatedStatusName: 'Config Escalated',",
           "    blockedStatusName: 'Config Blocked',",
           "    branchPrefix: 'config-branch',",
           '  },',
@@ -249,6 +290,7 @@ describe('entrypoint config wiring', () => {
           GITHUB_PROJECT_OWNER: 'env-owner',
           GITHUB_PROJECT_NUMBER: '77',
           GITHUB_BACKLOG_STATUS: 'Env Backlog',
+          GITHUB_ESCALATED_STATUS: 'Env Escalated',
           GITHUB_PICKUP_MAX_ACTIONS: '3',
         },
       });
@@ -259,6 +301,7 @@ describe('entrypoint config wiring', () => {
         backlogStatusName: 'Env Backlog',
         readyStatusName: 'Config Ready',
         inReviewStatusName: 'Config Review',
+        escalatedStatusName: 'Env Escalated',
         blockedStatusName: 'Config Blocked',
         branchPrefix: 'config-branch',
       });

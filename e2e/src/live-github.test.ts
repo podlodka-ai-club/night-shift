@@ -54,6 +54,7 @@ function createSelectedIssue(issueUrl: string): SelectedProjectIssue {
     inProgressOptionId: 'in-progress',
     inReviewOptionId: 'in-review',
     readyToMergeOptionId: 'ready-to-merge',
+    escalatedOptionId: 'escalated',
     blockedOptionId: 'blocked',
     issueNumber: 77,
     issueTitle: 'Seeded issue',
@@ -68,6 +69,7 @@ function createSelectedIssue(issueUrl: string): SelectedProjectIssue {
     readyStatusName: 'Ready',
     inReviewStatusName: 'In review',
     readyToMergeStatusName: 'Ready to merge',
+    escalatedStatusName: 'Escalated',
   };
 }
 
@@ -266,6 +268,7 @@ describe('seedIssueInProject', () => {
               { id: 'in-progress', name: 'In progress' },
               { id: 'in-review', name: 'In review' },
               { id: 'ready-to-merge', name: 'Ready to merge' },
+              { id: 'escalated', name: 'Escalated' },
               { id: 'blocked', name: 'Blocked' },
             ],
           },
@@ -603,6 +606,7 @@ function buildStatusField(options: Array<{ id: string; name: string }> = [
   { id: 'in-progress', name: 'In progress' },
   { id: 'in-review', name: 'In review' },
   { id: 'ready-to-merge', name: 'Ready to merge' },
+  { id: 'escalated', name: 'Escalated' },
   { id: 'blocked', name: 'Blocked' },
 ]) {
   return {

@@ -57,7 +57,7 @@ describe('intake trigger handling', () => {
     );
     assert.deepStrictEqual(
       resolveWorkflowTriggerAction({ boardStatusName: 'In review', workflowId: buildIssueWorkflowId(7), workflowState: { kind: 'open', blockedReason: 'review_escalation' } }),
-      { type: 'signal', workflowId: 'ticket-7', signalName: 'resume' },
+      { type: 'signal', workflowId: 'ticket-7', signalName: 'resumeReviewOnly' },
     );
     assert.deepStrictEqual(
       resolveWorkflowTriggerAction({ boardStatusName: 'Ready', workflowId: buildIssueWorkflowId(7), workflowState: { kind: 'open', blockedReason: 'specify_needs_input' } }),
@@ -69,6 +69,10 @@ describe('intake trigger handling', () => {
     );
     assert.deepStrictEqual(
       resolveWorkflowTriggerAction({ boardStatusName: 'In review', workflowId: buildIssueWorkflowId(7), workflowState: { kind: 'missing' } }),
+      { type: 'noop', workflowId: 'ticket-7', reason: 'unsupported_start_status' },
+    );
+    assert.deepStrictEqual(
+      resolveWorkflowTriggerAction({ boardStatusName: 'Escalated', workflowId: buildIssueWorkflowId(7), workflowState: { kind: 'missing' } }),
       { type: 'noop', workflowId: 'ticket-7', reason: 'unsupported_start_status' },
     );
   });
@@ -110,6 +114,15 @@ describe('intake trigger handling', () => {
         issue: { ...buildListedIssue({ issueNumber: 7, statusName: 'Ready', createdAt: '2026-04-28T12:00:00.000Z' }), currentStatusName: 'In review' },
         boardStatusName: 'In review',
         createdAt: '2026-04-28T12:00:00.000Z',
+        startPhase: undefined,
+      },
+    );
+    assert.deepStrictEqual(
+      buildManualCandidate({ ...buildListedIssue({ issueNumber: 8, statusName: 'Ready', createdAt: '2026-04-28T13:00:00.000Z' }), currentStatusName: 'Escalated' }),
+      {
+        issue: { ...buildListedIssue({ issueNumber: 8, statusName: 'Ready', createdAt: '2026-04-28T13:00:00.000Z' }), currentStatusName: 'Escalated' },
+        boardStatusName: 'Escalated',
+        createdAt: '2026-04-28T13:00:00.000Z',
         startPhase: undefined,
       },
     );

@@ -12,6 +12,7 @@ describe('shared deterministic-phase contracts', () => {
       'In progress',
       'In review',
       'Ready to merge',
+      'Escalated',
       'Blocked',
     ]);
     assert.deepStrictEqual((shared as Record<string, unknown>).READY_ISSUE_STATUS_SEQUENCE, [
@@ -30,7 +31,7 @@ describe('shared deterministic-phase contracts', () => {
       { blockedReason: 'implement_needs_input', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
       { blockedReason: 'implement_needs_input', boardStatusName: 'Ready', signalName: 'implementRetry' },
       { blockedReason: 'review_escalation', boardStatusName: 'Ready', signalName: 'resume' },
-      { blockedReason: 'review_escalation', boardStatusName: 'In review', signalName: 'resume' },
+      { blockedReason: 'review_escalation', boardStatusName: 'In review', signalName: 'resumeReviewOnly' },
     ]);
   });
 });

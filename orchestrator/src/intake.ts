@@ -16,6 +16,7 @@ import {
   getBlockedReasonQuery,
   implementRetrySignal,
   resumeSignal,
+  resumeReviewOnlySignal,
   specReviewedSignal,
   specifyRetrySignal,
 } from './workflows';
@@ -191,5 +192,6 @@ function resolveSignalDefinition(signalName: WorkflowSignalName) {
     case 'specReviewed': return specReviewedSignal;
     case 'implementRetry': return implementRetrySignal;
     case 'resume': return resumeSignal;
+    case 'resumeReviewOnly': return resumeReviewOnlySignal;
   }
 }

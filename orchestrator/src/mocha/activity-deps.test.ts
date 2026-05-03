@@ -4,7 +4,7 @@ import { Context } from '@temporalio/activity';
 import { WorkflowNotFoundError } from '@temporalio/common';
 import { describe, it } from 'mocha';
 import { createActivityDependencies } from '../activities';
-import { createCodexAgentAdapter, createLazyCodexSession } from '../activity-deps';
+import { createCodexAgentAdapter, createLazyCodexSession, resolveAgentProfiles } from '../activity-deps';
 
 describe('activity dependencies', () => {
   it('closes stdin for child commands in the default command runner', async () => {
@@ -34,24 +34,34 @@ describe('activity dependencies', () => {
 
   it('creates and resumes sessions through the Codex adapter boundary', async () => {
     const createCalls: string[] = [];
-    const resumeCalls: Array<{ worktreePath: string; threadId: string }> = [];
+    const createProfiles: Array<string | undefined> = [];
+    const resumeCalls: Array<{ worktreePath: string; threadId: string; agentProfile?: string }> = [];
     const createdSession = { id: 'created-thread', run: async () => ({ finalResponse: 'created' }) };
     const resumedSession = { id: 'resumed-thread', run: async () => ({ finalResponse: 'resumed' }) };
     const adapter = createCodexAgentAdapter({
-      createCodexThread(worktreePath: string) {
+      createCodexThread(worktreePath: string, agentProfile) {
         createCalls.push(worktreePath);
+        createProfiles.push(agentProfile);
         return createdSession;
       },
-      resumeCodexThread(worktreePath: string, threadId: string) {
-        resumeCalls.push({ worktreePath, threadId });
+      resumeCodexThread(worktreePath: string, threadId: string, agentProfile) {
+        resumeCalls.push({ worktreePath, threadId, agentProfile });
         return resumedSession;
       },
     });
 
     assert.strictEqual(adapter.createSession('/tmp/worktree'), createdSession);
-    assert.strictEqual(adapter.resumeSession('/tmp/worktree', 'thread-123'), resumedSession);
+    assert.strictEqual(adapter.resumeSession('/tmp/worktree', 'thread-123', 'escalation'), resumedSession);
     assert.deepStrictEqual(createCalls, ['/tmp/worktree']);
-    assert.deepStrictEqual(resumeCalls, [{ worktreePath: '/tmp/worktree', threadId: 'thread-123' }]);
+    assert.deepStrictEqual(createProfiles, [undefined]);
+    assert.deepStrictEqual(resumeCalls, [{ worktreePath: '/tmp/worktree', threadId: 'thread-123', agentProfile: 'escalation' }]);
+  });
+
+  it('merges default and override agent profiles deterministically', () => {
+    assert.deepStrictEqual(resolveAgentProfiles({ escalation: { model: 'custom-escalation', reasoningEffort: 'medium' } }), {
+      default: { model: 'gpt-5.3-codex', reasoningEffort: 'low' },
+      escalation: { model: 'custom-escalation', reasoningEffort: 'medium' },
+    });
   });
 
   it('keeps lazy session identity, passes schema and signal through, and forwards progress events', async () => {
