@@ -134,6 +134,7 @@ export function buildLiveEvalIssue(fixtureId: string, title: string, description
     inProgressOptionId: 'eval-in-progress',
     inReviewOptionId: 'eval-in-review',
     readyToMergeOptionId: 'eval-ready-to-merge',
+    escalatedOptionId: 'eval-escalated',
     blockedOptionId: 'eval-blocked',
     issueNumber: 1,
     issueTitle: title,
@@ -148,6 +149,7 @@ export function buildLiveEvalIssue(fixtureId: string, title: string, description
     readyStatusName: 'Ready',
     inReviewStatusName: 'In review',
     readyToMergeStatusName: 'Ready to merge',
+    escalatedStatusName: 'Escalated',
   };
 }
 

@@ -185,7 +185,6 @@ function buildBaseDeps(): AgentActivityDeps {
     resumeCodexThread: () => {
       throw new Error('resumeCodexThread should be overridden');
     },
-    getAgentProfile: () => ({ model: 'gpt-5.3-codex', reasoningEffort: 'low' }),
     createClaudeSession: () => {
       throw new Error('createClaudeSession should be overridden');
     },
