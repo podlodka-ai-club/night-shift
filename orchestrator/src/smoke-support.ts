@@ -7,6 +7,14 @@ export interface ToolActivitySummary {
   toolResultCount: number;
 }
 
+export interface ProviderStreamActivitySummary {
+  totalProviderItems: number;
+  providerItemTypes: string[];
+  assistantMessageCount: number;
+  resultMessageCount: number;
+  assistantTextSnapshots: string[];
+}
+
 export interface OutputSchemaSmokePayload {
   answer: string;
   letters: string[];
@@ -36,6 +44,47 @@ export function summarizeToolActivity(events: readonly AgentProgressEvent[]): To
   }
 
   return { totalProviderItems, providerItemTypes, toolUseCount, toolResultCount };
+}
+
+export function summarizeProviderStreamActivity(events: readonly AgentProgressEvent[]): ProviderStreamActivitySummary {
+  const providerItemTypes: string[] = [];
+  const assistantTextSnapshots: string[] = [];
+  let totalProviderItems = 0;
+  let assistantMessageCount = 0;
+  let resultMessageCount = 0;
+
+  for (const event of events) {
+    if (event.type !== 'provider-item') {
+      continue;
+    }
+
+    totalProviderItems += 1;
+    const itemType = readProviderItemType(event.payload);
+    if (itemType && !providerItemTypes.includes(itemType)) {
+      providerItemTypes.push(itemType);
+    }
+    if (!isRecord(event.payload)) {
+      continue;
+    }
+    if (itemType === 'assistant') {
+      assistantMessageCount += 1;
+      const snapshot = extractAssistantTextSnapshot(event.payload);
+      if (snapshot) {
+        assistantTextSnapshots.push(snapshot);
+      }
+    }
+    if (itemType === 'result') {
+      resultMessageCount += 1;
+    }
+  }
+
+  return {
+    totalProviderItems,
+    providerItemTypes,
+    assistantMessageCount,
+    resultMessageCount,
+    assistantTextSnapshots,
+  };
 }
 
 export function validateOutputSchemaSmokeText(
@@ -111,6 +160,19 @@ function classifyToolProviderItem(value: unknown): { toolUseCount: number; toolR
 
 function readProviderItemType(value: unknown): string | undefined {
   return isRecord(value) && typeof value.type === 'string' ? value.type : undefined;
+}
+
+function extractAssistantTextSnapshot(value: Record<string, any>): string {
+  const blocks = isRecord(value.message) && Array.isArray(value.message.content)
+    ? value.message.content
+    : [];
+  let text = '';
+  for (const block of blocks) {
+    if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
+      text += block.text;
+    }
+  }
+  return text;
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

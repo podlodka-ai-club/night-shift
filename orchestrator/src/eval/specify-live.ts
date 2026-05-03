@@ -1,10 +1,11 @@
 import { getAgentSchema } from '../agent-schema-registry';
-import { buildPromptHardeningPreamble, wrapUntrustedInput } from '../phases/prompt-hardening';
+import { wrapUntrustedInput } from '../phases/prompt-hardening';
 import { buildSpecifyChangeName, buildSpecifyPrompt, SPECIFY_SYSTEM_PROMPT } from '../phases/specify/prompt';
 import {
   formatJudgeFeedback,
   normalizeLiveJudgeMaxRevisions,
   runLiveJudge,
+  SPECIFY_LIVE_JUDGE_SYSTEM_PROMPT,
   summariseJudgeReports,
   type LiveJudgeAttempt,
   type LiveJudgeOptions,
@@ -29,8 +30,6 @@ export interface SpecifyLiveSuiteOptions {
   model?: string;
   onGeneratorResult?: (fixture: SpecifyReplayFixture, result: LiveTurnResult) => void;
 }
-
-const SPECIFY_JUDGE_SYSTEM_PROMPT = buildPromptHardeningPreamble('You are reviewing a live specify eval output for operator-facing quality.');
 
 function buildSpecifyJudgePrompt(
   basePrompt: string,
@@ -154,7 +153,7 @@ export async function runSpecifyLiveFixture(
       prompt: buildSpecifyJudgePrompt(basePrompt, finalText, result),
       turnRunner: judgeTurnRunner,
       timeoutMs: options.timeoutMs,
-      systemPrompt: SPECIFY_JUDGE_SYSTEM_PROMPT,
+      systemPrompt: SPECIFY_LIVE_JUDGE_SYSTEM_PROMPT,
       provider: options.judge?.provider ?? options.provider,
       model: options.judge?.model ?? options.model,
     });

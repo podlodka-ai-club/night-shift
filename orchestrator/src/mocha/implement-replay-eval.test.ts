@@ -17,15 +17,15 @@ describe('implement replay eval harness', () => {
     const fixtures = await loadImplementReplayFixtures(FIXTURES_DIR);
     const suite = runImplementReplaySuite(fixtures) as any;
 
-    assert.strictEqual(fixtures.length, 5);
+    assert.strictEqual(fixtures.length, 7);
     assert.deepStrictEqual(suite.summary.byStatus, {
-      produced: 2,
+      produced: 4,
       empty: 1,
       parse_error: 1,
       schema_error: 1,
     });
     assert.strictEqual(suite.schemaId, IMPLEMENT_REPLAY_SCHEMA_ID);
-    assert.strictEqual(suite.summary.total, 5);
+    assert.strictEqual(suite.summary.total, 7);
     assert.strictEqual(suite.summary.expectationMismatches, 0);
     assert.ok(suite.summary.totalTokens > 0);
     assert.ok(suite.summary.totalCostMicroUsd > 0);
@@ -35,8 +35,10 @@ describe('implement replay eval harness', () => {
       'cli-flag-strict': 'produced',
       'empty-no-changes': 'empty',
       'parse-error-prose': 'parse_error',
+      'refined-bug-fix': 'produced',
       'retry-jitter': 'produced',
       'schema-error-absolute-path': 'schema_error',
+      'vague-scope-creep': 'produced',
     });
   });
 

@@ -60,6 +60,53 @@ describe('implement live eval harness', () => {
     assert.strictEqual((result as any).judge?.attempts[0]?.costMicroUsd, 35);
   });
 
+  it('uses the donor-faithful R1-R6 judge rubric for implement reviews', async () => {
+    let judgeSystemPrompt = '';
+
+    const result = await runImplementLiveFixture({
+      id: 'live-implement-judge-rubric',
+      ticket: {
+        title: 'Keep implement judge scoring donor-faithful',
+        description: 'The implement judge prompt should keep the donor rubric language.',
+        labels: ['feature'],
+      },
+      specBundle: [
+        { path: 'proposal.md', content: '# Proposal\n\n## Acceptance criteria\n- Map changed files back to the requested guardrail.' },
+        { path: 'tasks.md', content: '- [ ] Update src/cli/eval.ts\n- [ ] Add tests\n- [ ] Maybe restructure the CLI bootstrap' },
+      ],
+      operatorComments: [],
+    } as any, {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 0 },
+      turnRunner: async (request) => {
+        if (request.prompt.includes('Candidate response JSON')) {
+          judgeSystemPrompt = request.systemPrompt ?? '';
+          return {
+            finalText: JSON.stringify({ verdict: 'pass', summary: 'Looks good.', issues: [] }),
+          };
+        }
+
+        return {
+          finalText: JSON.stringify({
+            filesWritten: [{ path: 'src/cli/eval.ts', content: 'export const guardrails = true;\n' }],
+            commitMessage: 'feat(cli): keep guardrails explicit',
+            summary: 'Updates src/cli/eval.ts and adds a matching test name for the requested guardrail.',
+            followUps: [],
+          }),
+        };
+      },
+    });
+
+    assert.strictEqual(result.status, 'produced');
+    assert.match(judgeSystemPrompt, /R1\. FAITHFULNESS/i);
+    assert.match(judgeSystemPrompt, /R2\. DOD MAPPING/i);
+    assert.match(judgeSystemPrompt, /R3\. SCOPE/i);
+    assert.match(judgeSystemPrompt, /R4\. EVIDENCE/i);
+    assert.match(judgeSystemPrompt, /R5\. ASSUMPTIONS/i);
+    assert.match(judgeSystemPrompt, /R6\. SELF-ATTACK/i);
+    assert.match(judgeSystemPrompt, /Do not require execution evidence/i);
+  });
+
   it('can run an optional judge pass with a bounded single revision and report both verdicts transparently', async () => {
     const fixture = {
       id: 'live-implement-judge-pass-after-revision',

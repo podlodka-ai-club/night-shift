@@ -1,10 +1,11 @@
 import { getAgentSchema } from '../agent-schema-registry';
 import { buildChangeName } from '../phases/change-name';
-import { buildPromptHardeningPreamble, wrapUntrustedInput } from '../phases/prompt-hardening';
+import { wrapUntrustedInput } from '../phases/prompt-hardening';
 import { buildImplementPrompt, IMPLEMENT_SYSTEM_PROMPT, type ImplementRetryFeedback } from '../phases/implement/prompt';
 import { type OpenPullRequestFeedback } from '../shared';
 import {
   formatJudgeFeedback,
+  IMPLEMENT_LIVE_JUDGE_SYSTEM_PROMPT,
   normalizeLiveJudgeMaxRevisions,
   runLiveJudge,
   summariseJudgeReports,
@@ -36,8 +37,6 @@ const EMPTY_PULL_REQUEST_FEEDBACK: OpenPullRequestFeedback = {
   reviewBodies: [],
   reviewComments: [],
 };
-
-const IMPLEMENT_JUDGE_SYSTEM_PROMPT = buildPromptHardeningPreamble('You are reviewing a live implement eval output for operator-facing quality.');
 
 function buildImplementPromptBase(fixture: ImplementReplayFixture, retryFeedback?: ImplementRetryFeedback): string {
   const issue = buildLiveEvalIssue(fixture.id, fixture.ticket.title, fixture.ticket.description);
@@ -180,7 +179,7 @@ export async function runImplementLiveFixture(
       prompt: buildImplementJudgePrompt(basePrompt, finalText, result),
       turnRunner: judgeTurnRunner,
       timeoutMs: options.timeoutMs,
-      systemPrompt: IMPLEMENT_JUDGE_SYSTEM_PROMPT,
+      systemPrompt: IMPLEMENT_LIVE_JUDGE_SYSTEM_PROMPT,
       provider: options.judge?.provider ?? options.provider,
       model: options.judge?.model ?? options.model,
     });

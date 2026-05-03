@@ -94,6 +94,53 @@ describe('specify live eval harness', () => {
     assert.strictEqual((result as any).judge?.attempts[1]?.costMicroUsd, 25);
   });
 
+  it('uses the donor-faithful R1-R6 judge rubric for specify reviews', async () => {
+    let judgeSystemPrompt = '';
+
+    const result = await runSpecifyLiveFixture({
+      id: 'live-specify-judge-rubric',
+      ticket: {
+        title: 'Require a measurable loading-state definition of done',
+        description: 'The judge prompt should enforce the donor specify rubric.',
+        labels: ['enhancement'],
+      },
+      priorDraft: [{ path: 'proposal.md', content: '# Draft proposal' }],
+      operatorComments: [],
+    } as any, {
+      worktreePath: '/tmp/eval-worktree',
+      judge: { maxRevisions: 0 },
+      turnRunner: async (request) => {
+        if (request.prompt.includes('Candidate response JSON')) {
+          judgeSystemPrompt = request.systemPrompt ?? '';
+          return {
+            finalText: JSON.stringify({ verdict: 'pass', summary: 'Looks good.', issues: [] }),
+          };
+        }
+
+        return {
+          finalText: JSON.stringify({
+            files: [
+              { path: 'proposal.md', content: '# Proposal\n\nDefinition of done: loading feedback is visible within one second.' },
+              { path: 'tasks.md', content: '- [ ] Add a measurable loading-state check' },
+            ],
+            openQuestions: [],
+            assumptions: [],
+            risks: [],
+          }),
+        };
+      },
+    });
+
+    assert.strictEqual(result.status, 'refined');
+    assert.match(judgeSystemPrompt, /R1\. FAITHFULNESS/i);
+    assert.match(judgeSystemPrompt, /R2\. EVIDENCE/i);
+    assert.match(judgeSystemPrompt, /R3\. ASSUMPTIONS/i);
+    assert.match(judgeSystemPrompt, /R4\. QUESTIONS/i);
+    assert.match(judgeSystemPrompt, /R5\. SCOPE/i);
+    assert.match(judgeSystemPrompt, /R6\. DOD/i);
+    assert.match(judgeSystemPrompt, /Do not invent facts about the codebase/i);
+  });
+
   it('caps direct judge revision requests at two revisions inside the harness', async () => {
     let callCount = 0;
 

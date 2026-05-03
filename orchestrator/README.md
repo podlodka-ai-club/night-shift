@@ -236,6 +236,10 @@ npm run smoke:tools
 - Claude smokes require `ANTHROPIC_API_KEY`.
 - Codex smokes require `OPENAI_API_KEY`.
 - `smoke:output-schema` and `smoke:tools` run both Codex and Claude.
+- `smoke:claude` covers the current-main equivalent of the donor's
+  `runStreamed()` smoke by asserting `onEvent` provider-item traces because the
+  shared `AgentSession` seam intentionally exposes `run()` rather than a
+  separate streaming method.
 - `smoke:tools` uses raw `provider-item` traces from the current session API as
   the current-main equivalent of the donor's tool-use/tool-result streaming
   checks.

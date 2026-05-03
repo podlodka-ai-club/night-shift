@@ -1,6 +1,6 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
-import { summarizeToolActivity, validateOutputSchemaSmokeText } from '../smoke-support';
+import { summarizeProviderStreamActivity, summarizeToolActivity, validateOutputSchemaSmokeText } from '../smoke-support';
 
 describe('smoke support', () => {
   it('counts codex MCP tool calls as both tool use and tool result activity when completed', () => {
@@ -37,6 +37,21 @@ describe('smoke support', () => {
 
     assert.strictEqual(summary.toolUseCount, 2);
     assert.strictEqual(summary.toolResultCount, 2);
+  });
+
+  it('summarizes provider-item streaming traces for the adapted Claude smoke path', () => {
+    const summary = summarizeProviderStreamActivity([
+      { type: 'provider-item', payload: { type: 'assistant', message: { content: [{ type: 'text', text: 'pon' }] } } },
+      { type: 'provider-item', payload: { type: 'assistant', message: { content: [{ type: 'text', text: 'pong' }] } } },
+      { type: 'provider-item', payload: { type: 'result', subtype: 'success' } },
+      { type: 'usage', payload: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } },
+    ] as any);
+
+    assert.strictEqual(summary.totalProviderItems, 3);
+    assert.deepStrictEqual(summary.providerItemTypes, ['assistant', 'result']);
+    assert.strictEqual(summary.assistantMessageCount, 2);
+    assert.strictEqual(summary.resultMessageCount, 1);
+    assert.deepStrictEqual(summary.assistantTextSnapshots, ['pon', 'pong']);
   });
 
   it('validates the donor-equivalent output-schema payload and reports malformed responses clearly', () => {
