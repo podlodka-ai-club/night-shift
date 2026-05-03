@@ -3,7 +3,7 @@ import { createActivityDependencies } from '../src/activities';
 import type { AgentProgressEvent } from '../src/activity-deps';
 import { createProviderAgentAdapter } from '../src/activity-deps';
 import { DEFAULT_AGENT_MODEL_BY_PROVIDER } from '../src/agent-provider';
-import { summarizeProviderStreamActivity } from '../src/smoke-support';
+import { renderProviderItemTrace, summarizeProviderStreamActivity } from '../src/smoke-support';
 
 const WORKTREE_PATH = path.resolve(__dirname, '..');
 
@@ -25,26 +25,35 @@ async function main(): Promise<void> {
   console.log('worktree:', WORKTREE_PATH);
   console.log('session.id (before first turn):', session.id);
 
+  console.log('>>> run() one-shot');
+  const firstStartedAt = Date.now();
   const firstTurn = await session.run('Reply with exactly: pong', {
     systemPrompt: 'You are a terse smoke-test assistant. Answer in 5 words or fewer.',
   });
-  console.log('first.finalResponse:', JSON.stringify(firstTurn.finalResponse));
-  console.log('first.usage:', firstTurn.usage);
-  console.log('first.costMicroUsd:', firstTurn.costMicroUsd);
-  console.log('session.id (after first turn):', session.id);
+  const firstWallMs = Date.now() - firstStartedAt;
+  console.log('finalText:', JSON.stringify(firstTurn.finalResponse));
+  console.log('usage:', firstTurn.usage);
+  console.log('costMicroUsd:', firstTurn.costMicroUsd);
+  console.log('wallMs:', firstWallMs);
+  console.log('session.id:', session.id);
 
   const secondTurnEvents: AgentProgressEvent[] = [];
+  console.log('\n>>> run() resume with provider-item trace');
+  const secondStartedAt = Date.now();
   const secondTurn = await session.run('Now reply with exactly: ack', {
     systemPrompt: 'You are a terse smoke-test assistant. Answer in 5 words or fewer.',
     onEvent: (event) => secondTurnEvents.push(event),
   });
+  const secondWallMs = Date.now() - secondStartedAt;
   const secondTurnStream = summarizeProviderStreamActivity(secondTurnEvents);
-  console.log('second.finalResponse:', JSON.stringify(secondTurn.finalResponse));
-  console.log('second.usage:', secondTurn.usage);
-  console.log('second.costMicroUsd:', secondTurn.costMicroUsd);
-  console.log('second.stream.providerItemTypes:', secondTurnStream.providerItemTypes);
-  console.log('second.stream.assistantMessageCount:', secondTurnStream.assistantMessageCount);
-  console.log('second.stream.resultMessageCount:', secondTurnStream.resultMessageCount);
+  for (const line of renderProviderItemTrace(secondTurnEvents)) {
+    console.log(line);
+  }
+  console.log('[done]', JSON.stringify(secondTurn.finalResponse));
+  console.log('[turn-completed] costMicroUsd:', secondTurn.costMicroUsd, 'usage:', secondTurn.usage, 'wallMs:', secondWallMs);
+  console.log('providerItemTypes:', secondTurnStream.providerItemTypes);
+  console.log('assistantMessageCount:', secondTurnStream.assistantMessageCount);
+  console.log('resultMessageCount:', secondTurnStream.resultMessageCount);
   console.log('session.id (after resume):', session.id);
 
   if (secondTurnStream.totalProviderItems === 0

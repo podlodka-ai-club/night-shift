@@ -18,6 +18,22 @@ export function buildPromptHardeningPreamble(intro: string): string {
   return [intro, '', ...ENGINEERING_HYGIENE_RULES, '', ...UNTRUSTED_INPUT_RULES].join('\n');
 }
 
+export interface PromptContextHeadingInput {
+  fallbackLabel: string;
+  location?: string;
+  authorLogin?: string;
+  createdAt?: string;
+}
+
+export function renderPromptContextHeading(input: PromptContextHeadingInput): string {
+  const contextParts = [
+    input.location,
+    input.authorLogin ? `@${input.authorLogin}` : undefined,
+    input.createdAt,
+  ].filter((part): part is string => Boolean(part));
+  return `### ${contextParts.length === 0 ? input.fallbackLabel : contextParts.join(' — ')}`;
+}
+
 export function wrapUntrustedInput(source: string, body: string): string {
   return `<untrusted-input source="${escapeAttribute(source)}">\n${normalizeBody(body)}\n</untrusted-input>`;
 }

@@ -1,6 +1,6 @@
 import { isNightShiftMarkerComment } from '../../comment-markers';
 import type { OpenSpecChangeFile, PullRequestChangedFile, PullRequestDetails, PullRequestReviewComment, SelectedProjectIssue } from '../../shared';
-import { wrapUntrustedInput } from '../prompt-hardening';
+import { renderPromptContextHeading, wrapUntrustedInput } from '../prompt-hardening';
 
 const DEFAULT_MAX_DIFF_CHARACTERS = 12_000;
 const UTF8_ENCODER = new TextEncoder();
@@ -86,7 +86,15 @@ export function buildReviewPrompt(input: BuildReviewPromptInput): string {
 }
 
 function renderIssue(issue: SelectedProjectIssue): string {
-  return [`# Ticket ${issue.issueNumber}: ${issue.issueTitle}`, '', `URL: ${issue.issueUrl}`, '', '## Description', issue.taskDescription.trim() || '_(no description provided)_'].join('\n');
+  return [
+    `# Ticket ${issue.issueNumber}: ${issue.issueTitle}`,
+    '',
+    `URL: ${issue.issueUrl}`,
+    ...(issue.labels && issue.labels.length > 0 ? [`Labels: ${issue.labels.join(', ')}`] : []),
+    '',
+    '## Description',
+    issue.taskDescription.trim() || '_(no description provided)_',
+  ].join('\n');
 }
 
 function renderSpecBundle(files: readonly OpenSpecChangeFile[]): string {
@@ -163,7 +171,14 @@ function renderReviewComments(comments: readonly PullRequestReviewComment[]): st
   if (visibleComments.length === 0) return undefined;
   return [
     '## Existing review comments',
-    wrapUntrustedInput('github-review-comments', visibleComments.map((comment) => `- **${comment.path}${comment.line ? `:${comment.line}` : ''}**: ${comment.body.replace(/\s+/g, ' ').trim()}`).join('\n')),
+    wrapUntrustedInput('github-review-comments', visibleComments.map((comment, index) => {
+      const location = `${comment.path}${comment.line ? `:${comment.line}` : ''}`;
+      return [
+        renderPromptContextHeading({ fallbackLabel: `Comment ${index + 1}`, location, authorLogin: comment.authorLogin, createdAt: comment.createdAt }),
+        comment.body.trim(),
+        '',
+      ].join('\n');
+    }).join('\n')),
   ].join('\n');
 }
 
@@ -183,3 +198,4 @@ function summarizePatch(patch: string | undefined): { additions: number; deletio
     deletions: (patch.match(/^-[^-]/gm) ?? []).length,
   };
 }
+

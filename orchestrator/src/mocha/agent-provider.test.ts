@@ -28,6 +28,17 @@ describe('agent provider selection', () => {
     });
   });
 
+  it('normalizes donor openai/anthropic aliases to the canonical provider ids', () => {
+    assert.deepStrictEqual(resolveAgentProviderSelection({ provider: 'openai' }), {
+      provider: 'codex',
+      model: DEFAULT_AGENT_MODEL_BY_PROVIDER.codex,
+    });
+    assert.deepStrictEqual(resolveAgentProviderSelection({ provider: 'anthropic' }), {
+      provider: 'claude',
+      model: DEFAULT_AGENT_MODEL_BY_PROVIDER.claude,
+    });
+  });
+
   it('infers the claude provider from a claude model when provider is omitted', () => {
     assert.deepStrictEqual(resolveAgentProviderSelection({ model: 'claude-haiku-4-5' }), {
       provider: 'claude',

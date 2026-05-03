@@ -1,6 +1,6 @@
 import { isNightShiftMarkerComment } from '../../comment-markers';
 import type { IssueComment, OpenPullRequestFeedback, OpenSpecChangeFile, SelectedProjectIssue } from '../../shared';
-import { wrapUntrustedInput } from '../prompt-hardening';
+import { renderPromptContextHeading, wrapUntrustedInput } from '../prompt-hardening';
 
 export const IMPLEMENT_SYSTEM_PROMPT = [
   'You are the Implementer role in the Night-Shift system.',
@@ -75,7 +75,15 @@ export function buildImplementPrompt(input: BuildImplementPromptInput): string {
 }
 
 function renderIssue(issue: SelectedProjectIssue): string {
-  return [`# Ticket ${issue.issueNumber}: ${issue.issueTitle}`, '', `URL: ${issue.issueUrl}`, '', '## Description', issue.taskDescription.trim() || '_(no description provided)_'].join('\n');
+  return [
+    `# Ticket ${issue.issueNumber}: ${issue.issueTitle}`,
+    '',
+    `URL: ${issue.issueUrl}`,
+    ...(issue.labels && issue.labels.length > 0 ? [`Labels: ${issue.labels.join(', ')}`] : []),
+    '',
+    '## Description',
+    issue.taskDescription.trim() || '_(no description provided)_',
+  ].join('\n');
 }
 
 function renderSpecBundleFiles(specBundleFiles: readonly OpenSpecChangeFile[]): string {
@@ -88,26 +96,45 @@ function renderIssueComments(issueComments: readonly IssueComment[]): string | u
   const visibleComments = issueComments.filter((comment) => !isNightShiftMarkerComment(comment.body));
   return visibleComments.length === 0
     ? undefined
-    : wrapUntrustedInput('github-comments', visibleComments.map((comment, index) => [`### Comment ${index + 1}`, comment.body.trim(), ''].join('\n')).join('\n'));
+    : wrapUntrustedInput('github-comments', visibleComments.map((comment, index) => [
+        renderPromptContextHeading({ fallbackLabel: `Comment ${index + 1}`, authorLogin: comment.authorLogin, createdAt: comment.createdAt }),
+        comment.body.trim(),
+        '',
+      ].join('\n')).join('\n'));
 }
 
 function renderPullRequestFeedback(pullRequestFeedback: OpenPullRequestFeedback | undefined): string | undefined {
   const reviewBodies = pullRequestFeedback?.reviewBodies
-    .map(normalizeFeedbackBody)
-    .filter((body) => body.length > 0)
+    .map((reviewBody, index) => renderPullRequestReviewBody(reviewBody, index))
+    .filter((reviewBody): reviewBody is string => Boolean(reviewBody))
     ?? [];
   const reviewComments = pullRequestFeedback?.reviewComments
     .map((comment) => {
       const body = normalizeFeedbackBody(comment.body);
       if (!body) return undefined;
       const location = `${comment.path}${comment.line ? `:${comment.line}` : ''}`;
-      return `### ${location}\n${body}\n`;
+      return [
+        renderPromptContextHeading({ fallbackLabel: location, location, authorLogin: comment.authorLogin, createdAt: comment.createdAt }),
+        body,
+        '',
+      ].join('\n');
     })
     .filter((comment): comment is string => Boolean(comment))
     ?? [];
-  const reviewEntries = reviewBodies.map((body, index) => `### Review ${index + 1}\n${body}\n`);
-  const entries = [...reviewEntries, ...reviewComments];
+  const entries = [...reviewBodies, ...reviewComments];
   return entries.length === 0 ? undefined : wrapUntrustedInput('github-review-feedback', entries.join('\n'));
+}
+
+function renderPullRequestReviewBody(reviewBody: OpenPullRequestFeedback['reviewBodies'][number], index: number): string | undefined {
+  const metadata = typeof reviewBody === 'string' ? { body: reviewBody } : reviewBody;
+  const body = normalizeFeedbackBody(metadata.body);
+  if (!body) return undefined;
+  return [renderReviewBodyHeading(index, metadata.authorLogin, metadata.createdAt), body, ''].join('\n');
+}
+
+function renderReviewBodyHeading(index: number, authorLogin: string | undefined, createdAt: string | undefined): string {
+  const parts = [`Review ${index + 1}`, authorLogin ? `@${authorLogin}` : undefined, createdAt].filter((part): part is string => Boolean(part));
+  return `### ${parts.join(' — ')}`;
 }
 
 function normalizeFeedbackBody(body: string): string {

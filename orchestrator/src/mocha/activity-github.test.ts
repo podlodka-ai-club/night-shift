@@ -18,7 +18,7 @@ import {
 
 describe('github activities', () => {
   it('selects the first ready issue from the project response', async () => {
-    const selectedIssue = buildSelectedIssue();
+    const selectedIssue = { ...buildSelectedIssue(), labels: ['backend', 'p1'] };
     const fetchCalls: FetchCall[] = [];
     const { getTopReadyIssue } = createActivityTestRig({
       github: { fetch: createFetchSequenceMock([jsonResponse(buildProjectQueryResponse(selectedIssue))], fetchCalls) },
@@ -31,6 +31,7 @@ describe('github activities', () => {
     assert.strictEqual(fetchCalls[0].url, 'https://api.github.com/graphql');
     assert.strictEqual(fetchCalls[0].init?.method, 'POST');
     assert.match(String(fetchCalls[0].init?.body), /owner: user\(login: \$login\)/);
+    assert.match(String(fetchCalls[0].init?.body), /labels\(first: 20\)/);
     assert.deepStrictEqual(JSON.parse(String(fetchCalls[0].init?.body)).variables, {
       login: 'Mugenor',
       number: 1,
@@ -393,6 +394,20 @@ describe('github activities', () => {
     );
   });
 
+  it('reads issue comment metadata from GitHub for donor-faithful prompt rendering', async () => {
+    const fetchCalls: FetchCall[] = [];
+    const { listIssueComments } = createActivityTestRig({
+      github: { fetch: createFetchSequenceMock([
+        jsonResponse([{ id: 1, body: 'Customer note', user: { login: 'customer' }, created_at: '2026-05-03T10:15:00Z' }]),
+      ], fetchCalls) },
+    });
+
+    assert.deepStrictEqual(await listIssueComments({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', issueNumber: 7 }), [
+      { id: 1, body: 'Customer note', authorLogin: 'customer', createdAt: '2026-05-03T10:15:00Z' },
+    ]);
+    assert.strictEqual(fetchCalls[0]?.url, 'https://api.github.com/repos/Mugenor/orchestrator-testing/issues/7/comments');
+  });
+
   it('reads pull request review context from GitHub', async () => {
     const fetchCalls: FetchCall[] = [];
     const { getPullRequestDetails, getPullRequestDiff, listPullRequestFiles, listPullRequestReviewComments, listOpenPullRequestFeedback } = createActivityTestRig({
@@ -400,10 +415,14 @@ describe('github activities', () => {
         jsonResponse({ number: 42, html_url: 'https://github.com/Mugenor/orchestrator-testing/pull/42', draft: true, head: { sha: 'abc123' } }),
         new Response('diff --git a/src/index.ts b/src/index.ts', { status: 200 }),
         jsonResponse([{ filename: 'src/index.ts', patch: '@@\n+export const ok = true;' }]),
-        jsonResponse([{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }]),
+        jsonResponse([{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1, user: { login: 'human-reviewer' }, created_at: '2026-05-03T12:00:00Z' }]),
         jsonResponse([{ number: 42, html_url: 'https://github.com/Mugenor/orchestrator-testing/pull/42', draft: true, head: { sha: 'abc123' } }]),
-        jsonResponse([{ body: '<!-- night-shift:review:summary -->\nNeeds a narrower API.' }, { body: '' }, { body: 'Human review note' }]),
-        jsonResponse([{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }]),
+        jsonResponse([
+          { body: '<!-- night-shift:review:summary -->\nNeeds a narrower API.', user: { login: 'automation-reviewer' }, created_at: '2026-05-03T11:45:00Z' },
+          { body: '' },
+          { body: 'Human review note', user: { login: 'human-reviewer' }, created_at: '2026-05-03T12:05:00Z' },
+        ]),
+        jsonResponse([{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1, user: { login: 'human-reviewer' }, created_at: '2026-05-03T12:00:00Z' }]),
       ], fetchCalls) },
     });
 
@@ -417,10 +436,13 @@ describe('github activities', () => {
     });
     assert.strictEqual(await getPullRequestDiff({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), 'diff --git a/src/index.ts b/src/index.ts');
     assert.deepStrictEqual(await listPullRequestFiles({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]);
-    assert.deepStrictEqual(await listPullRequestReviewComments({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), [{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }]);
+    assert.deepStrictEqual(await listPullRequestReviewComments({ repoOwner: 'Mugenor', repoName: 'orchestrator-testing', pullRequestNumber: 42 }), [{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1, authorLogin: 'human-reviewer', createdAt: '2026-05-03T12:00:00Z' }]);
     assert.deepStrictEqual(await listOpenPullRequestFeedback({ worktree }), {
-      reviewBodies: ['<!-- night-shift:review:summary -->\nNeeds a narrower API.', 'Human review note'],
-      reviewComments: [{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1 }],
+      reviewBodies: [
+        { body: '<!-- night-shift:review:summary -->\nNeeds a narrower API.', authorLogin: 'automation-reviewer', createdAt: '2026-05-03T11:45:00Z' },
+        { body: 'Human review note', authorLogin: 'human-reviewer', createdAt: '2026-05-03T12:05:00Z' },
+      ],
+      reviewComments: [{ id: 9, body: 'Human note', path: 'src/index.ts', line: 1, authorLogin: 'human-reviewer', createdAt: '2026-05-03T12:00:00Z' }],
     });
     assert.strictEqual(String(fetchCalls[1].init?.headers && (fetchCalls[1].init?.headers as Record<string, string>).Accept), 'application/vnd.github.v3.diff');
   });

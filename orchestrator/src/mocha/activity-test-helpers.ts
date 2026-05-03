@@ -227,6 +227,9 @@ export function buildProjectItemNode(
       body: issue.taskDescription,
       url: issue.issueUrl,
       createdAt: options?.createdAt ?? '2026-04-28T09:00:00.000Z',
+      labels: {
+        nodes: (issue.labels ?? []).map((name) => ({ name })),
+      },
       repository: {
         name: issue.repoName,
         owner: { login: issue.repoOwner },

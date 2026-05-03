@@ -2,7 +2,7 @@ import path from 'node:path';
 import { createActivityDependencies } from '../src/activities';
 import { createProviderAgentAdapter, type AgentProgressEvent } from '../src/activity-deps';
 import { DEFAULT_AGENT_MODEL_BY_PROVIDER, type AgentProvider } from '../src/agent-provider';
-import { summarizeToolActivity } from '../src/smoke-support';
+import { renderProviderItemTrace, summarizeToolActivity } from '../src/smoke-support';
 
 const WORKTREE_PATH = path.resolve(__dirname, '..');
 const PROMPT = 'Use a shell or read tool to count exactly how many .ts files exist in the scripts/ directory of the current working directory. Then respond with that number, nothing else.';
@@ -10,9 +10,11 @@ const PROMPT = 'Use a shell or read tool to count exactly how many .ts files exi
 async function runOne(provider: AgentProvider, model: string): Promise<void> {
   const session = createProviderAgentAdapter({ provider, model }, createActivityDependencies()).createSession(WORKTREE_PATH);
   const events: AgentProgressEvent[] = [];
+  const startedAt = Date.now();
   const result = await session.run(PROMPT, {
     onEvent: (event) => events.push(event),
   });
+  const wallMs = Date.now() - startedAt;
   const summary = summarizeToolActivity(events);
   const verdict = summary.toolUseCount > 0 && summary.toolResultCount > 0
     ? 'ok (tool path exercised)'
@@ -21,12 +23,16 @@ async function runOne(provider: AgentProvider, model: string): Promise<void> {
       : 'no tools observed';
 
   console.log(`\n===== ${provider} (${model}) =====`);
+  for (const line of renderProviderItemTrace(events)) {
+    console.log(line);
+  }
   console.log('finalResponse:', JSON.stringify(result.finalResponse));
   console.log('providerItemTypes:', summary.providerItemTypes);
   console.log('toolUseCount:', summary.toolUseCount);
   console.log('toolResultCount:', summary.toolResultCount);
   console.log('usage:', result.usage);
   console.log('costMicroUsd:', result.costMicroUsd);
+  console.log('wallMs:', wallMs);
   console.log('VERDICT:', verdict);
 }
 

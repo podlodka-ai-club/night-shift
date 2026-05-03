@@ -105,6 +105,7 @@ export interface SelectedProjectIssue {
   issueTitle: string;
   taskDescription: string;
   issueUrl: string;
+  labels?: string[];
   repoOwner: string;
   repoName: string;
   defaultBranch: string;
@@ -242,10 +243,18 @@ export interface PullRequestReviewComment {
   body: string;
   path: string;
   line?: number;
+  authorLogin?: string;
+  createdAt?: string;
+}
+
+export interface PullRequestReviewBody {
+  body: string;
+  authorLogin?: string;
+  createdAt?: string;
 }
 
 export interface OpenPullRequestFeedback {
-  reviewBodies: string[];
+  reviewBodies: Array<string | PullRequestReviewBody>;
   reviewComments: PullRequestReviewComment[];
 }
 
@@ -290,6 +299,8 @@ export interface IssueCommentInput {
 export interface IssueComment {
   id: number;
   body: string;
+  authorLogin?: string;
+  createdAt?: string;
 }
 
 export interface ListIssueCommentsInput {

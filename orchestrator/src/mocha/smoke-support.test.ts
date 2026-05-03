@@ -1,6 +1,11 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
-import { summarizeProviderStreamActivity, summarizeToolActivity, validateOutputSchemaSmokeText } from '../smoke-support';
+import {
+  renderProviderItemTrace,
+  summarizeProviderStreamActivity,
+  summarizeToolActivity,
+  validateOutputSchemaSmokeText,
+} from '../smoke-support';
 
 describe('smoke support', () => {
   it('counts codex MCP tool calls as both tool use and tool result activity when completed', () => {
@@ -54,6 +59,25 @@ describe('smoke support', () => {
     assert.deepStrictEqual(summary.assistantTextSnapshots, ['pon', 'pong']);
   });
 
+  it('renders donor-like provider-item trace lines for smoke script logging', () => {
+    assert.deepStrictEqual(renderProviderItemTrace([
+      { type: 'provider-item', payload: { type: 'assistant', message: { content: [{ type: 'text', text: 'pong' }] } } },
+      { type: 'provider-item', payload: { type: 'tool_progress', tool_name: 'Bash' } },
+      { type: 'provider-item', payload: { type: 'tool_use_summary', summary: 'Used Bash to inspect files.' } },
+      { type: 'provider-item', payload: { type: 'mcp_tool_call', tool: 'shell', status: 'completed' } },
+      { type: 'provider-item', payload: { type: 'result', subtype: 'success' } },
+      { type: 'provider-item', payload: { type: 'reasoning' } },
+      { type: 'usage', payload: { output_tokens: 1 } },
+    ] as any), [
+      '[assistant] pong',
+      '[tool-use] Bash',
+      '[tool-result] Used Bash to inspect files.',
+      '[tool-call] shell status=completed',
+      '[result] success',
+      '[reasoning]',
+    ]);
+  });
+
   it('validates the donor-equivalent output-schema payload and reports malformed responses clearly', () => {
     assert.deepStrictEqual(validateOutputSchemaSmokeText('{"answer":"pong","letters":["p","o","n","g"],"count":4}'), {
       ok: true,
@@ -70,10 +94,11 @@ describe('smoke support', () => {
     });
     const malformed = validateOutputSchemaSmokeText('not json');
     assert.strictEqual(malformed.ok, false);
-    if (malformed.ok) {
-      throw new Error('expected malformed JSON to fail validation');
+    if (!malformed.ok) {
+      assert.match(malformed.reason, /not valid JSON/i);
+      return;
     }
-    assert.match(malformed.reason, /not valid JSON/i);
+    throw new Error('expected malformed JSON to fail validation');
   });
 
   it('rejects non-integer count values', () => {

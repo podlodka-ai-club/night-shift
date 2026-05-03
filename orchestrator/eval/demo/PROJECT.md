@@ -1,13 +1,18 @@
 # TaskFlow — demo project for the eval fixture harness
 
-This is the current-main equivalent of donor `eval/demo/PROJECT.md`.
-The content is a direct port, but it now lives under `orchestrator/eval/demo/`
-because the eval harness and fixtures live in the `orchestrator` workspace.
+TaskFlow is the shared *world-model* for demo eval fixtures.
 
-A small fictional product used as the *world-model* for eval fixtures.
-Specifier and implement prompts that reference TaskFlow features should
-plausibly find context here. The project does not exist as code; it exists only
-as a description rich enough that ticket bodies feel realistic.
+Use this file when authoring fixture tickets so the product context stays
+consistent across specify/implement scenarios:
+
+- put durable product facts, architecture, and constraints here
+- let fixture ticket bodies reference these details as if the codebase exists
+- keep ticket-local ambiguity, prior drafts, and operator comments in the
+  fixture JSON rather than mutating the world-model
+
+TaskFlow does not exist as code. It exists only as a realistic-enough product
+description that fixture tickets, prompts, and reviewer notes can talk about a
+stable fictional system.
 
 ## Product summary
 

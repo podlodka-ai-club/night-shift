@@ -192,6 +192,30 @@ describe('implement eval cli', function () {
     );
   });
 
+  it('normalizes donor provider aliases for generator and judge selections', () => {
+    const parsed = parseEvalImplementCliArgs([
+      '--fixtures', fixturesDir,
+      '--mode', 'live',
+      '--worktree', '/tmp/live-repo',
+      '--provider', 'openai',
+      '--judge',
+      '--judge-provider', 'anthropic',
+    ]) as any;
+
+    assert.deepStrictEqual(parsed, {
+      fixturesDir: path.resolve(fixturesDir),
+      fixtureIds: [],
+      json: false,
+      mode: 'live',
+      worktreePath: path.resolve('/tmp/live-repo'),
+      timeoutMs: 300000,
+      provider: 'codex',
+      model: 'gpt-5.3-codex',
+      record: false,
+      judge: { maxRevisions: 1, provider: 'claude', model: 'claude-sonnet-4-6' },
+    });
+  });
+
   it('rejects malformed numeric inputs instead of truncating them', () => {
     assert.throws(
       () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--timeout-ms', '1foo']),
