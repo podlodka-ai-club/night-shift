@@ -7,6 +7,7 @@ import {
   type ImplementReplayResult,
   type ImplementReplaySummary,
 } from '../eval/implement-replay';
+import { runImplementLiveSuite } from '../eval/implement-live';
 
 const USAGE = `orchestrator eval:implement
 
@@ -15,10 +16,16 @@ Usage:
 
 Options:
   --fixtures <dir>    Directory containing fixture *.json files (required)
-  --mode replay       Replay-only mode (default)
+  --mode <mode>       replay (default) or live
+  --worktree <dir>    Repository/worktree path for live mode (default: current working directory)
+  --timeout-ms <n>    Live-mode timeout per fixture in milliseconds (default: 300000)
   --fixture <id>      Run only the fixture with this id (repeatable)
   --json              Emit machine-readable JSON to stdout instead of a table.
   --help              Show this message.
+
+Notes:
+  Live mode reuses a single writable worktree across selected fixtures.
+  Prefer disposable worktrees or single-fixture runs to avoid cross-fixture contamination.
 
 Exit codes:
   0  all selected fixtures passed (no unexpected parse/schema errors and no expectation mismatches)
@@ -26,11 +33,46 @@ Exit codes:
   64 usage error
 `;
 
-interface CliOptions {
+type CliOptions = {
   fixturesDir: string;
   fixtureIds: ReadonlyArray<string>;
   json: boolean;
-  mode: 'replay';
+} & (
+  | { mode: 'replay' }
+  | { mode: 'live'; worktreePath: string; timeoutMs: number }
+);
+
+interface Writer {
+  write: (chunk: string) => unknown;
+}
+
+export interface EvalImplementCliDeps {
+  loadFixtures: typeof loadImplementReplayFixtures;
+  runReplaySuite: typeof runImplementReplaySuite;
+  runLiveSuite: typeof runImplementLiveSuite;
+  stdout: Writer;
+  stderr: Writer;
+}
+
+const DEFAULT_DEPS: EvalImplementCliDeps = {
+  loadFixtures: loadImplementReplayFixtures,
+  runReplaySuite: runImplementReplaySuite,
+  runLiveSuite: runImplementLiveSuite,
+  stdout: process.stdout,
+  stderr: process.stderr,
+};
+
+const DEFAULT_LIVE_TIMEOUT_MS = 300_000;
+
+class EvalImplementCliUsageError extends Error {
+  constructor(
+    readonly exitCode: number,
+    readonly output: string,
+    readonly destination: 'stdout' | 'stderr',
+  ) {
+    super(output);
+    this.name = 'EvalImplementCliUsageError';
+  }
 }
 
 export function parseEvalImplementCliArgs(argv: ReadonlyArray<string>): CliOptions {
@@ -39,6 +81,8 @@ export function parseEvalImplementCliArgs(argv: ReadonlyArray<string>): CliOptio
     options: {
       fixtures: { type: 'string' },
       mode: { type: 'string', default: 'replay' },
+      worktree: { type: 'string' },
+      'timeout-ms': { type: 'string' },
       fixture: { type: 'string', multiple: true, default: [] },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
@@ -47,39 +91,62 @@ export function parseEvalImplementCliArgs(argv: ReadonlyArray<string>): CliOptio
   });
 
   if (values.help) {
-    process.stdout.write(USAGE);
-    process.exit(0);
+    throw new EvalImplementCliUsageError(0, USAGE, 'stdout');
   }
   if (typeof values.fixtures !== 'string' || values.fixtures.length === 0) {
-    process.stderr.write(USAGE);
-    process.exit(64);
+    throw new EvalImplementCliUsageError(64, USAGE, 'stderr');
   }
-  if (values.mode !== 'replay') {
-    process.stderr.write(`invalid --mode "${String(values.mode)}" (Task 2 supports replay only)\n`);
-    process.exit(64);
+  if (values.mode !== 'replay' && values.mode !== 'live') {
+    throw new EvalImplementCliUsageError(64, `invalid --mode "${String(values.mode)}" (expected replay or live)\n`, 'stderr');
   }
 
-  return {
+  const baseOptions = {
     fixturesDir: path.resolve(values.fixtures),
     fixtureIds: Array.isArray(values.fixture) ? values.fixture : [],
     json: values.json === true,
+  };
+
+  if (values.mode === 'live') {
+    const timeoutMs = parseTimeoutMs(values['timeout-ms']);
+    return {
+      ...baseOptions,
+      mode: 'live',
+      worktreePath: path.resolve(values.worktree ?? process.cwd()),
+      timeoutMs,
+    };
+  }
+
+  return {
+    ...baseOptions,
     mode: 'replay',
   };
 }
 
-export async function main(argv: ReadonlyArray<string> = process.argv.slice(2)): Promise<number> {
-  const options = parseEvalImplementCliArgs(argv);
-  const loadedFixtures = filterFixtures(await loadImplementReplayFixtures(options.fixturesDir), options.fixtureIds);
+export async function main(argv: ReadonlyArray<string> = process.argv.slice(2), deps: EvalImplementCliDeps = DEFAULT_DEPS): Promise<number> {
+  let options: CliOptions;
+  try {
+    options = parseEvalImplementCliArgs(argv);
+  } catch (error) {
+    if (error instanceof EvalImplementCliUsageError) {
+      deps[error.destination].write(error.output);
+      return error.exitCode;
+    }
+    throw error;
+  }
+
+  const loadedFixtures = filterFixtures(await deps.loadFixtures(options.fixturesDir), options.fixtureIds, deps.stderr);
   if (loadedFixtures.length === 0) {
-    process.stderr.write(`no fixtures found under ${options.fixturesDir}\n`);
+    deps.stderr.write(`no fixtures found under ${options.fixturesDir}\n`);
     return 1;
   }
 
-  const suite = runImplementReplaySuite(loadedFixtures);
+  const suite = options.mode === 'live'
+    ? await deps.runLiveSuite(loadedFixtures, { worktreePath: options.worktreePath, timeoutMs: options.timeoutMs })
+    : deps.runReplaySuite(loadedFixtures);
   if (options.json) {
-    process.stdout.write(JSON.stringify({ mode: options.mode, results: suite.results, summary: suite.summary }, null, 2) + '\n');
+    deps.stdout.write(JSON.stringify({ mode: options.mode, results: suite.results, summary: suite.summary }, null, 2) + '\n');
   } else {
-    process.stdout.write(renderText(suite.results, suite.summary));
+    deps.stdout.write(renderText(options.mode, suite.results, suite.summary));
   }
 
   const fixturesById = new Map(loadedFixtures.map((fixture) => [fixture.id, fixture]));
@@ -87,7 +154,7 @@ export async function main(argv: ReadonlyArray<string> = process.argv.slice(2)):
   return failed > 0 ? 1 : 0;
 }
 
-function filterFixtures(fixtures: readonly ImplementReplayFixture[], ids: ReadonlyArray<string>): ImplementReplayFixture[] {
+function filterFixtures(fixtures: readonly ImplementReplayFixture[], ids: ReadonlyArray<string>, stderr: Writer): ImplementReplayFixture[] {
   if (ids.length === 0) {
     return [...fixtures];
   }
@@ -96,9 +163,21 @@ function filterFixtures(fixtures: readonly ImplementReplayFixture[], ids: Readon
   const found = new Set(filtered.map((fixture) => fixture.id));
   const missing = ids.filter((id) => !found.has(id));
   if (missing.length > 0) {
-    process.stderr.write(`warning: fixture id(s) not found: ${missing.join(', ')}\n`);
+    stderr.write(`warning: fixture id(s) not found: ${missing.join(', ')}\n`);
   }
   return filtered;
+}
+
+function parseTimeoutMs(value: string | undefined): number {
+  if (value === undefined) {
+    return DEFAULT_LIVE_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new EvalImplementCliUsageError(64, `invalid --timeout-ms "${value}" (expected a positive integer)\n`, 'stderr');
+  }
+  return parsed;
 }
 
 function isFailureResult(result: ImplementReplayResult, fixture: ImplementReplayFixture | undefined): boolean {
@@ -126,8 +205,8 @@ function isDirectCliExecution(argv: ReadonlyArray<string> = process.argv): boole
   ].some((suffix) => normalizedEntrypoint.endsWith(suffix));
 }
 
-function renderText(results: readonly ImplementReplayResult[], summary: ImplementReplaySummary): string {
-  const lines = ['Implement eval — replay mode', '─'.repeat(40)];
+function renderText(mode: CliOptions['mode'], results: readonly ImplementReplayResult[], summary: ImplementReplaySummary): string {
+  const lines = [`Implement eval — ${mode} mode`, '─'.repeat(40)];
   for (const result of results) {
     const flag = result.expectationMismatch ? 'FAIL' : 'ok  ';
     const cost = `$${(result.costMicroUsd / 1_000_000).toFixed(4)}`;

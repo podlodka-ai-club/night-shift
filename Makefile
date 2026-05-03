@@ -40,10 +40,10 @@ worker: ## Start the orchestrator worker
 workflow: ## Run the orchestrator workflow client (pass args with ARGS="...")
 	npm --workspace orchestrator run workflow -- $(ARGS)
 
-eval-implement: ## Run the replay-only implement eval harness (pass extra flags with ARGS="...")
+eval-implement: ## Run the implement eval harness (replay by default; pass extra flags with ARGS="...")
 	npm --workspace orchestrator run eval:implement -- --fixtures $(CURDIR)/orchestrator/eval/fixtures/implement $(ARGS)
 
-eval-specify: ## Run the replay-only specify eval harness (pass extra flags with ARGS="...")
+eval-specify: ## Run the specify eval harness (replay by default; pass extra flags with ARGS="...")
 	npm --workspace orchestrator run eval:specify -- --fixtures $(CURDIR)/orchestrator/eval/fixtures/specify $(ARGS)
 
 e2e-live-fake: ## Run the live e2e suite in fake-agent mode

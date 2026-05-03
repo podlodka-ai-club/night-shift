@@ -53,9 +53,17 @@ export interface AgentTurnOptions {
   onEvent?: (event: AgentProgressEvent) => void;
 }
 
+export interface AgentUsage {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+}
+
 export interface AgentTurnResult {
   finalResponse: string;
   events?: AgentProgressEvent[];
+  usage?: AgentUsage | null;
+  costMicroUsd?: number;
 }
 
 export interface AgentSession {
@@ -338,11 +346,40 @@ function assertCodexTurnResult(value: unknown, factoryName: 'startThread' | 'res
   if (usage !== undefined && usage !== null) {
     events.push({ type: 'usage', payload: usage });
   }
+  const parsedUsage = parseAgentUsage(usage);
+  const costMicroUsd = parseCostMicroUsd((value as { costMicroUsd?: unknown; cost?: unknown }).costMicroUsd ?? (value as { cost?: unknown }).cost);
 
   return {
     finalResponse: (value as { finalResponse: string }).finalResponse,
     ...(events.length > 0 ? { events } : {}),
+    ...(parsedUsage ? { usage: parsedUsage } : {}),
+    ...(costMicroUsd === undefined ? {} : { costMicroUsd }),
   };
+}
+
+function parseAgentUsage(value: unknown): AgentUsage | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const usage = value as Partial<Record<keyof AgentUsage, unknown>>;
+  if (![usage.input_tokens, usage.cached_input_tokens, usage.output_tokens].every(isNonNegativeFiniteNumber)) {
+    return undefined;
+  }
+
+  return {
+    input_tokens: usage.input_tokens,
+    cached_input_tokens: usage.cached_input_tokens,
+    output_tokens: usage.output_tokens,
+  } as AgentUsage;
+}
+
+function parseCostMicroUsd(value: unknown): number | undefined {
+  return isNonNegativeFiniteNumber(value) ? Math.round(value) : undefined;
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
 async function loadCodexSdk(): Promise<CodexSdkModule> {

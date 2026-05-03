@@ -4,12 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { describe, it } from 'mocha';
+import { main, parseEvalImplementCliArgs } from '../cli/eval-implement';
 
 const orchestratorRoot = path.resolve(__dirname, '..', '..');
 const cliPath = path.join(orchestratorRoot, 'src', 'cli', 'eval-implement.ts');
 const fixturesDir = path.join(orchestratorRoot, 'eval', 'fixtures', 'implement');
 
-describe('implement replay eval cli', () => {
+describe('implement eval cli', () => {
   it('emits donor-like JSON output and supports fixture filtering in replay mode', async () => {
     const result = await runCli(['--fixtures', fixturesDir, '--fixture', 'empty-no-changes', '--json']);
 
@@ -55,6 +56,66 @@ describe('implement replay eval cli', () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('parses live mode with an explicit worktree path', () => {
+    const parsed = parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--fixture', 'empty-no-changes']);
+
+    assert.deepStrictEqual(parsed, {
+      fixturesDir: path.resolve(fixturesDir),
+      fixtureIds: ['empty-no-changes'],
+      json: false,
+      mode: 'live',
+      worktreePath: path.resolve('/tmp/live-repo'),
+      timeoutMs: 300000,
+    });
+  });
+
+  it('dispatches live mode through the live suite and preserves the CLI JSON shape', async () => {
+    let stdout = '';
+    const exitCode = await main(
+      ['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--json'],
+      {
+        loadFixtures: async () => [{ id: 'live-implement' } as any],
+        runReplaySuite: () => {
+          throw new Error('replay suite should not run in live mode');
+        },
+        runLiveSuite: async (_fixtures, options) => {
+          assert.strictEqual(options.worktreePath, path.resolve('/tmp/live-repo'));
+          assert.strictEqual(options.timeoutMs, 300000);
+          return {
+            schemaId: 'implement-response-v1',
+            results: [{
+              id: 'live-implement',
+              status: 'produced',
+              filesWrittenCount: 1,
+              totalContentChars: 12,
+              commitMessageLength: 20,
+              summaryLength: 24,
+              followUpsCount: 0,
+              costMicroUsd: 0,
+              totalTokens: 84,
+            }],
+            summary: {
+              total: 1,
+              byStatus: { produced: 1, empty: 0, parse_error: 0, schema_error: 0 },
+              totalCostMicroUsd: 0,
+              totalTokens: 84,
+              avgCostMicroUsd: 0,
+              expectationMismatches: 0,
+            },
+          } as any;
+        },
+        stdout: { write: (chunk: string) => { stdout += chunk; return true; } },
+        stderr: { write: () => true },
+      },
+    );
+
+    assert.strictEqual(exitCode, 0);
+    const parsed = JSON.parse(stdout) as any;
+    assert.strictEqual(parsed.mode, 'live');
+    assert.strictEqual(parsed.results[0]?.id, 'live-implement');
+    assert.strictEqual(parsed.summary.total, 1);
   });
 });
 

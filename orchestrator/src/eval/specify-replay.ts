@@ -3,7 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { getAgentSchema } from '../agent-schema-registry';
 import { parseSpecifyResponse } from '../phases/specify/response';
-import { recordedUsageSchema, toErrorMessage } from './replay-common';
+import { recordedUsageSchema, totalRecordedTokens, toErrorMessage, ZERO_RECORDED_USAGE } from './replay-common';
 
 const specifyReplayStatusSchema = z.enum(['refined', 'needs_input', 'parse_error', 'schema_error']);
 
@@ -40,15 +40,16 @@ export const SPECIFY_REPLAY_SCHEMA_ID = 'specify-response-v1' as const;
 // Fail fast if the replay harness points at a schema id that is no longer registered.
 getAgentSchema(SPECIFY_REPLAY_SCHEMA_ID);
 
-const ZERO_USAGE: SpecifyReplayRecordedUsage = {
-  input_tokens: 0,
-  cached_input_tokens: 0,
-  output_tokens: 0,
-};
-
 export type SpecifyReplayEvalStatus = z.infer<typeof specifyReplayStatusSchema>;
 export type SpecifyReplayRecordedUsage = z.infer<typeof recordedUsageSchema>;
 export type SpecifyReplayFixture = z.infer<typeof specifyReplayFixtureSchema> & { fixturePath?: string };
+
+export interface SpecifyResponseEvaluation {
+  finalText?: string;
+  usage?: SpecifyReplayRecordedUsage;
+  costMicroUsd?: number;
+  missingResponseErrorMessage?: string;
+}
 
 export interface SpecifyReplayResult {
   id: string;
@@ -95,16 +96,28 @@ export async function loadSpecifyReplayFixtures(fixturesDir: string): Promise<Sp
 }
 
 export function runSpecifyReplayFixture(fixture: SpecifyReplayFixture): SpecifyReplayResult {
-  const finalText = fixture.recordedFinalText ?? fixture.finalResponse;
-  const usage = fixture.recordedUsage ?? ZERO_USAGE;
-  const costMicroUsd = fixture.recordedCostMicroUsd ?? 0;
-  const totalTokens = usage.input_tokens + usage.output_tokens;
+  return evaluateSpecifyResponse(fixture, {
+    finalText: fixture.recordedFinalText ?? fixture.finalResponse,
+    usage: fixture.recordedUsage ?? ZERO_RECORDED_USAGE,
+    costMicroUsd: fixture.recordedCostMicroUsd ?? 0,
+    missingResponseErrorMessage: 'fixture is missing recorded replay text',
+  });
+}
+
+export function evaluateSpecifyResponse(
+  fixture: SpecifyReplayFixture,
+  evaluation: SpecifyResponseEvaluation,
+): SpecifyReplayResult {
+  const finalText = evaluation.finalText;
+  const usage = evaluation.usage ?? ZERO_RECORDED_USAGE;
+  const costMicroUsd = evaluation.costMicroUsd ?? 0;
+  const totalTokens = totalRecordedTokens(usage);
 
   if (typeof finalText !== 'string') {
     return buildReplayResult(fixture, 'parse_error', {
       costMicroUsd,
       totalTokens,
-      errorMessage: 'fixture is missing recorded replay text',
+      errorMessage: evaluation.missingResponseErrorMessage ?? 'response text was unavailable',
     });
   }
 

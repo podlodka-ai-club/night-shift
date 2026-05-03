@@ -3,7 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { getAgentSchema } from '../agent-schema-registry';
 import { parseImplementResponse } from '../phases/implement/response';
-import { recordedUsageSchema, toErrorMessage } from './replay-common';
+import { recordedUsageSchema, totalRecordedTokens, toErrorMessage, ZERO_RECORDED_USAGE } from './replay-common';
 
 const implementReplayStatusSchema = z.enum(['produced', 'empty', 'parse_error', 'schema_error']);
 
@@ -40,15 +40,16 @@ export const IMPLEMENT_REPLAY_SCHEMA_ID = 'implement-response-v1' as const;
 // Fail fast if the replay harness points at a schema id that is no longer registered.
 getAgentSchema(IMPLEMENT_REPLAY_SCHEMA_ID);
 
-const ZERO_USAGE: ImplementReplayRecordedUsage = {
-  input_tokens: 0,
-  cached_input_tokens: 0,
-  output_tokens: 0,
-};
-
 export type ImplementReplayEvalStatus = z.infer<typeof implementReplayStatusSchema>;
 export type ImplementReplayRecordedUsage = z.infer<typeof recordedUsageSchema>;
 export type ImplementReplayFixture = z.infer<typeof implementReplayFixtureSchema> & { fixturePath?: string };
+
+export interface ImplementResponseEvaluation {
+  finalText?: string;
+  usage?: ImplementReplayRecordedUsage;
+  costMicroUsd?: number;
+  missingResponseErrorMessage?: string;
+}
 
 export interface ImplementReplayResult {
   id: string;
@@ -96,16 +97,28 @@ export async function loadImplementReplayFixtures(fixturesDir: string): Promise<
 }
 
 export function runImplementReplayFixture(fixture: ImplementReplayFixture): ImplementReplayResult {
-  const finalText = fixture.recordedFinalText ?? fixture.finalResponse;
-  const usage = fixture.recordedUsage ?? ZERO_USAGE;
-  const costMicroUsd = fixture.recordedCostMicroUsd ?? 0;
-  const totalTokens = usage.input_tokens + usage.output_tokens;
+  return evaluateImplementResponse(fixture, {
+    finalText: fixture.recordedFinalText ?? fixture.finalResponse,
+    usage: fixture.recordedUsage ?? ZERO_RECORDED_USAGE,
+    costMicroUsd: fixture.recordedCostMicroUsd ?? 0,
+    missingResponseErrorMessage: 'fixture is missing recorded replay text',
+  });
+}
+
+export function evaluateImplementResponse(
+  fixture: ImplementReplayFixture,
+  evaluation: ImplementResponseEvaluation,
+): ImplementReplayResult {
+  const finalText = evaluation.finalText;
+  const usage = evaluation.usage ?? ZERO_RECORDED_USAGE;
+  const costMicroUsd = evaluation.costMicroUsd ?? 0;
+  const totalTokens = totalRecordedTokens(usage);
 
   if (typeof finalText !== 'string') {
     return buildReplayResult(fixture, 'parse_error', {
       costMicroUsd,
       totalTokens,
-      errorMessage: 'fixture is missing recorded replay text',
+      errorMessage: evaluation.missingResponseErrorMessage ?? 'response text was unavailable',
     });
   }
 
