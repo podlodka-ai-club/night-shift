@@ -1,0 +1,17 @@
+{
+  "id": "schema-error-absolute-path",
+  "ticket": {
+    "title": "Add health check endpoint",
+    "description": "Add a /health endpoint that returns 200 OK with { status: 'ok' }.",
+    "labels": ["feature"]
+  },
+  "specBundle": [
+    { "path": "proposal.md", "content": "# Add a /health endpoint" },
+    { "path": "tasks.md", "content": "- [ ] Register the route\n- [ ] Add a test" }
+  ],
+  "operatorComments": [],
+  "recordedFinalText": "{\"filesWritten\":[{\"path\":\"/etc/health.ts\",\"content\":\"export const health = () => ({ status: 'ok' });\\n\"}],\"commitMessage\":\"feat(api): add /health endpoint\",\"summary\":\"Adds a /health endpoint.\",\"followUps\":[]}",
+  "recordedUsage": { "input_tokens": 900, "cached_input_tokens": 0, "output_tokens": 80 },
+  "recordedCostMicroUsd": 1200,
+  "expected": { "status": "schema_error" }
+}

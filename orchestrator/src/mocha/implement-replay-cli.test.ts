@@ -1,0 +1,77 @@
+import assert from 'assert';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { describe, it } from 'mocha';
+
+const orchestratorRoot = path.resolve(__dirname, '..', '..');
+const cliPath = path.join(orchestratorRoot, 'src', 'cli', 'eval-implement.ts');
+const fixturesDir = path.join(orchestratorRoot, 'eval', 'fixtures', 'implement');
+
+describe('implement replay eval cli', () => {
+  it('emits donor-like JSON output and supports fixture filtering in replay mode', async () => {
+    const result = await runCli(['--fixtures', fixturesDir, '--fixture', 'empty-no-changes', '--json']);
+
+    assert.strictEqual(result.exitCode, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout) as any;
+    assert.strictEqual(parsed.mode, 'replay');
+    assert.strictEqual(parsed.results.length, 1);
+    assert.strictEqual(parsed.results[0]?.id, 'empty-no-changes');
+    assert.strictEqual(parsed.results[0]?.status, 'empty');
+    assert.strictEqual(parsed.summary.total, 1);
+    assert.deepStrictEqual(parsed.summary.byStatus, {
+      produced: 0,
+      empty: 1,
+      parse_error: 0,
+      schema_error: 0,
+    });
+  });
+
+  it('returns exit code 1 when replay expectations mismatch', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'implement-replay-cli-'));
+    try {
+      await writeFile(path.join(tempDir, 'mismatch.json'), JSON.stringify({
+        id: 'cli-mismatch',
+        ticket: { title: 'Mismatch', description: 'Synthetic fixture for CLI exit-code coverage.' },
+        specBundle: [
+          { path: 'proposal.md', content: '# Proposal' },
+          { path: 'tasks.md', content: '- [ ] Confirm there are no edits' },
+        ],
+        recordedFinalText: JSON.stringify({
+          filesWritten: [],
+          commitMessage: 'chore: confirm no edits',
+          summary: 'Verified that the requested change is already present.',
+          followUps: [],
+        }),
+        expected: { status: 'produced' },
+      }, null, 2), 'utf8');
+
+      const result = await runCli(['--fixtures', tempDir, '--json']);
+      assert.strictEqual(result.exitCode, 1);
+      const parsed = JSON.parse(result.stdout) as any;
+      assert.strictEqual(parsed.summary.expectationMismatches, 1);
+      assert.match(parsed.results[0]?.expectationMismatch ?? '', /expected status/i);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+async function runCli(args: string[]): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['-r', 'ts-node/register', cliPath, ...args], {
+      cwd: orchestratorRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (exitCode) => resolve({ exitCode, stdout, stderr }));
+  });
+}

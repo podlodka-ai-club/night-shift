@@ -2,29 +2,29 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { getAgentSchema } from '../agent-schema-registry';
-import { parseSpecifyResponse } from '../phases/specify/response';
+import { parseImplementResponse } from '../phases/implement/response';
 import { recordedUsageSchema, toErrorMessage } from './replay-common';
 
-const specifyReplayStatusSchema = z.enum(['refined', 'needs_input', 'parse_error', 'schema_error']);
+const implementReplayStatusSchema = z.enum(['produced', 'empty', 'parse_error', 'schema_error']);
 
-export const specifyReplayFixtureSchema = z.object({
+export const implementReplayFixtureSchema = z.object({
   id: z.string().min(1),
   description: z.string().optional(),
   ticket: z.object({
     title: z.string().min(1),
     description: z.string(),
     labels: z.array(z.string()).default([]),
-  }).optional(),
-  priorDraft: z.array(z.object({ path: z.string().min(1), content: z.string() })).default([]),
+  }),
+  specBundle: z.array(z.object({ path: z.string().min(1), content: z.string() })).min(1),
   operatorComments: z.array(z.string()).default([]),
   finalResponse: z.string().optional(),
   recordedFinalText: z.string().optional(),
   recordedUsage: recordedUsageSchema.optional(),
   recordedCostMicroUsd: z.number().int().nonnegative().optional(),
   expected: z.object({
-    status: specifyReplayStatusSchema.optional(),
-    minOpenQuestions: z.number().int().nonnegative().optional(),
-    maxOpenQuestions: z.number().int().nonnegative().optional(),
+    status: implementReplayStatusSchema.optional(),
+    minFilesWritten: z.number().int().nonnegative().optional(),
+    maxFilesWritten: z.number().int().nonnegative().optional(),
   }).optional(),
 }).superRefine((fixture, ctx) => {
   if (fixture.finalResponse === undefined && fixture.recordedFinalText === undefined) {
@@ -36,49 +36,50 @@ export const specifyReplayFixtureSchema = z.object({
   }
 });
 
-export const SPECIFY_REPLAY_SCHEMA_ID = 'specify-response-v1' as const;
+export const IMPLEMENT_REPLAY_SCHEMA_ID = 'implement-response-v1' as const;
 // Fail fast if the replay harness points at a schema id that is no longer registered.
-getAgentSchema(SPECIFY_REPLAY_SCHEMA_ID);
+getAgentSchema(IMPLEMENT_REPLAY_SCHEMA_ID);
 
-const ZERO_USAGE: SpecifyReplayRecordedUsage = {
+const ZERO_USAGE: ImplementReplayRecordedUsage = {
   input_tokens: 0,
   cached_input_tokens: 0,
   output_tokens: 0,
 };
 
-export type SpecifyReplayEvalStatus = z.infer<typeof specifyReplayStatusSchema>;
-export type SpecifyReplayRecordedUsage = z.infer<typeof recordedUsageSchema>;
-export type SpecifyReplayFixture = z.infer<typeof specifyReplayFixtureSchema> & { fixturePath?: string };
+export type ImplementReplayEvalStatus = z.infer<typeof implementReplayStatusSchema>;
+export type ImplementReplayRecordedUsage = z.infer<typeof recordedUsageSchema>;
+export type ImplementReplayFixture = z.infer<typeof implementReplayFixtureSchema> & { fixturePath?: string };
 
-export interface SpecifyReplayResult {
+export interface ImplementReplayResult {
   id: string;
-  status: SpecifyReplayEvalStatus;
-  openQuestionsCount: number;
-  assumptionsCount: number;
-  risksCount: number;
-  filesCount: number;
+  status: ImplementReplayEvalStatus;
+  filesWrittenCount: number;
+  totalContentChars: number;
+  commitMessageLength: number;
+  summaryLength: number;
+  followUpsCount: number;
   costMicroUsd: number;
   totalTokens: number;
   errorMessage?: string;
   expectationMismatch?: string;
 }
 
-export interface SpecifyReplaySummary {
+export interface ImplementReplaySummary {
   total: number;
-  byStatus: Record<SpecifyReplayEvalStatus, number>;
+  byStatus: Record<ImplementReplayEvalStatus, number>;
   totalCostMicroUsd: number;
   totalTokens: number;
   avgCostMicroUsd: number;
   expectationMismatches: number;
 }
 
-export interface SpecifyReplaySuiteResult {
-  schemaId: typeof SPECIFY_REPLAY_SCHEMA_ID;
-  results: SpecifyReplayResult[];
-  summary: SpecifyReplaySummary;
+export interface ImplementReplaySuiteResult {
+  schemaId: typeof IMPLEMENT_REPLAY_SCHEMA_ID;
+  results: ImplementReplayResult[];
+  summary: ImplementReplaySummary;
 }
 
-export async function loadSpecifyReplayFixtures(fixturesDir: string): Promise<SpecifyReplayFixture[]> {
+export async function loadImplementReplayFixtures(fixturesDir: string): Promise<ImplementReplayFixture[]> {
   const entries = await readdir(fixturesDir, { withFileTypes: true });
   const fixtureFiles = entries
     .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
@@ -88,13 +89,13 @@ export async function loadSpecifyReplayFixtures(fixturesDir: string): Promise<Sp
     const fixturePath = path.join(fixturesDir, entry.name);
     const rawFixture = await readFile(fixturePath, 'utf8');
     return {
-      ...specifyReplayFixtureSchema.parse(JSON.parse(rawFixture)),
+      ...implementReplayFixtureSchema.parse(JSON.parse(rawFixture)),
       fixturePath,
-    } satisfies SpecifyReplayFixture;
+    } satisfies ImplementReplayFixture;
   }));
 }
 
-export function runSpecifyReplayFixture(fixture: SpecifyReplayFixture): SpecifyReplayResult {
+export function runImplementReplayFixture(fixture: ImplementReplayFixture): ImplementReplayResult {
   const finalText = fixture.recordedFinalText ?? fixture.finalResponse;
   const usage = fixture.recordedUsage ?? ZERO_USAGE;
   const costMicroUsd = fixture.recordedCostMicroUsd ?? 0;
@@ -120,15 +121,16 @@ export function runSpecifyReplayFixture(fixture: SpecifyReplayFixture): SpecifyR
   }
 
   try {
-    const response = parseSpecifyResponse(parsedJson);
+    const response = parseImplementResponse(parsedJson);
     return buildReplayResult(
       fixture,
-      response.openQuestions.length === 0 ? 'refined' : 'needs_input',
+      response.filesWritten.length === 0 ? 'empty' : 'produced',
       {
-        openQuestionsCount: response.openQuestions.length,
-        assumptionsCount: response.assumptions.length,
-        risksCount: response.risks.length,
-        filesCount: response.files.length,
+        filesWrittenCount: response.filesWritten.length,
+        totalContentChars: response.filesWritten.reduce((sum, file) => sum + file.content.length, 0),
+        commitMessageLength: response.commitMessage.length,
+        summaryLength: response.summary.length,
+        followUpsCount: response.followUps.length,
         costMicroUsd,
         totalTokens,
       },
@@ -142,19 +144,19 @@ export function runSpecifyReplayFixture(fixture: SpecifyReplayFixture): SpecifyR
   }
 }
 
-export function runSpecifyReplaySuite(fixtures: readonly SpecifyReplayFixture[]): SpecifyReplaySuiteResult {
-  const results = fixtures.map((fixture) => runSpecifyReplayFixture(fixture));
+export function runImplementReplaySuite(fixtures: readonly ImplementReplayFixture[]): ImplementReplaySuiteResult {
+  const results = fixtures.map((fixture) => runImplementReplayFixture(fixture));
   return {
-    schemaId: SPECIFY_REPLAY_SCHEMA_ID,
+    schemaId: IMPLEMENT_REPLAY_SCHEMA_ID,
     results,
-    summary: summariseSpecifyReplayResults(results),
+    summary: summariseImplementReplayResults(results),
   };
 }
 
-export function summariseSpecifyReplayResults(results: readonly SpecifyReplayResult[]): SpecifyReplaySummary {
-  const byStatus: SpecifyReplaySummary['byStatus'] = {
-    refined: 0,
-    needs_input: 0,
+export function summariseImplementReplayResults(results: readonly ImplementReplayResult[]): ImplementReplaySummary {
+  const byStatus: ImplementReplaySummary['byStatus'] = {
+    produced: 0,
+    empty: 0,
     parse_error: 0,
     schema_error: 0,
   };
@@ -182,25 +184,27 @@ export function summariseSpecifyReplayResults(results: readonly SpecifyReplayRes
 }
 
 function buildReplayResult(
-  fixture: SpecifyReplayFixture,
-  status: SpecifyReplayEvalStatus,
+  fixture: ImplementReplayFixture,
+  status: ImplementReplayEvalStatus,
   extra: {
-    openQuestionsCount?: number;
-    assumptionsCount?: number;
-    risksCount?: number;
-    filesCount?: number;
+    filesWrittenCount?: number;
+    totalContentChars?: number;
+    commitMessageLength?: number;
+    summaryLength?: number;
+    followUpsCount?: number;
     costMicroUsd: number;
     totalTokens: number;
     errorMessage?: string;
   },
-): SpecifyReplayResult {
-  const result: SpecifyReplayResult = {
+): ImplementReplayResult {
+  const result: ImplementReplayResult = {
     id: fixture.id,
     status,
-    openQuestionsCount: extra.openQuestionsCount ?? 0,
-    assumptionsCount: extra.assumptionsCount ?? 0,
-    risksCount: extra.risksCount ?? 0,
-    filesCount: extra.filesCount ?? 0,
+    filesWrittenCount: extra.filesWrittenCount ?? 0,
+    totalContentChars: extra.totalContentChars ?? 0,
+    commitMessageLength: extra.commitMessageLength ?? 0,
+    summaryLength: extra.summaryLength ?? 0,
+    followUpsCount: extra.followUpsCount ?? 0,
     costMicroUsd: extra.costMicroUsd,
     totalTokens: extra.totalTokens,
     ...(extra.errorMessage === undefined ? {} : { errorMessage: extra.errorMessage }),
@@ -211,8 +215,8 @@ function buildReplayResult(
 }
 
 function describeExpectationMismatch(
-  fixture: SpecifyReplayFixture,
-  result: SpecifyReplayResult,
+  fixture: ImplementReplayFixture,
+  result: ImplementReplayResult,
 ): string | undefined {
   const expected = fixture.expected;
   if (!expected) {
@@ -221,11 +225,11 @@ function describeExpectationMismatch(
   if (expected.status !== undefined && expected.status !== result.status) {
     return `expected status "${expected.status}", got "${result.status}"`;
   }
-  if (expected.minOpenQuestions !== undefined && result.openQuestionsCount < expected.minOpenQuestions) {
-    return `openQuestions ${result.openQuestionsCount} < min ${expected.minOpenQuestions}`;
+  if (expected.minFilesWritten !== undefined && result.filesWrittenCount < expected.minFilesWritten) {
+    return `filesWritten ${result.filesWrittenCount} < min ${expected.minFilesWritten}`;
   }
-  if (expected.maxOpenQuestions !== undefined && result.openQuestionsCount > expected.maxOpenQuestions) {
-    return `openQuestions ${result.openQuestionsCount} > max ${expected.maxOpenQuestions}`;
+  if (expected.maxFilesWritten !== undefined && result.filesWrittenCount > expected.maxFilesWritten) {
+    return `filesWritten ${result.filesWrittenCount} > max ${expected.maxFilesWritten}`;
   }
   return undefined;
 }

@@ -1,4 +1,4 @@
-.PHONY: help install check test-all test test-orchestrator test-e2e build build-orchestrator build-e2e lint format worker workflow eval-specify e2e-live-fake e2e-live-fake-pickup e2e-live-real
+.PHONY: help install check test-all test test-orchestrator test-e2e build build-orchestrator build-e2e lint format worker workflow eval-specify eval-implement e2e-live-fake e2e-live-fake-pickup e2e-live-real
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*## "; print "Available targets:"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -39,6 +39,9 @@ worker: ## Start the orchestrator worker
 
 workflow: ## Run the orchestrator workflow client (pass args with ARGS="...")
 	npm --workspace orchestrator run workflow -- $(ARGS)
+
+eval-implement: ## Run the replay-only implement eval harness (pass extra flags with ARGS="...")
+	npm --workspace orchestrator run eval:implement -- --fixtures $(CURDIR)/orchestrator/eval/fixtures/implement $(ARGS)
 
 eval-specify: ## Run the replay-only specify eval harness (pass extra flags with ARGS="...")
 	npm --workspace orchestrator run eval:specify -- --fixtures $(CURDIR)/orchestrator/eval/fixtures/specify $(ARGS)

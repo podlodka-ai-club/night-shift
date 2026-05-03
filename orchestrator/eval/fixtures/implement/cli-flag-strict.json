@@ -1,0 +1,17 @@
+{
+  "id": "cli-flag-strict",
+  "ticket": {
+    "title": "Add --strict flag to the specify CLI",
+    "description": "Operators want CI-style enforcement so the CLI exits non-zero when open questions remain.",
+    "labels": ["feature", "cli"]
+  },
+  "specBundle": [
+    { "path": "proposal.md", "content": "# Add --strict to the specify CLI" },
+    { "path": "tasks.md", "content": "- [ ] Parse the flag\n- [ ] Exit non-zero when open questions remain\n- [ ] Add tests" }
+  ],
+  "operatorComments": [],
+  "recordedFinalText": "{\"filesWritten\":[{\"path\":\"src/cli/specify.ts\",\"content\":\"export const strictFlag = true;\\n\"},{\"path\":\"src/mocha/specify-cli.test.ts\",\"content\":\"export const strictFlagTest = true;\\n\"}],\"commitMessage\":\"feat(cli): add --strict flag to specify\",\"summary\":\"Adds --strict parsing and test coverage for the specify CLI.\",\"followUps\":[\"Verify the help text still renders correctly.\"]}",
+  "recordedUsage": { "input_tokens": 891, "cached_input_tokens": 149, "output_tokens": 1271 },
+  "recordedCostMicroUsd": 791,
+  "expected": { "status": "produced", "minFilesWritten": 1 }
+}

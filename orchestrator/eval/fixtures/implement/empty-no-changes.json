@@ -1,0 +1,17 @@
+{
+  "id": "empty-no-changes",
+  "ticket": {
+    "title": "Verify CHANGELOG entry exists for v0.4.0",
+    "description": "The branch may already contain the requested CHANGELOG entry. Confirm it and avoid redundant edits.",
+    "labels": ["chore"]
+  },
+  "specBundle": [
+    { "path": "proposal.md", "content": "# Verify the CHANGELOG entry already exists" },
+    { "path": "tasks.md", "content": "- [ ] Read CHANGELOG.md\n- [ ] If the entry already exists, return filesWritten=[]" }
+  ],
+  "operatorComments": ["Please verify before re-editing."],
+  "recordedFinalText": "{\"filesWritten\":[],\"commitMessage\":\"chore: verify CHANGELOG entry already present\",\"summary\":\"CHANGELOG.md already lists the requested release entry, so no repository edits are required.\",\"followUps\":[\"None — the requested entry already exists.\"]}",
+  "recordedUsage": { "input_tokens": 800, "cached_input_tokens": 200, "output_tokens": 90 },
+  "recordedCostMicroUsd": 1100,
+  "expected": { "status": "empty", "maxFilesWritten": 0 }
+}
