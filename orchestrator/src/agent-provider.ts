@@ -30,7 +30,7 @@ export function normalizeAgentProvider(value: string | undefined): AgentProvider
   if (normalized === 'claude' || normalized === 'claude-agent') {
     return 'claude';
   }
-  throw new Error(`Unsupported provider \"${value}\". Supported providers: ${AGENT_PROVIDERS.join(', ')}`);
+  throw new Error(`Unsupported provider "${value}". Supported providers: ${AGENT_PROVIDERS.join(', ')}`);
 }
 
 export function inferAgentProviderFromModel(model: string | undefined): AgentProvider | undefined {
@@ -55,7 +55,7 @@ export function resolveAgentProviderSelection(
   const inferredProvider = inferAgentProviderFromModel(request.model);
   const provider = explicitProvider ?? inferredProvider ?? DEFAULT_AGENT_PROVIDER;
   if (explicitProvider && inferredProvider && explicitProvider !== inferredProvider) {
-    throw new Error(`Model \"${request.model}\" does not match provider \"${explicitProvider}\".`);
+    throw new Error(`Model "${request.model}" does not match provider "${explicitProvider}".`);
   }
 
   return {

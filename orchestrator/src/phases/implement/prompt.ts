@@ -97,7 +97,7 @@ function renderPullRequestFeedback(pullRequestFeedback: OpenPullRequestFeedback 
     .filter((body) => body.length > 0)
     ?? [];
   const reviewComments = pullRequestFeedback?.reviewComments
-    .map((comment, index) => {
+    .map((comment) => {
       const body = normalizeFeedbackBody(comment.body);
       if (!body) return undefined;
       const location = `${comment.path}${comment.line ? `:${comment.line}` : ''}`;

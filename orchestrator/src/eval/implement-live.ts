@@ -135,7 +135,7 @@ export async function runImplementLiveFixture(
   const maxRevisions = normalizeLiveJudgeMaxRevisions(options.judge?.maxRevisions);
   const judgeAttempts: LiveJudgeAttempt[] = [];
 
-  while (true) {
+  for (;;) {
     try {
       const turn = await turnRunner({
         worktreePath: options.worktreePath,
