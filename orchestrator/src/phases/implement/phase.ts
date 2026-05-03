@@ -19,6 +19,7 @@ import { buildChangeName } from '../change-name';
 export interface RunImplementPhaseInput {
   issue: SelectedProjectIssue;
   branchPrefix?: string;
+  deferBlockedStatus?: boolean;
   onProgress?: (message: string) => void;
 }
 
@@ -68,7 +69,9 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
       marker: 'implement:summary',
       body: summaryCommentBody,
     });
-    await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
+    if (!input.deferBlockedStatus) {
+      await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
+    }
     return { outcome: 'needs_input', worktree, changeName, summaryCommentBody };
   }
 
@@ -93,7 +96,9 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
         marker: 'implement:summary',
         body: summaryCommentBody,
       });
-      await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
+      if (!input.deferBlockedStatus) {
+        await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
+      }
       return { outcome: 'needs_input', worktree, changeName, summaryCommentBody };
     }
 
@@ -133,7 +138,9 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
     marker: 'implement:summary',
     body: summaryCommentBody,
   });
-  await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
+  if (!input.deferBlockedStatus) {
+    await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
+  }
   return { outcome: 'needs_input', worktree, changeName, summaryCommentBody };
 }
 

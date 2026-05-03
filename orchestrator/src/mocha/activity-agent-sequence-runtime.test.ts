@@ -30,6 +30,27 @@ describe('agent sequence activities', () => {
     ]);
   });
 
+  it('uses the escalation agent profile for legacy codex execution when requested', async () => {
+    const worktree = buildWorktreeContext();
+    const commandCalls: Array<{ cwd?: string; args: string[] }> = [];
+    const { runAgentLegacy } = createActivityTestRig({
+      agent: { execFile: async (file, args, options) => {
+        commandCalls.push({ args: [file, ...args], cwd: options?.cwd });
+        return { stdout: 'done', stderr: '', exitCode: 0 };
+      }, getAgentProfile: (agentProfile) => agentProfile === 'escalation'
+        ? { model: 'gpt-5.4', reasoningEffort: 'high' }
+        : { model: 'gpt-5.3-codex', reasoningEffort: 'low' } },
+    });
+
+    await runAgentLegacy({ worktree, agentProfile: 'escalation' });
+    assert.deepStrictEqual(commandCalls, [
+      {
+        cwd: worktree.worktreePath,
+        args: ['codex', 'exec', '--full-auto', '--model', 'gpt-5.4', '--config', 'model_reasoning_effort="high"', buildTaskImplementationPrompt(worktree.taskDescription)],
+      },
+    ]);
+  });
+
   it('passes the Temporal cancellation signal to the CLI codex path', async () => {
     const worktree = buildWorktreeContext();
     const abortController = new AbortController();
@@ -89,6 +110,35 @@ describe('agent sequence activities', () => {
       finalResponse: JSON.stringify(buildGeneratedChangeMetadata()),
     });
     assert.strictEqual(heartbeatCalls.length, 6);
+  });
+
+  it('uses the escalation agent profile when creating a structured-turn session', async () => {
+    const worktree = buildWorktreeContext();
+    const createCalls: Array<{ worktreePath: string; agentProfile?: string }> = [];
+    const { runAgentSequence } = createActivityTestRig({
+      agent: {
+        createCodexThread: (worktreePath, agentProfile) => {
+          createCalls.push({ worktreePath, agentProfile });
+          return {
+            id: 'thread-123',
+            run: async () => ({ items: [], finalResponse: JSON.stringify(buildGeneratedChangeMetadata()), usage: null }),
+          };
+        },
+        resumeCodexThread: () => {
+          throw new Error('resume should not be used without a checkpoint');
+        },
+        getHeartbeatDetails: () => undefined,
+        heartbeat: () => undefined,
+      },
+    });
+
+    await runAgentSequence({
+      worktree,
+      steps: [{ id: 'change-metadata', kind: 'structured', prompt: buildChangeMetadataPrompt(), schemaId: 'change-metadata-v1', resultKey: CHANGE_METADATA_OUTPUT_KEY }],
+      agentProfile: 'escalation',
+    });
+
+    assert.deepStrictEqual(createCalls, [{ worktreePath: worktree.worktreePath, agentProfile: 'escalation' }]);
   });
 
   it('signals assistant-authored prompt progress from provider items and dedupes repeats', async () => {

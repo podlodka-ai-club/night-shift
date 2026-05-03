@@ -74,6 +74,7 @@ export async function run(args = process.argv.slice(2)): Promise<void> {
   try {
     const signalClient = new Client({ connection: signalConnection, namespace: config.temporal.namespace });
     const runtimes = createActivityRuntimes({
+      agentProfiles: config.agentProfiles,
       signalWorkflowProgress: async (workflowId, message) => {
         await signalClient.workflow.getHandle(workflowId).signal(WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME, message);
       },

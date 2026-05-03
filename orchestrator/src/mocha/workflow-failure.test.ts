@@ -1,6 +1,7 @@
 import { describe, it } from 'mocha';
 import assert from 'assert';
 import { type MoveProjectItemStatusInput } from '../shared';
+import { getBlockedReasonQuery } from '../workflows';
 import {
   buildSelectedIssue,
   buildWorktreeContext,
@@ -11,22 +12,22 @@ import {
   createWorkflowTestRig,
 } from './workflow-test-helpers';
 
-const { runWorkflow } = createWorkflowTestRig();
+const { runWorkflow, runWorkflowWithHandle } = createWorkflowTestRig();
 
 describe('workflow failure paths', function () {
   this.timeout(60_000);
 
-  it('rethrows exhausted agent failures after moving the issue to In progress', async () => {
+  it('blocks through escalation after exhausted agent failures move the issue to In progress', async () => {
     const calls: string[] = [];
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
     const statusUpdates: MoveProjectItemStatusInput[] = [];
     const markers: string[] = [];
+    const commentBodies = new Map<string, string>();
     let cleanupCalls = 0;
 
-    await assert.rejects(
-      () =>
-        runWorkflow({
+    await runWorkflowWithHandle(
+      {
           workflowId: 'automate-ready-issue-failure-test',
           expectedWorkerWarnings: [/agent failed/],
           activities: {
@@ -47,10 +48,8 @@ describe('workflow failure paths', function () {
             async openPullRequest() { throw new Error('openPullRequest should not run after agent failure'); },
             async upsertIssueComment(input: { marker: string; body: string }) {
               markers.push(input.marker);
+              commentBodies.set(input.marker, input.body);
               calls.push(`upsertIssueComment:${input.marker}`);
-              assert.match(input.body, /implement/i);
-              assert.match(input.body, /agent failed/i);
-              assert.match(input.body, /Ready/i);
             },
             async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
               statusUpdates.push(input);
@@ -60,8 +59,11 @@ describe('workflow failure paths', function () {
               cleanupCalls += 1;
             },
           },
-        }),
-      (error: unknown) => assertWorkflowActivityFailure(error, /agent failed/),
+        },
+        async (handle) => {
+          assert.strictEqual(await waitForBlockedReason(handle, 'implement_needs_input'), 'implement_needs_input');
+          await handle.terminate('done');
+        },
     );
 
     assert.deepStrictEqual(calls, [
@@ -74,25 +76,39 @@ describe('workflow failure paths', function () {
       'runAgentSequence:7',
       'runAgentSequence:7',
       'moveProjectItemStatus:item-1',
+      'createWorktreeForIssueIfNeeded:7',
+      'listIssueComments:7',
+      'readOpenSpecChangeFiles:7',
+      'runAgentSequence:7',
+      'runAgentSequence:7',
+      'runAgentSequence:7',
+      'upsertIssueComment:escalation:human-needed',
+      'moveProjectItemStatus:item-1',
       'upsertIssueComment:workflow:phase-failure',
     ]);
     assert.deepStrictEqual(statusUpdates, [
       buildStatusUpdateInput(issue, issue.inProgressOptionId),
+      buildStatusUpdateInput(issue, issue.escalatedOptionId),
       buildStatusUpdateInput(issue, issue.blockedOptionId),
     ]);
-    assert.deepStrictEqual(markers, ['workflow:phase-failure']);
+    assert.deepStrictEqual(markers, ['escalation:human-needed', 'workflow:phase-failure']);
+    assert.match(commentBodies.get('escalation:human-needed') ?? '', /implement/i);
+    assert.match(commentBodies.get('escalation:human-needed') ?? '', /agent failed/i);
+    assert.match(commentBodies.get('workflow:phase-failure') ?? '', /agent failed/i);
+    assert.match(commentBodies.get('workflow:phase-failure') ?? '', /Ready/i);
     assert.strictEqual(cleanupCalls, 0);
   });
 
-  it('preserves the original workflow failure when commitAndPush fails after the gate passes', async () => {
+  it('blocks through escalation when commitAndPush fails after the gate passes', async () => {
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
     const statusUpdates: MoveProjectItemStatusInput[] = [];
     const markers: string[] = [];
+    const commentBodies = new Map<string, string>();
+    let runAgentSequenceCallCount = 0;
 
-    await assert.rejects(
-      () =>
-        runWorkflow({
+    await runWorkflowWithHandle(
+      {
           workflowId: 'automate-ready-issue-commit-failure-test',
           expectedWorkerWarnings: [/commit failed/],
           activities: {
@@ -106,18 +122,47 @@ describe('workflow failure paths', function () {
               ];
             },
             async runAgentSequence() {
-              return {
-                threadId: 'thread-123',
-                completedStepIds: ['implement'],
-                outputs: {
-                  implementResponse: {
-                    filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
-                    commitMessage: 'feat: implement the approved spec',
-                    summary: 'Implements the approved spec bundle.',
-                    followUps: [],
+              runAgentSequenceCallCount += 1;
+              if (runAgentSequenceCallCount === 1) {
+                return {
+                  threadId: 'thread-123',
+                  completedStepIds: ['implement'],
+                  outputs: {
+                    implementResponse: {
+                      filesWritten: [{ path: 'src/index.ts', content: 'export const ok = true;\n' }],
+                      commitMessage: 'feat: implement the approved spec',
+                      summary: 'Implements the approved spec bundle.',
+                      followUps: [],
+                    },
                   },
-                },
-                finalResponse: JSON.stringify({ implemented: true }),
+                  finalResponse: JSON.stringify({ implemented: true }),
+                };
+              }
+
+              return {
+                outputs: {
+                  escalationResponse: {
+                    outcome: 'needs_human',
+                    originPhase: 'implement',
+                    confidence: 'low',
+                    rootCause: {
+                      category: 'infrastructure_failure',
+                      summary: 'commit failed after the quality gate passed.',
+                      evidence: ['commit failed'],
+                    },
+                    resolution: {
+                      summary: 'A human needs to inspect the failed commit before Implement can continue.',
+                      files: [],
+                      validationPlan: [],
+                      resumeStatus: 'Ready',
+                    },
+                    humanRequest: {
+                      question: 'Fix the commit failure, then move the issue back to Ready.',
+                      recommendedStatusAfterAnswer: 'Ready',
+                    },
+                    issueComment: 'Escalation Manager could not recover the failed commit automatically.',
+                  },
+                } as any,
               };
             },
             async writeRepositoryFiles() { return undefined; },
@@ -126,23 +171,29 @@ describe('workflow failure paths', function () {
             async openPullRequest() { throw new Error('openPullRequest should not run after commit failure'); },
             async upsertIssueComment(input: { marker: string; body: string }) {
               markers.push(input.marker);
-              assert.match(input.body, /implement/i);
-              assert.match(input.body, /commit failed/i);
-              assert.match(input.body, /Ready/i);
+              commentBodies.set(input.marker, input.body);
             },
             async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
               statusUpdates.push(input);
             },
           },
-        }),
-      (error: unknown) => assertWorkflowActivityFailure(error, /commit failed/),
+        },
+        async (handle) => {
+          assert.strictEqual(await waitForBlockedReason(handle, 'implement_needs_input'), 'implement_needs_input');
+          await handle.terminate('done');
+        },
     );
 
     assert.deepStrictEqual(statusUpdates, [
       buildStatusUpdateInput(issue, issue.inProgressOptionId),
+      buildStatusUpdateInput(issue, issue.escalatedOptionId),
       buildStatusUpdateInput(issue, issue.blockedOptionId),
     ]);
-    assert.deepStrictEqual(markers, ['workflow:phase-failure']);
+    assert.deepStrictEqual(markers, ['escalation:human-needed', 'workflow:phase-failure']);
+    assert.strictEqual(runAgentSequenceCallCount, 2);
+    assert.match(commentBodies.get('escalation:human-needed') ?? '', /commit failed/i);
+    assert.match(commentBodies.get('workflow:phase-failure') ?? '', /commit failed/i);
+    assert.match(commentBodies.get('workflow:phase-failure') ?? '', /Ready/i);
   });
 
   it('preserves the original phase failure when blocked cleanup also throws', async () => {
@@ -182,9 +233,27 @@ describe('workflow failure paths', function () {
 
     assert.deepStrictEqual(statusUpdates[0], buildStatusUpdateInput(issue, issue.inProgressOptionId));
     assert.deepStrictEqual(statusUpdates.slice(1), [
+      buildStatusUpdateInput(issue, issue.escalatedOptionId),
+      buildStatusUpdateInput(issue, issue.escalatedOptionId),
+      buildStatusUpdateInput(issue, issue.escalatedOptionId),
       buildStatusUpdateInput(issue, issue.blockedOptionId),
       buildStatusUpdateInput(issue, issue.blockedOptionId),
       buildStatusUpdateInput(issue, issue.blockedOptionId),
     ]);
   });
 });
+
+async function waitForBlockedReason(
+  handle: { query: (queryDef: typeof getBlockedReasonQuery) => Promise<string | null> },
+  expectedBlockedReason: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 320; attempt += 1) {
+    const blockedReason = await handle.query(getBlockedReasonQuery);
+    if (blockedReason === expectedBlockedReason) {
+      return blockedReason;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new assert.AssertionError({ message: `Timed out waiting for ${expectedBlockedReason} blocked reason.` });
+}

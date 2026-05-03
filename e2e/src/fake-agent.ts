@@ -4,6 +4,8 @@ import type { AgentActivityDeps, AgentSession, AgentTurnOptions, AgentTurnResult
 export const FAKE_AGENT_FILE_PATH = 'e2e/fake-agent-output.md';
 const FAKE_AGENT_REVIEW_STATE_PATH = '.orchestrator-fake-agent-review-attempt';
 
+type FakeEscalationOriginPhase = 'specify' | 'implement' | 'review';
+
 export function buildFakeAgentFileText(runMarker: string): string {
   return ['# Fake E2E Change', '', `Run marker: ${runMarker}`].join('\n');
 }
@@ -53,6 +55,93 @@ export function buildFakeAgentSpecifyResponse() {
     openQuestions: [],
     assumptions: [],
     risks: [],
+  };
+}
+
+export function buildFakeAgentSpecifyEscalationResponse(runMarker: string) {
+  return {
+    outcome: 'resolved',
+    originPhase: 'specify',
+    confidence: 'high',
+    rootCause: {
+      category: 'missing_spec_context',
+      summary: `Escalation restored the deterministic spec bundle for ${runMarker}.`,
+      evidence: [`Run marker ${runMarker} requested deterministic spec recovery.`],
+    },
+    resolution: {
+      summary: `Rewrite the spec bundle for ${runMarker} and rerun Specify.`,
+      files: buildFakeAgentSpecifyResponse().files,
+      commitMessage: `test: fake escalation spec recovery for ${runMarker}`,
+      validationPlan: ['Run openspec validation'],
+      resumeStatus: 'Backlog',
+    },
+    issueComment: `Escalation Manager restored the deterministic spec bundle for ${runMarker}.`,
+  };
+}
+
+export function buildFakeAgentImplementEscalationResponse(runMarker: string) {
+  return {
+    outcome: 'resolved',
+    originPhase: 'implement',
+    confidence: 'high',
+    rootCause: {
+      category: 'quality_gate_failure',
+      summary: `Escalation repaired the deterministic implement output for ${runMarker}.`,
+      evidence: [`Run marker ${runMarker} requested deterministic implement recovery.`],
+    },
+    resolution: {
+      summary: `Rewrite the deterministic repository change for ${runMarker} and rerun Implement.`,
+      files: [{ path: FAKE_AGENT_FILE_PATH, content: buildFakeAgentFileText(`${runMarker} (escalation)`) }],
+      commitMessage: `test: fake escalation recovery for ${runMarker}`,
+      validationPlan: ['Run make check'],
+      resumeStatus: 'Ready',
+    },
+    issueComment: `Escalation Manager repaired the deterministic implementation output for ${runMarker}.`,
+  };
+}
+
+export function buildFakeAgentReviewOnlyEscalationResponse(runMarker: string) {
+  return {
+    outcome: 'resolved',
+    originPhase: 'review',
+    confidence: 'medium',
+    rootCause: {
+      category: 'review_findings',
+      summary: `Escalation resolved stale review context for ${runMarker}.`,
+      evidence: [`Run marker ${runMarker} requested a review-only recovery.`],
+    },
+    resolution: {
+      summary: `Refresh review context for ${runMarker} without changing repository files.`,
+      files: [],
+      validationPlan: ['Refresh PR metadata'],
+      resumeStatus: 'In review',
+    },
+    issueComment: `Escalation Manager resolved stale review context for ${runMarker}.`,
+  };
+}
+
+export function buildFakeAgentHumanEscalationResponse(runMarker: string, originPhase: FakeEscalationOriginPhase = 'implement') {
+  const recommendedStatusAfterAnswer = originPhase === 'specify' ? 'Backlog' : originPhase === 'review' ? 'In review' : 'Ready';
+  return {
+    outcome: 'needs_human',
+    originPhase,
+    confidence: 'low',
+    rootCause: {
+      category: 'ambiguous_requirement',
+      summary: `Escalation requires human input for ${runMarker}.`,
+      evidence: [`Run marker ${runMarker} explicitly requested a human fallback.`],
+    },
+    resolution: {
+      summary: 'No safe automated repair was applied.',
+      files: [],
+      validationPlan: [],
+      resumeStatus: recommendedStatusAfterAnswer,
+    },
+    humanRequest: {
+      question: `A human must decide how ${runMarker} should proceed.`,
+      recommendedStatusAfterAnswer,
+    },
+    issueComment: `Escalation Manager needs human input for ${runMarker}.`,
   };
 }
 
@@ -127,6 +216,20 @@ async function runFakeTurn(
   }
 
   if (state.turnCount === 1) {
+    if (isStructuredTurn && prompt.includes('You are the Escalation Manager')) {
+      const originPhase = extractEscalationOriginPhase(prompt);
+      const escalationResponse = buildFakeEscalationResponse(state.runMarker, originPhase);
+      return buildFakeAgentTurnResult(
+        JSON.stringify(escalationResponse),
+        `Triaging the escalation context for ${state.runMarker}.`,
+        originPhase === 'review'
+          ? 'Preparing deterministic fake review-only escalation output.'
+          : escalationResponse.outcome === 'needs_human'
+            ? 'Preparing deterministic fake human-fallback escalation output.'
+            : 'Preparing deterministic fake escalation recovery output.',
+      );
+    }
+
     if (isStructuredTurn && prompt.includes('OpenSpec proposal')) {
       return buildFakeAgentTurnResult(
         JSON.stringify(buildFakeAgentSpecifyResponse()),
@@ -208,4 +311,29 @@ async function readFakeReviewAttempt(baseDeps: AgentActivityDeps, statePath: str
   } catch {
     return 0;
   }
+}
+
+function buildFakeEscalationResponse(runMarker: string, originPhase: FakeEscalationOriginPhase): ReturnType<typeof buildFakeAgentImplementEscalationResponse> | ReturnType<typeof buildFakeAgentReviewOnlyEscalationResponse> | ReturnType<typeof buildFakeAgentHumanEscalationResponse> | ReturnType<typeof buildFakeAgentSpecifyEscalationResponse> {
+  if (runMarker.toLowerCase().includes('needs-human')) {
+    return buildFakeAgentHumanEscalationResponse(runMarker, originPhase);
+  }
+
+  if (originPhase === 'review') {
+    return buildFakeAgentReviewOnlyEscalationResponse(runMarker);
+  }
+
+  if (originPhase === 'specify') {
+    return buildFakeAgentSpecifyEscalationResponse(runMarker);
+  }
+
+  return buildFakeAgentImplementEscalationResponse(runMarker);
+}
+
+function extractEscalationOriginPhase(prompt: string): FakeEscalationOriginPhase {
+  const match = prompt.match(/Origin phase:\s*(specify|implement|review)/i);
+  const value = match?.[1]?.toLowerCase();
+  if (value === 'specify' || value === 'review') {
+    return value;
+  }
+  return 'implement';
 }

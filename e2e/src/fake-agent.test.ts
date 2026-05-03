@@ -5,8 +5,12 @@ import { access, appendFile, mkdtemp, mkdir, readdir, readFile, realpath, rm, wr
 import { describe, it } from 'mocha';
 import type { AgentActivityDeps, CommandResult } from '../../orchestrator/lib/activity-deps';
 import {
+  buildFakeAgentHumanEscalationResponse,
+  buildFakeAgentImplementEscalationResponse,
   buildFakeAgentImplementResponse,
-    buildFakeAgentReviewResponse,
+  buildFakeAgentReviewOnlyEscalationResponse,
+  buildFakeAgentReviewResponse,
+  buildFakeAgentSpecifyEscalationResponse,
   buildFakeAgentSpecifyResponse,
   createFakeAgentDeps,
 } from './fake-agent';
@@ -98,6 +102,46 @@ describe('createFakeAgentDeps', () => {
     assert.deepStrictEqual(JSON.parse(firstResponse.finalResponse), buildFakeAgentReviewResponse('run-123', 1));
     assert.deepStrictEqual(JSON.parse(secondResponse.finalResponse), buildFakeAgentReviewResponse('run-123', 2));
   });
+
+  it('returns a deterministic resolved escalation response for implement recovery', async () => {
+    const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
+    const deps = createFakeAgentDeps(buildBaseDeps());
+    const thread = deps.createCodexThread(worktreePath);
+
+    const response = await thread.run('You are the Escalation Manager.\nOrigin phase: implement\nE2E_RUN_MARKER: run-123', {
+      outputSchema: { type: 'object' },
+    });
+
+    assert.deepStrictEqual(JSON.parse(response.finalResponse), buildFakeAgentImplementEscalationResponse('run-123'));
+  });
+
+  it('returns a deterministic review-only escalation response for review recovery', async () => {
+    const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
+    const deps = createFakeAgentDeps(buildBaseDeps());
+    const thread = deps.createCodexThread(worktreePath);
+
+    const response = await thread.run('You are the Escalation Manager.\nOrigin phase: review\nE2E_RUN_MARKER: run-123', {
+      outputSchema: { type: 'object' },
+    });
+
+    assert.deepStrictEqual(JSON.parse(response.finalResponse), buildFakeAgentReviewOnlyEscalationResponse('run-123'));
+  });
+
+  it('returns a deterministic human-needed escalation response when the run marker requests it', async () => {
+    const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
+    const deps = createFakeAgentDeps(buildBaseDeps());
+    const thread = deps.createCodexThread(worktreePath);
+
+    const response = await thread.run('You are the Escalation Manager.\nOrigin phase: specify\nE2E_RUN_MARKER: run-123-needs-human', {
+      outputSchema: { type: 'object' },
+    });
+
+    assert.deepStrictEqual(JSON.parse(response.finalResponse), buildFakeAgentHumanEscalationResponse('run-123-needs-human', 'specify'));
+  });
+
+  it('exports a deterministic specify escalation helper for Backlog recovery', () => {
+    assert.strictEqual(buildFakeAgentSpecifyEscalationResponse('run-123').resolution.resumeStatus, 'Backlog');
+  });
 });
 
 function buildBaseDeps(): AgentActivityDeps {
@@ -119,6 +163,7 @@ function buildBaseDeps(): AgentActivityDeps {
     resumeCodexThread: () => {
       throw new Error('resumeCodexThread should be overridden');
     },
+    getAgentProfile: () => ({ model: 'gpt-5.3-codex', reasoningEffort: 'low' }),
     getCancellationSignal: () => undefined,
     getHeartbeatDetails: () => undefined,
     heartbeat: () => undefined,

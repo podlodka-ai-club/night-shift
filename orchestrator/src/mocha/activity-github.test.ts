@@ -207,6 +207,7 @@ describe('github activities', () => {
                       { id: selectedIssue.inProgressOptionId, name: 'In progress' },
                       { id: selectedIssue.inReviewOptionId, name: selectedIssue.inReviewStatusName },
                       { id: 'ready-to-merge-option', name: 'Ready to merge' },
+                      { id: selectedIssue.escalatedOptionId, name: selectedIssue.escalatedStatusName },
                       { id: selectedIssue.blockedOptionId, name: 'Blocked' },
                       { id: 'custom-option', name: 'Custom' },
                     ],
@@ -235,6 +236,7 @@ describe('github activities', () => {
       { name: 'In progress', color: 'YELLOW', description: '' },
       { name: 'In review', color: 'PURPLE', description: '' },
       { name: 'Ready to merge', color: 'GREEN', description: 'orchestrator auto-created status: Ready to merge' },
+      { name: 'Escalated', color: 'ORANGE', description: 'orchestrator auto-created status: Escalated' },
       { name: 'Blocked', color: 'RED', description: 'orchestrator auto-created status: Blocked' },
       { name: 'Custom', color: 'ORANGE', description: 'Custom lane' },
     ]);

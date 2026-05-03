@@ -4,13 +4,21 @@ Live GitHub-backed end-to-end tests for the `orchestrator` package.
 
 ## What it covers
 
-The runner seeds a real GitHub issue into a Project v2, starts a local Temporal test environment, runs the orchestrator workflow, verifies the issue moves through `Ready -> In progress -> In review`, checks that a PR/comment were created, and optionally cleans everything up.
+The runner seeds a real GitHub issue into a Project v2, starts a local Temporal test environment, runs the orchestrator workflow, verifies canonical board transitions, checks that PR/comment artifacts were created, and optionally cleans everything up.
 
 ## Modes
 
 - `live:fake` uses a deterministic fake agent and talks to real GitHub + local Temporal through the default manual intake path.
 - `live:fake:pickup` uses the deterministic fake agent but starts the run through `pickupWorkflow` / scheduled-pickup semantics.
 - `live:real` runs the real agent path and verifies real PR metadata against GitHub.
+
+The fake-agent harness now also exposes deterministic escalation outputs for:
+
+- resolved recovery back through `Ready`
+- resolved review-only recovery back through `In review`
+- human fallback to `Blocked`
+
+The default live fake run still exercises the normal Ready-path. The extra escalation helpers are intended for focused unit coverage and future live escalation scenarios.
 
 ## Required environment
 
@@ -55,5 +63,6 @@ Or use the repo-root Make wrappers:
 
 - `live:real` assumes your local Codex/OpenAI auth is already working for the orchestrator runtime.
 - `live:fake:pickup` is the quickest live proof that the scheduled-pickup path can start/resume workflows end-to-end.
+- allowed fake-agent status contracts now include escalation transitions such as `Escalated -> Ready`, `Escalated -> In review`, `Escalated -> Backlog`, and `Escalated -> Blocked` where the scenario permits them.
 - Cleanup closes the created issue/PR, removes the project item, and deletes the branch when enabled.
 - On failures, artifacts are preserved when `E2E_PRESERVE_ON_FAILURE=true`.

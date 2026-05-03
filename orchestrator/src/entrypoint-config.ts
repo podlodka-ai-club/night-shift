@@ -36,6 +36,7 @@ export interface ResolvedWorkerEntrypointConfig {
   temporal: ResolvedTemporalEntrypointConfig;
   workflowInput: AutomateReadyIssueInput;
   pickup: ResolvedPickupConfig;
+  agentProfiles: OrchestratorConfig['agentProfiles'];
 }
 
 export interface ParsedEntrypointConfigArgs {
@@ -123,6 +124,7 @@ export async function loadWorkerEntrypointConfig(
       intervalSeconds: config.pickup.intervalSeconds,
       maxConcurrent: config.pickup.maxConcurrent,
     },
+    agentProfiles: config.agentProfiles,
   };
 }
 
@@ -151,6 +153,7 @@ function resolveWorkflowInput(
     backlogStatusName: env.GITHUB_BACKLOG_STATUS ?? config.github.backlogStatusName,
     readyStatusName: env.GITHUB_READY_STATUS ?? config.github.readyStatusName,
     inReviewStatusName: env.GITHUB_IN_REVIEW_STATUS ?? config.github.inReviewStatusName,
+    escalatedStatusName: env.GITHUB_ESCALATED_STATUS ?? config.github.escalatedStatusName,
     blockedStatusName: env.GITHUB_BLOCKED_STATUS ?? config.github.blockedStatusName,
     branchPrefix: env.GITHUB_BRANCH_PREFIX ?? config.github.branchPrefix,
   };
@@ -161,5 +164,5 @@ function optionalNumberToString(value: number | undefined): string | undefined {
 }
 
 function isManualStatus(value: string): value is ProjectStatusName {
-  return value === 'Backlog' || value === 'Ready' || value === 'In review';
+  return value === 'Backlog' || value === 'Ready' || value === 'In review' || value === 'Escalated';
 }

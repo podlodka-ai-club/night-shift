@@ -198,6 +198,7 @@ npm start
 npm start -- --config ./orchestrator.config.ts
 npm run workflow -- <project-owner> <project-number> pickup 1
 npm run workflow -- <project-owner> <project-number> Backlog
+npm run workflow -- <project-owner> <project-number> Escalated
 ```
 
 From the repo root:
@@ -228,10 +229,16 @@ npm run lint
 
 ## A few implementation details worth remembering
 
+- `Escalated` means Night Shift is attempting automated recovery in the same workflow, worktree, and branch
+- `Blocked` now means escalation has already produced a human handoff and the workflow is waiting for an operator decision
+- pickup scans `Backlog` and `Ready` only; `Escalated` is recovery-only and must belong to an already-open workflow
+- manual intake may target `Escalated`, but it will only inspect or signal an open workflow and will not start a detached one
+- issue comments are marker-upserted; the main escalation markers are `escalation:summary`, `escalation:human-needed`, and `workflow:phase-failure`
 - Local repository state is cached under `/tmp/orchestrator`
 - Branches are stable per issue, using `orchestrator/issue-<number>` by default
 - Worktrees are also stable per issue, which helps with retries/recovery
 - Workflow ids are stable per issue, using `ticket-<issueNumber>`
 - `runAgent` uses local Codex with model `gpt-5.3-codex` and low reasoning effort
+- the reserved Escalation Manager profile uses `gpt-5.4` with high reasoning, bounded attempts, and is intended only for rare escalation-recovery paths
 - The issue body is used as the task description sent to Codex
 - The old dummy file writer still exists separately for future E2E testing

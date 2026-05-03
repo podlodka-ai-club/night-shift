@@ -14,6 +14,7 @@ import {
 import type * as activities from './activities';
 import type { IntakeCandidate } from './intake';
 import type { PickupWorkflowInput } from './pickup';
+import { runEscalationPhase } from './phases/escalation/phase';
 import { runImplementPhase } from './phases/implement/phase';
 import { runReviewPhase } from './phases/review/phase';
 import { runSpecifyPhase } from './phases/specify/phase';
@@ -81,15 +82,20 @@ const MAX_AGENT_TURN_MINUTES = 4;
 
 interface WorkflowShellState {
   startPhase: WorkflowPhase;
-  currentPhase: WorkflowPhase;
+  currentPhase: WorkflowRuntimePhase;
   blockedReason: WorkflowBlockedReason | null;
   reviewIteration: number;
   maxReviewIterations: number;
+  escalationAttemptCount?: number;
+  escalationOriginPhase?: WorkflowPhase;
   latestActivity?: string;
   recentActivities: string[];
   issueNumber?: number;
   issueTitle?: string;
 }
+
+type WorkflowRuntimePhase = WorkflowPhase | 'escalation';
+type ReviewResumeMode = 'implement' | 'review-only';
 
 const MAX_RECENT_ACTIVITIES = 3;
 
@@ -97,6 +103,7 @@ export const specifyRetrySignal = defineSignal(WORKFLOW_SIGNAL_NAMES[0]);
 export const specReviewedSignal = defineSignal(WORKFLOW_SIGNAL_NAMES[1]);
 export const implementRetrySignal = defineSignal(WORKFLOW_SIGNAL_NAMES[2]);
 export const resumeSignal = defineSignal(WORKFLOW_SIGNAL_NAMES[3]);
+export const resumeReviewOnlySignal = defineSignal(WORKFLOW_SIGNAL_NAMES[4]);
 export const activityProgressSignal = defineSignal<[string]>(WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME);
 export const getBlockedReasonQuery = defineQuery<WorkflowBlockedReason | null>('getBlockedReason');
 
@@ -106,14 +113,18 @@ export async function automateTopReadyIssue(
   const shellState = createWorkflowShellState(input);
   let selectedSpecifyIssue: SelectedProjectIssue | undefined;
   let selectedImplementIssue: SelectedProjectIssue | undefined;
+  let activeWorktree: WorktreeContext | undefined;
+  let activePullRequest: CreatedPullRequest | undefined;
   let allowSpecReviewed = false;
   let allowSpecifyRetry = false;
   let allowImplementRetry = false;
   let allowResume = false;
+  let allowResumeReviewOnly = false;
   let pendingSpecReviewed = false;
   let pendingSpecifyRetry = false;
   let pendingImplementRetry = false;
   let pendingResume = false;
+  let pendingResumeReviewOnly = false;
 
   const recordActivity = (message: string): void => {
     const normalizedMessage = message.trim();
@@ -181,210 +192,496 @@ export async function automateTopReadyIssue(
   setHandler(resumeSignal, () => {
     if (allowResume) pendingResume = true;
   });
+  setHandler(resumeReviewOnlySignal, () => {
+    if (allowResumeReviewOnly) pendingResumeReviewOnly = true;
+  });
 
   syncCurrentDetails();
 
-  workflowLoop: while (true) {
-    while (shellState.currentPhase === 'specify') {
-    selectedSpecifyIssue ??= await getTopBacklogIssue(input);
-    const issue = selectedSpecifyIssue;
-    shellState.issueNumber = issue.issueNumber;
-    shellState.issueTitle = issue.issueTitle;
-    recordActivity(`Selected Backlog issue #${issue.issueNumber} for Specify.`);
+  const escalatePhase = async (
+    originPhase: WorkflowPhase,
+    issue: SelectedProjectIssue,
+    options: {
+      blockedReason?: WorkflowBlockedReason;
+      failureSummary: string;
+      worktree?: WorktreeContext;
+      pullRequest?: CreatedPullRequest;
+    },
+  ): Promise<
+    | { kind: 'resolved'; nextPhase: WorkflowPhase; worktree: WorktreeContext; pullRequest?: CreatedPullRequest; message: string }
+    | { kind: 'blocked'; blockedReason: WorkflowBlockedReason; reviewResumeMode?: ReviewResumeMode; message: string }
+  > => {
+    shellState.currentPhase = 'escalation';
+    shellState.blockedReason = null;
+    shellState.escalationOriginPhase = originPhase;
+    shellState.escalationAttemptCount = (shellState.escalationAttemptCount ?? 0) + 1;
+    recordActivity(`Escalation attempt ${shellState.escalationAttemptCount} started for ${capitalizePhaseName(originPhase)}.`);
+    await moveProjectItemStatus({
+      projectId: issue.projectId,
+      projectItemId: issue.projectItemId,
+      statusFieldId: issue.statusFieldId,
+      statusOptionId: issue.escalatedOptionId,
+    });
 
-    let specifyResult;
-    try {
-      specifyResult = await runSpecifyPhase(
-        {
-          issue,
-          branchPrefix: input.branchPrefix,
-          onProgress: recordActivity,
-        },
-        {
-          createWorktreeForIssueIfNeeded,
-          listIssueComments,
-          readOpenSpecChangeFiles,
-          writeOpenSpecChangeFiles,
-          validateOpenSpecChange,
-          runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
-          commitAndPush,
-          openPullRequest,
-          upsertIssueComment,
-          moveProjectItemStatus,
-        },
-      );
-    } catch (error) {
-      await preserveOriginalPhaseFailure('specify', issue, error);
-      throw error;
+    const escalationResult = await runEscalationPhase(
+      {
+        issue,
+        originPhase,
+        blockedReason: options.blockedReason,
+        failureSummary: options.failureSummary,
+        branchPrefix: input.branchPrefix,
+        worktree: options.worktree,
+        pullRequest: options.pullRequest,
+        onProgress: recordActivity,
+      },
+      {
+        createWorktreeForIssueIfNeeded,
+        listIssueComments,
+        readOpenSpecChangeFiles,
+        getPullRequestDetails,
+        getPullRequestDiff,
+        listPullRequestFiles,
+        listPullRequestReviewComments,
+        runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+        writeOpenSpecChangeFiles,
+        writeRepositoryFiles,
+        validateOpenSpecChange,
+        runQualityGate,
+        commitAndPush,
+        openPullRequest,
+        upsertIssueComment,
+        moveProjectItemStatus,
+      },
+    );
+
+    shellState.escalationOriginPhase = undefined;
+
+    if (escalationResult.outcome === 'needs_human') {
+      const recommendedStatus = escalationResult.response?.humanRequest?.recommendedStatusAfterAnswer ?? escalationResult.response?.resolution.resumeStatus;
+      const humanFallback = resolveHumanFallback(originPhase, recommendedStatus);
+      return {
+        kind: 'blocked',
+        blockedReason: humanFallback.blockedReason,
+        reviewResumeMode: humanFallback.reviewResumeMode,
+        message: `Escalation requires human input before ${capitalizePhaseName(humanFallback.nextPhase)} can resume.`,
+      };
     }
 
-    if (specifyResult.outcome === 'needs_input') {
-      shellState.blockedReason = 'specify_needs_input';
+    if (originPhase === 'specify') {
+      return {
+        kind: 'resolved',
+        nextPhase: 'specify',
+        worktree: escalationResult.worktree,
+        pullRequest: escalationResult.pullRequest,
+        message: 'Escalation resolved the Specify block and returned the issue to Backlog for a Specify rerun.',
+      };
+    }
+
+    if (originPhase === 'implement') {
+      return {
+        kind: 'resolved',
+        nextPhase: 'implement',
+        worktree: escalationResult.worktree,
+        pullRequest: escalationResult.pullRequest,
+        message: 'Escalation resolved the Implement block and returned the issue to Ready for an Implement rerun.',
+      };
+    }
+
+    if (escalationResult.resumeStatus === 'In review') {
+      return {
+        kind: 'resolved',
+        nextPhase: 'review',
+        worktree: escalationResult.worktree,
+        pullRequest: escalationResult.pullRequest ?? options.pullRequest,
+        message: 'Escalation resolved stale review context and will rerun Review without another Implement pass.',
+      };
+    }
+
+    return {
+      kind: 'resolved',
+      nextPhase: 'implement',
+      worktree: escalationResult.worktree,
+      pullRequest: escalationResult.pullRequest ?? options.pullRequest,
+      message: 'Escalation repaired review-state issues with repository changes and will rerun Implement before Review.',
+    };
+  };
+
+  const applyResolvedEscalation = (
+    issue: SelectedProjectIssue,
+    result: { nextPhase: WorkflowPhase; worktree: WorktreeContext; pullRequest?: CreatedPullRequest; message: string },
+  ) => {
+    shellState.blockedReason = null;
+    shellState.reviewIteration = 0;
+    shellState.currentPhase = result.nextPhase;
+    activeWorktree = result.worktree;
+    activePullRequest = result.pullRequest ?? activePullRequest;
+    if (result.nextPhase === 'specify') {
+      selectedSpecifyIssue = issue;
+      selectedImplementIssue = undefined;
+      activePullRequest = undefined;
+    } else {
+      selectedSpecifyIssue = undefined;
+      selectedImplementIssue = issue;
+    }
+    recordActivity(result.message);
+  };
+
+  const waitForHumanFallback = async (
+    issue: SelectedProjectIssue,
+    blockedReason: WorkflowBlockedReason,
+    reviewResumeMode: ReviewResumeMode | undefined,
+  ): Promise<void> => {
+    shellState.blockedReason = blockedReason;
+    if (blockedReason === 'specify_needs_input') {
       allowSpecifyRetry = true;
-      recordActivity('Specify phase is blocked on operator input.');
+      recordActivity('Escalation handed off to a human; waiting for Backlog retry into Specify.');
       await condition(() => pendingSpecifyRetry);
       allowSpecifyRetry = false;
       pendingSpecifyRetry = false;
       shellState.blockedReason = null;
-      recordActivity('Specify retry requested; rerunning Specify phase.');
-      continue;
+      shellState.currentPhase = 'specify';
+      selectedSpecifyIssue = issue;
+      selectedImplementIssue = undefined;
+      activePullRequest = undefined;
+      recordActivity('Specify retry requested after human escalation fallback; returning to Specify phase.');
+      return;
     }
 
-    shellState.blockedReason = 'awaiting_spec_review';
-    allowSpecReviewed = true;
-    allowSpecifyRetry = true;
-    recordActivity('Waiting for spec review approval to enter implement mode.');
-
-    await condition(() => pendingSpecReviewed || pendingSpecifyRetry);
-
-    allowSpecReviewed = false;
-    allowSpecifyRetry = false;
-
-    if (pendingSpecifyRetry) {
-      pendingSpecifyRetry = false;
-      shellState.blockedReason = null;
-      recordActivity('Specify retry requested; rerunning Specify phase.');
-      continue;
-    }
-
-    pendingSpecReviewed = false;
-    selectedImplementIssue = issue;
-    selectedSpecifyIssue = undefined;
-    shellState.blockedReason = null;
-    shellState.currentPhase = 'implement';
-    recordActivity('Spec review approved; entering implement phase.');
-  }
-
-    if (pendingResume) pendingResume = false;
-
-    while (shellState.currentPhase === 'implement') {
-    selectedImplementIssue ??= await getTopReadyIssue(input);
-    const issue = selectedImplementIssue;
-    shellState.issueNumber = issue.issueNumber;
-    shellState.issueTitle = issue.issueTitle;
-    recordActivity(`Selected Ready issue #${issue.issueNumber} for Implement.`);
-
-    let implementResult;
-    try {
-      implementResult = await runImplementPhase(
-        {
-          issue,
-          branchPrefix: input.branchPrefix,
-          onProgress: recordActivity,
-        },
-        {
-          createWorktreeForIssueIfNeeded,
-          listIssueComments,
-          listOpenPullRequestFeedback,
-          readOpenSpecChangeFiles,
-          runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
-          writeRepositoryFiles,
-          runQualityGate,
-          commitAndPush,
-          openPullRequest,
-          upsertIssueComment,
-          moveProjectItemStatus,
-        },
-      );
-    } catch (error) {
-      await preserveOriginalPhaseFailure('implement', issue, error);
-      throw error;
-    }
-
-    if (implementResult.outcome === 'needs_input') {
-      shellState.blockedReason = 'implement_needs_input';
+    if (blockedReason === 'implement_needs_input') {
       allowSpecifyRetry = true;
       allowImplementRetry = true;
-      recordActivity('Implement phase is blocked on operator input.');
-  await condition(() => pendingSpecifyRetry || pendingImplementRetry);
-  allowSpecifyRetry = false;
+      recordActivity('Escalation handed off to a human; waiting for Backlog or Ready retry into Specify or Implement.');
+      await condition(() => pendingSpecifyRetry || pendingImplementRetry);
+      allowSpecifyRetry = false;
       allowImplementRetry = false;
-
       if (pendingSpecifyRetry) {
         pendingSpecifyRetry = false;
         pendingImplementRetry = false;
-        selectedSpecifyIssue = issue;
-        selectedImplementIssue = undefined;
         shellState.blockedReason = null;
         shellState.currentPhase = 'specify';
-    recordActivity('Backlog retry requested; returning to Specify phase.');
-        continue workflowLoop;
+        selectedSpecifyIssue = issue;
+        selectedImplementIssue = undefined;
+        activePullRequest = undefined;
+        recordActivity('Backlog retry requested after human escalation fallback; returning to Specify phase.');
+        return;
       }
 
       pendingImplementRetry = false;
       shellState.blockedReason = null;
-      recordActivity('Implement retry requested; rerunning Implement phase.');
-      continue;
-    }
-
-    shellState.blockedReason = null;
-    shellState.currentPhase = 'review';
-    recordActivity(`Opened PR #${implementResult.pullRequest?.pullRequestNumber} and moved the issue to In review.`);
-    if (!implementResult.pullRequest) {
-      throw new Error('Implement phase did not return a pull request.');
-    }
-
-    let reviewResult;
-    try {
-      reviewResult = await runReviewPhase(
-        {
-          issue,
-          worktree: implementResult.worktree,
-          pullRequest: implementResult.pullRequest,
-          reviewIteration: shellState.reviewIteration,
-          onProgress: recordActivity,
-        },
-        {
-          readOpenSpecChangeFiles,
-          getPullRequestDetails,
-          getPullRequestDiff,
-          listPullRequestFiles,
-          listPullRequestReviewComments,
-          runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
-          setPullRequestReady,
-          createPullRequestReview,
-          upsertPullRequestReviewComment,
-          upsertIssueComment,
-          addIssueLabels,
-          moveProjectItemStatus,
-        },
-      );
-    } catch (error) {
-      await preserveOriginalPhaseFailure('review', issue, error);
-      throw error;
-    }
-
-    if (reviewResult.outcome === 'needs_fix') {
-      shellState.reviewIteration += 1;
       shellState.currentPhase = 'implement';
-      recordActivity(`Review requested fixes for PR #${implementResult.pullRequest.pullRequestNumber}; rerunning Implement for review iteration ${shellState.reviewIteration + 1}.`);
-      continue;
+      selectedSpecifyIssue = undefined;
+      selectedImplementIssue = issue;
+      recordActivity('Implement retry requested after human escalation fallback; rerunning Implement phase.');
+      return;
     }
 
-    if (reviewResult.outcome === 'escalated') {
-      pendingResume = false;
-      shellState.blockedReason = 'review_escalation';
-      shellState.currentPhase = 'review';
-      allowResume = true;
-      recordActivity('Review escalated; waiting for operator resume.');
-      await condition(() => pendingResume);
-      allowResume = false;
+    allowResume = reviewResumeMode === 'implement';
+    allowResumeReviewOnly = reviewResumeMode === 'review-only';
+    recordActivity(reviewResumeMode === 'review-only'
+      ? 'Escalation handed off to a human; waiting for In review resume into Review.'
+      : 'Escalation handed off to a human; waiting for Ready resume into Implement.');
+    await condition(() => pendingResume || pendingResumeReviewOnly);
+    allowResume = false;
+    allowResumeReviewOnly = false;
+
+    if (pendingResumeReviewOnly) {
+      pendingResumeReviewOnly = false;
       pendingResume = false;
       shellState.blockedReason = null;
       shellState.reviewIteration = 0;
+      shellState.currentPhase = 'review';
+      selectedSpecifyIssue = undefined;
+      selectedImplementIssue = issue;
+      recordActivity('Review-only resume received after human escalation fallback; rerunning Review.');
+      return;
+    }
+
+    pendingResume = false;
+    shellState.blockedReason = null;
+    shellState.reviewIteration = 0;
+    shellState.currentPhase = 'implement';
+    selectedSpecifyIssue = undefined;
+    selectedImplementIssue = issue;
+    recordActivity('Resume received after human escalation fallback; rerunning Implement and restarting the review loop.');
+  };
+
+  const attemptEscalationAfterPhaseFailure = async (
+    phase: WorkflowPhase,
+    issue: SelectedProjectIssue,
+    error: unknown,
+  ): Promise<boolean> => {
+    try {
+      const escalation = await escalatePhase(phase, issue, {
+        blockedReason: phase === 'review' ? 'review_escalation' : phase === 'implement' ? 'implement_needs_input' : 'specify_needs_input',
+        failureSummary: buildPhaseFailureComment(phase, issue, error),
+        worktree: activeWorktree,
+        pullRequest: activePullRequest,
+      });
+      if (escalation.kind === 'resolved') {
+        applyResolvedEscalation(issue, escalation);
+        return true;
+      }
+
+      await upsertIssueComment({
+        repoOwner: issue.repoOwner,
+        repoName: issue.repoName,
+        issueNumber: issue.issueNumber,
+        marker: 'workflow:phase-failure',
+        body: buildPhaseFailureComment(phase, issue, error),
+      });
+      await waitForHumanFallback(issue, escalation.blockedReason, escalation.reviewResumeMode);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  workflowLoop: for (;;) {
+    if (shellState.currentPhase === 'specify') {
+      selectedSpecifyIssue ??= await getTopBacklogIssue(input);
+      const issue = selectedSpecifyIssue;
+      shellState.issueNumber = issue.issueNumber;
+      shellState.issueTitle = issue.issueTitle;
+      recordActivity(`Selected Backlog issue #${issue.issueNumber} for Specify.`);
+
+      let specifyResult;
+      try {
+        specifyResult = await runSpecifyPhase(
+          {
+            issue,
+            branchPrefix: input.branchPrefix,
+            deferBlockedStatus: true,
+            onProgress: recordActivity,
+          },
+          {
+            createWorktreeForIssueIfNeeded,
+            listIssueComments,
+            readOpenSpecChangeFiles,
+            writeOpenSpecChangeFiles,
+            validateOpenSpecChange,
+            runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+            commitAndPush,
+            openPullRequest,
+            upsertIssueComment,
+            moveProjectItemStatus,
+          },
+        );
+      } catch (error) {
+        if (await attemptEscalationAfterPhaseFailure('specify', issue, error)) {
+          continue workflowLoop;
+        }
+        await preserveOriginalPhaseFailure('specify', issue, error);
+        throw error;
+      }
+
+      activeWorktree = specifyResult.worktree;
+      if (specifyResult.outcome === 'needs_input') {
+        const escalation = await escalatePhase('specify', issue, {
+          blockedReason: 'specify_needs_input',
+          failureSummary: specifyResult.summaryCommentBody,
+          worktree: specifyResult.worktree,
+        });
+        if (escalation.kind === 'resolved') {
+          applyResolvedEscalation(issue, escalation);
+        } else {
+          await waitForHumanFallback(issue, escalation.blockedReason, escalation.reviewResumeMode);
+        }
+        continue workflowLoop;
+      }
+
+      shellState.blockedReason = 'awaiting_spec_review';
+      allowSpecReviewed = true;
+      allowSpecifyRetry = true;
+      recordActivity('Waiting for spec review approval to enter implement mode.');
+
+      await condition(() => pendingSpecReviewed || pendingSpecifyRetry);
+
+      allowSpecReviewed = false;
+      allowSpecifyRetry = false;
+
+      if (pendingSpecifyRetry) {
+        pendingSpecifyRetry = false;
+        shellState.blockedReason = null;
+        recordActivity('Specify retry requested; rerunning Specify phase.');
+        continue workflowLoop;
+      }
+
+      pendingSpecReviewed = false;
+      selectedImplementIssue = issue;
+      selectedSpecifyIssue = undefined;
+      shellState.blockedReason = null;
       shellState.currentPhase = 'implement';
-      recordActivity('Resume received; rerunning Implement and restarting the review loop.');
-      continue;
+      recordActivity('Spec review approved; entering implement phase.');
+      continue workflowLoop;
     }
 
-    recordActivity(`Review approved PR #${implementResult.pullRequest.pullRequestNumber}; issue moved to Ready to merge.`);
-    const result = buildAutomateReadyIssueResult(issue, implementResult.pullRequest, issue.readyToMergeStatusName);
-    await cleanupSuccessfulWorktree(implementResult.worktree);
-    return result;
+    if (shellState.currentPhase === 'implement') {
+      selectedImplementIssue ??= await getTopReadyIssue(input);
+      const issue = selectedImplementIssue;
+      shellState.issueNumber = issue.issueNumber;
+      shellState.issueTitle = issue.issueTitle;
+      recordActivity(`Selected Ready issue #${issue.issueNumber} for Implement.`);
+
+      let implementResult;
+      try {
+        implementResult = await runImplementPhase(
+          {
+            issue,
+            branchPrefix: input.branchPrefix,
+            deferBlockedStatus: true,
+            onProgress: recordActivity,
+          },
+          {
+            createWorktreeForIssueIfNeeded,
+            listIssueComments,
+            listOpenPullRequestFeedback,
+            readOpenSpecChangeFiles,
+            runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+            writeRepositoryFiles,
+            runQualityGate,
+            commitAndPush,
+            openPullRequest,
+            upsertIssueComment,
+            moveProjectItemStatus,
+          },
+        );
+      } catch (error) {
+        if (await attemptEscalationAfterPhaseFailure('implement', issue, error)) {
+          continue workflowLoop;
+        }
+        await preserveOriginalPhaseFailure('implement', issue, error);
+        throw error;
+      }
+
+      activeWorktree = implementResult.worktree;
+      if (implementResult.outcome === 'needs_input') {
+        const escalation = await escalatePhase('implement', issue, {
+          blockedReason: 'implement_needs_input',
+          failureSummary: implementResult.summaryCommentBody,
+          worktree: implementResult.worktree,
+          pullRequest: activePullRequest,
+        });
+        if (escalation.kind === 'resolved') {
+          applyResolvedEscalation(issue, escalation);
+        } else {
+          await waitForHumanFallback(issue, escalation.blockedReason, escalation.reviewResumeMode);
+        }
+        continue workflowLoop;
+      }
+
+      if (!implementResult.pullRequest) {
+        throw new Error('Implement phase did not return a pull request.');
+      }
+
+      activePullRequest = implementResult.pullRequest;
+      shellState.blockedReason = null;
+      shellState.currentPhase = 'review';
+      recordActivity(`Opened PR #${implementResult.pullRequest.pullRequestNumber} and moved the issue to In review.`);
+      continue workflowLoop;
     }
 
-    throw new Error('Workflow exited the implement phase unexpectedly.');
+    if (shellState.currentPhase === 'review') {
+      const issue = selectedImplementIssue;
+      if (!issue) {
+        throw new Error('Review phase cannot start without an Implement-selected issue.');
+      }
+      if (!activeWorktree || !activePullRequest) {
+        throw new Error('Review phase cannot start without an active worktree and pull request.');
+      }
+
+      shellState.issueNumber = issue.issueNumber;
+      shellState.issueTitle = issue.issueTitle;
+
+      let reviewResult;
+      try {
+        reviewResult = await runReviewPhase(
+          {
+            issue,
+            worktree: activeWorktree,
+            pullRequest: activePullRequest,
+            reviewIteration: shellState.reviewIteration,
+            deferEscalatedStatus: true,
+            onProgress: recordActivity,
+          },
+          {
+            readOpenSpecChangeFiles,
+            getPullRequestDetails,
+            getPullRequestDiff,
+            listPullRequestFiles,
+            listPullRequestReviewComments,
+            runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
+            setPullRequestReady,
+            createPullRequestReview,
+            upsertPullRequestReviewComment,
+            upsertIssueComment,
+            addIssueLabels,
+            moveProjectItemStatus,
+          },
+        );
+      } catch (error) {
+        if (await attemptEscalationAfterPhaseFailure('review', issue, error)) {
+          continue workflowLoop;
+        }
+        await preserveOriginalPhaseFailure('review', issue, error);
+        throw error;
+      }
+
+      if (reviewResult.outcome === 'needs_fix') {
+        shellState.reviewIteration += 1;
+        shellState.currentPhase = 'implement';
+        recordActivity(`Review requested fixes for PR #${activePullRequest.pullRequestNumber}; rerunning Implement for review iteration ${shellState.reviewIteration + 1}.`);
+        continue workflowLoop;
+      }
+
+      if (reviewResult.outcome === 'escalated') {
+        const escalation = await escalatePhase('review', issue, {
+          blockedReason: 'review_escalation',
+          failureSummary: reviewResult.summaryCommentBody,
+          worktree: activeWorktree,
+          pullRequest: activePullRequest,
+        });
+        if (escalation.kind === 'resolved') {
+          applyResolvedEscalation(issue, escalation);
+        } else {
+          await waitForHumanFallback(issue, escalation.blockedReason, escalation.reviewResumeMode);
+        }
+        continue workflowLoop;
+      }
+
+      recordActivity(`Review approved PR #${activePullRequest.pullRequestNumber}; issue moved to Ready to merge.`);
+      const result = buildAutomateReadyIssueResult(issue, activePullRequest, issue.readyToMergeStatusName);
+      await cleanupSuccessfulWorktree(activeWorktree);
+      return result;
+    }
+
+    throw new Error(`Workflow exited unexpectedly while in ${shellState.currentPhase}.`);
   }
+}
+
+function resolveHumanFallback(
+  originPhase: WorkflowPhase,
+  recommendedStatus: 'Backlog' | 'Ready' | 'In review' | undefined,
+): { blockedReason: WorkflowBlockedReason; reviewResumeMode?: ReviewResumeMode; nextPhase: WorkflowPhase } {
+  if (recommendedStatus === 'Backlog') {
+    return {
+      blockedReason: originPhase === 'specify' ? 'specify_needs_input' : 'implement_needs_input',
+      nextPhase: 'specify',
+    };
+  }
+
+  if (recommendedStatus === 'In review') {
+    return {
+      blockedReason: 'review_escalation',
+      reviewResumeMode: 'review-only',
+      nextPhase: 'review',
+    };
+  }
+
+  return {
+    blockedReason: originPhase === 'review' ? 'review_escalation' : 'implement_needs_input',
+    reviewResumeMode: originPhase === 'review' ? 'implement' : undefined,
+    nextPhase: originPhase === 'review' ? 'review' : 'implement',
+  };
 }
 
 export async function pickupWorkflow(input: PickupWorkflowInput): Promise<void> {
@@ -406,6 +703,7 @@ export function renderWorkflowCurrentDetails(state: WorkflowShellState): string 
     `- Current phase: ${state.currentPhase}`,
     `- Blocked reason: ${state.blockedReason ?? 'none'}`,
     `- Review iteration: ${state.reviewIteration}/${state.maxReviewIterations}`,
+    `- Escalation attempts: ${state.escalationAttemptCount ?? 0}${state.escalationOriginPhase ? ` (origin: ${state.escalationOriginPhase})` : ''}`,
     `- Latest activity: ${state.latestActivity ?? 'none'}`,
     ...renderRecentActivities(state.recentActivities),
     state.issueNumber !== undefined && state.issueTitle
@@ -438,6 +736,7 @@ function createWorkflowShellState(input: AutomateReadyIssueInput): WorkflowShell
     blockedReason: null,
     reviewIteration: 0,
     maxReviewIterations: 3,
+    escalationAttemptCount: 0,
     recentActivities: [],
   };
 }

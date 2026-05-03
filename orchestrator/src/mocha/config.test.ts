@@ -6,6 +6,38 @@ import { describe, it } from 'mocha';
 import { loadOrchestratorConfig } from '../config';
 
 describe('config loading', () => {
+  it('defaults github status names including Escalated in the shared config layer', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-config-github-defaults-'));
+    try {
+      const config = await loadOrchestratorConfig({ cwd: tempDir });
+
+      assert.deepStrictEqual(config.github, {
+        backlogStatusName: 'Backlog',
+        readyStatusName: 'Ready',
+        inReviewStatusName: 'In review',
+        escalatedStatusName: 'Escalated',
+        blockedStatusName: 'Blocked',
+        branchPrefix: 'orchestrator',
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('defaults agent profiles with escalation on gpt-5.4 high reasoning', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-config-agent-profiles-'));
+    try {
+      const config = await loadOrchestratorConfig({ cwd: tempDir });
+
+      assert.deepStrictEqual(config.agentProfiles, {
+        default: { model: 'gpt-5.3-codex', reasoningEffort: 'low' },
+        escalation: { model: 'gpt-5.4', reasoningEffort: 'high' },
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('defaults pickup config to enabled donor-style schedule settings', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-config-pickup-defaults-'));
     try {

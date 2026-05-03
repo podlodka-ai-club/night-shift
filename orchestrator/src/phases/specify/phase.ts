@@ -6,6 +6,7 @@ import { SpecifyPhaseContractError } from './errors';
 export interface RunSpecifyPhaseInput {
   issue: SelectedProjectIssue;
   branchPrefix?: string;
+  deferBlockedStatus?: boolean;
   onProgress?: (message: string) => void;
 }
 
@@ -58,7 +59,9 @@ export async function runSpecifyPhase(input: RunSpecifyPhaseInput, deps: RunSpec
   if (specifyResponse.openQuestions.length > 0) {
     await deps.upsertIssueComment({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, issueNumber: input.issue.issueNumber, marker: 'specify:summary', body: summaryCommentBody });
     input.onProgress?.(`Specify phase needs operator input for issue #${input.issue.issueNumber}.`);
-    await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
+    if (!input.deferBlockedStatus) {
+      await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
+    }
     return { outcome: 'needs_input', worktree, changeName, summaryCommentBody };
   }
 

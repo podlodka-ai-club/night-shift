@@ -1,4 +1,5 @@
 import type { AgentActivityDeps, GitHubActivityDeps, WorktreeActivityDeps } from '../activity-deps';
+import { CODEX_MODEL, CODEX_REASONING_EFFORT } from '../activity-deps';
 import { buildChangeMetadataPrompt, buildTaskImplementationPrompt } from '../agent-prompts';
 import {
   buildBranchName,
@@ -83,6 +84,7 @@ export function createActivityTestRig(options: ActivityTestRigOptions = {}) {
       execFile: async () => failUnmockedDependency('agent.execFile'),
       createCodexThread: () => failUnmockedDependency('agent.createCodexThread'),
       resumeCodexThread: () => failUnmockedDependency('agent.resumeCodexThread'),
+      getAgentProfile: () => ({ model: CODEX_MODEL, reasoningEffort: CODEX_REASONING_EFFORT }),
       getHeartbeatDetails: () => undefined,
       heartbeat: () => undefined,
       signalProgress: async () => undefined,
@@ -119,6 +121,7 @@ export function buildSelectedIssue(): SelectedProjectIssue {
     inProgressOptionId: 'progress-option',
     inReviewOptionId: 'review-option',
     readyToMergeOptionId: 'ready-to-merge-option',
+    escalatedOptionId: 'escalated-option',
     blockedOptionId: 'blocked-option',
     issueNumber: 7,
     issueTitle: 'Create a dummy PR',
@@ -133,6 +136,7 @@ export function buildSelectedIssue(): SelectedProjectIssue {
     readyStatusName: 'Ready',
     inReviewStatusName: 'In review',
     readyToMergeStatusName: 'Ready to merge',
+    escalatedStatusName: 'Escalated',
   };
 }
 
@@ -144,6 +148,7 @@ const DEFAULT_PROJECT_STATUS_OPTIONS = [
   { id: 'progress-option', name: 'In progress' },
   { id: 'review-option', name: 'In review' },
   { id: 'ready-to-merge-option', name: 'Ready to merge' },
+  { id: 'escalated-option', name: 'Escalated' },
   { id: 'blocked-option', name: 'Blocked' },
 ] as const;
 
