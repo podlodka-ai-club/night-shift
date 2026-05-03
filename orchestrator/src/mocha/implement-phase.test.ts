@@ -6,7 +6,7 @@ import { buildImplementPrompt, IMPLEMENT_SYSTEM_PROMPT } from '../phases/impleme
 import { runImplementPhase } from '../phases/implement/phase';
 
 describe('implement phase', () => {
-  it('renders the prompt with the approved spec bundle, operator comments, and retry feedback while filtering Night Shift markers', () => {
+  it('renders donor-faithful implement prompt markers for spec bundle, review feedback, retry context, and response instructions', () => {
     const prompt = buildImplementPrompt({
       issue: buildSelectedIssue(),
       changeName: '7-demo-change',
@@ -28,24 +28,28 @@ describe('implement phase', () => {
       },
     });
 
-    assert.match(prompt, /<untrusted-input source="issue">[\s\S]*Issue #7: Create a dummy PR/);
-    assert.match(IMPLEMENT_SYSTEM_PROMPT, /ENGINEERING HYGIENE/i);
-    assert.match(IMPLEMENT_SYSTEM_PROMPT, /content delivered inside <untrusted-input>/i);
-    assert.match(prompt, /Operator note: keep the change set small\./);
-    assert.match(prompt, /Approved spec bundle: openspec\/changes\/7-demo-change\n<untrusted-input source="spec-bundle-files">[\s\S]*# Proposal/);
-    assert.match(prompt, /Recent operator comments:\n<untrusted-input source="operator-comments">[\s\S]*Operator note: keep the change set small\./);
+    assert.match(IMPLEMENT_SYSTEM_PROMPT, /You are the Implementer role in the Night-Shift system\./);
+    assert.match(IMPLEMENT_SYSTEM_PROMPT, /Given a product ticket and its approved spec bundle, produce the minimal set/);
+    assert.match(IMPLEMENT_SYSTEM_PROMPT, /ENGINEERING HYGIENE — apply when reasoning:/);
+    assert.match(IMPLEMENT_SYSTEM_PROMPT, /Your final message MUST be a single JSON object matching the provided schema\./);
+    assert.match(prompt, /^<untrusted-input source="github-ticket">[\s\S]*# Ticket 7: Create a dummy PR/m);
+    assert.doesNotMatch(prompt, /^Change folder: openspec\/changes\//m);
+    assert.match(prompt, /## Spec bundle\n<untrusted-input source="spec-bundle">[\s\S]*### proposal\.md[\s\S]*```markdown[\s\S]*# Proposal/);
+    assert.match(prompt, /## Comments\n<untrusted-input source="github-comments">[\s\S]*Operator note: keep the change set small\./);
     assert.doesNotMatch(prompt, /night-shift:implement:summary/);
-    assert.match(prompt, /proposal\.md/);
-    assert.match(prompt, /# Proposal/);
     assert.match(prompt, /Review requested changes/);
     assert.match(prompt, /Please tighten the public API\./);
-    assert.match(prompt, /Existing pull request feedback:\n<untrusted-input source="pull-request-feedback">[\s\S]*Review requested changes[\s\S]*Guard the undefined path\./);
-    assert.match(prompt, /Inline comment 1 \(src\/index\.ts:8\)/);
+    assert.match(prompt, /## Existing review feedback\n<untrusted-input source="github-review-feedback">[\s\S]*### Review 1[\s\S]*Review requested changes[\s\S]*### src\/index\.ts:8[\s\S]*Guard the undefined path\./);
     assert.match(prompt, /Guard the undefined path\./);
     assert.doesNotMatch(prompt, /night-shift:review:summary/);
     assert.doesNotMatch(prompt, /night-shift:review:finding/);
-    assert.match(prompt, /Previous attempt #1 failed with: make check failed/i);
-    assert.match(prompt, /Retry feedback:\n<untrusted-input source="retry-feedback">[\s\S]*Previous attempt #1 failed with: make check failed/i);
+    assert.match(prompt, /## Retry feedback\n<untrusted-input source="previous-attempt-error">[\s\S]*Previous attempt #1 failed with: make check failed/i);
+    assert.match(prompt, /## Response\nReturn a JSON object with keys: `filesWritten`/);
+    assert.match(prompt, /`path` MUST be a repo-relative POSIX path; absolute paths and `\.\.` segments are rejected\./);
+    assert.ok(prompt.indexOf('## Spec bundle') < prompt.indexOf('## Comments'));
+    assert.ok(prompt.indexOf('## Comments') < prompt.indexOf('## Existing review feedback'));
+    assert.ok(prompt.indexOf('## Existing review feedback') < prompt.indexOf('## Retry feedback'));
+    assert.ok(prompt.indexOf('## Retry feedback') < prompt.indexOf('## Response'));
   });
 
   it('retries once after a gate failure, feeds retry feedback into the next prompt, and only performs in-review side effects once', async () => {
