@@ -218,6 +218,34 @@ npm run build
 npm run lint
 ```
 
+### Live provider smoke scripts
+
+These donor-parity smoke scripts live under `scripts/` and intentionally hit the
+current provider/session boundary from Tasks 7–9 rather than recreating the
+donor repo's older adapter layout.
+
+From `orchestrator/`:
+
+```bash
+npm run smoke:claude
+npm run smoke:codex
+npm run smoke:output-schema
+npm run smoke:tools
+```
+
+- Claude smokes require `ANTHROPIC_API_KEY`.
+- Codex smokes require `OPENAI_API_KEY`.
+- `smoke:output-schema` and `smoke:tools` run both Codex and Claude.
+- `smoke:tools` uses raw `provider-item` traces from the current session API as
+  the current-main equivalent of the donor's tool-use/tool-result streaming
+  checks.
+
+### Eval fixture world-model
+
+- `eval/demo/PROJECT.md` is the current-main equivalent of donor
+  `eval/demo/PROJECT.md`.
+- Use it as shared fictional product context when authoring eval fixtures.
+
 ## Small architecture map
 
 - `src/worker.ts` — starts the Temporal worker and registers activities

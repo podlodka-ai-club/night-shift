@@ -36,6 +36,16 @@ module.exports = {
   },
   overrides: [
     {
+      files: ['scripts/**/*.ts'],
+      parserOptions: {
+        project: null,
+      },
+      rules: {
+        '@typescript-eslint/no-floating-promises': 'off',
+        'deprecation/deprecation': 'off',
+      },
+    },
+    {
       files: ['src/workflows.ts', 'src/workflows-*.ts', 'src/workflows/*.ts'],
       rules: {
         'no-restricted-imports': [
