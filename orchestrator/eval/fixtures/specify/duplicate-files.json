@@ -1,0 +1,14 @@
+{
+  "id": "duplicate-files",
+  "ticket": {
+    "title": "Tag normalisation: trim and lowercase on insert",
+    "description": "Tags can currently be saved as `Groceries`, ` groceries`, or `groceries `, which fragment the tag list. Normalise: trim whitespace and lowercase before insert.",
+    "labels": ["bug", "domain"]
+  },
+  "priorDraft": [],
+  "operatorComments": [],
+  "recordedFinalText": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# Tag normalisation v1\"},{\"path\":\"proposal.md\",\"content\":\"# Tag normalisation v2 (better)\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] Normalise on insert\"}],\"openQuestions\":[],\"assumptions\":[],\"risks\":[]}",
+  "recordedUsage": { "input_tokens": 700, "cached_input_tokens": 350, "output_tokens": 110 },
+  "recordedCostMicroUsd": 1500,
+  "expected": { "status": "schema_error" }
+}

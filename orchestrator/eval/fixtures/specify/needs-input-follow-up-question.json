@@ -1,0 +1,8 @@
+{
+  "id": "needs-input-follow-up-question",
+  "description": "Recorded specify response that still needs operator input.",
+  "finalResponse": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# Proposal\\n\\nAdd replay coverage for specify outputs.\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] Confirm fixture directory layout\"}],\"openQuestions\":[\"Should the replay suite also emit a CLI summary now, or stay library-only for Task 1?\"],\"assumptions\":[],\"risks\":[\"A later CLI may want richer fixture metadata\"]}",
+  "expected": {
+    "status": "needs_input"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "refined-minimal-spec-bundle",
+  "description": "Recorded specify response with the required files and no open questions.",
+  "finalResponse": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# Proposal\\n\\nShip the replay-only specify eval harness.\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] Add replay fixture loading\\n- [ ] Classify specify outputs\\n- [ ] Aggregate replay results\"}],\"openQuestions\":[],\"assumptions\":[\"Recorded outputs stay stable across runs\"],\"risks\":[\"Fixture coverage starts small\"]}",
+  "expected": {
+    "status": "refined"
+  }
+}

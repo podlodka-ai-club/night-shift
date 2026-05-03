@@ -1,0 +1,14 @@
+{
+  "id": "out-of-scope-feature",
+  "ticket": {
+    "title": "Add multi-user accounts and shared workspaces",
+    "description": "Friends want their own logins inside the same TaskFlow instance and a way to share tasks across accounts.",
+    "labels": ["feature"]
+  },
+  "priorDraft": [],
+  "operatorComments": [],
+  "recordedFinalText": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# Multi-user accounts — out of scope\\n\\nThe project description explicitly lists multi-user accounts as out of scope. This change cannot be drafted without a project-level scope decision; the specifier should not silently expand the product surface.\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] Pending operator decision on whether to expand product scope\"}],\"openQuestions\":[\"PROJECT.md lists multi-user accounts as 'out of scope, do not implement'. Does this ticket overrule that, and if so who owns the scope change?\",\"If we proceed: what is the auth boundary — local users only, or external IdP? The current single-user bearer-token model has no notion of identity provider.\",\"Sharing semantics: per-task ACL, per-tag ACL, or per-workspace? Each implies a different schema migration path.\"],\"assumptions\":[],\"risks\":[]}",
+  "recordedUsage": { "input_tokens": 700, "cached_input_tokens": 400, "output_tokens": 230 },
+  "recordedCostMicroUsd": 2400,
+  "expected": { "status": "needs_input", "minOpenQuestions": 2 }
+}

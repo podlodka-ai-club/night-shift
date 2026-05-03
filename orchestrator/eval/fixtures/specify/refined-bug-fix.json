@@ -1,0 +1,14 @@
+{
+  "id": "refined-bug-fix",
+  "ticket": {
+    "title": "Login button is unresponsive on Safari iOS",
+    "description": "When tapping the login button on iPhone Safari, nothing happens. Other browsers work. Repro: open the app on iOS 17 Safari, tap login.",
+    "labels": ["bug"]
+  },
+  "priorDraft": [],
+  "operatorComments": [],
+  "recordedFinalText": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# Fix iOS Safari login button\\n\\nThe login button does not fire its onClick handler on iOS Safari due to a passive touch listener interaction. Switch to non-passive touchend handler.\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] Reproduce in iOS Safari simulator\\n- [ ] Replace passive listener with touchend handler\\n- [ ] Add regression test\"}],\"openQuestions\":[],\"assumptions\":[\"Issue is reproducible in iOS Safari 17 simulator\"],\"risks\":[\"Touchend may not fire if upstream handler calls preventDefault\"]}",
+  "recordedUsage": { "input_tokens": 1200, "cached_input_tokens": 800, "output_tokens": 350 },
+  "recordedCostMicroUsd": 4500,
+  "expected": { "status": "refined", "maxOpenQuestions": 0 }
+}

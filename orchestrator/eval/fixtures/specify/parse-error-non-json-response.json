@@ -1,0 +1,8 @@
+{
+  "id": "parse-error-non-json-response",
+  "description": "Recorded final text that is not valid JSON.",
+  "finalResponse": "Here is the refined plan as markdown instead of JSON.\n\n- proposal.md\n- tasks.md",
+  "expected": {
+    "status": "parse_error"
+  }
+}

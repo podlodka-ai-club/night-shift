@@ -1,0 +1,8 @@
+{
+  "id": "schema-error-missing-required-file",
+  "description": "Recorded JSON that reaches structured data but fails specify response validation.",
+  "finalResponse": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# Proposal\\n\\nMissing the required tasks file.\"}],\"openQuestions\":[],\"assumptions\":[],\"risks\":[]}",
+  "expected": {
+    "status": "schema_error"
+  }
+}

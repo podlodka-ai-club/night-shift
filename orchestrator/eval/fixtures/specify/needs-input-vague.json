@@ -1,0 +1,14 @@
+{
+  "id": "needs-input-vague",
+  "ticket": {
+    "title": "Make the dashboard better",
+    "description": "Dashboard feels slow and ugly. Make it nicer.",
+    "labels": ["enhancement"]
+  },
+  "priorDraft": [],
+  "operatorComments": [],
+  "recordedFinalText": "{\"files\":[{\"path\":\"proposal.md\",\"content\":\"# Dashboard improvements\\n\\nNeed clarification before drafting concrete proposal.\"},{\"path\":\"tasks.md\",\"content\":\"- [ ] Pending operator clarification\"}],\"openQuestions\":[\"Which dashboard? There are two: the operator dashboard and the analytics dashboard.\",\"What does 'slow' mean — initial load, interaction lag, or stale data? Numbers preferred.\",\"What aspect of 'ugly' is highest priority — typography, layout, color, density?\"],\"assumptions\":[],\"risks\":[]}",
+  "recordedUsage": { "input_tokens": 900, "cached_input_tokens": 600, "output_tokens": 280 },
+  "recordedCostMicroUsd": 3200,
+  "expected": { "status": "needs_input", "minOpenQuestions": 2 }
+}
