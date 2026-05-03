@@ -1,16 +1,19 @@
 import assert from 'assert';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { describe, it } from 'mocha';
 import { main, parseEvalImplementCliArgs } from '../cli/eval-implement';
+import { loadImplementReplayFixtures } from '../eval/implement-replay';
 
 const orchestratorRoot = path.resolve(__dirname, '..', '..');
 const cliPath = path.join(orchestratorRoot, 'src', 'cli', 'eval-implement.ts');
 const fixturesDir = path.join(orchestratorRoot, 'eval', 'fixtures', 'implement');
 
-describe('implement eval cli', () => {
+describe('implement eval cli', function () {
+  this.timeout(5_000);
+
   it('emits donor-like JSON output and supports fixture filtering in replay mode', async () => {
     const result = await runCli(['--fixtures', fixturesDir, '--fixture', 'empty-no-changes', '--json']);
 
@@ -68,7 +71,50 @@ describe('implement eval cli', () => {
       mode: 'live',
       worktreePath: path.resolve('/tmp/live-repo'),
       timeoutMs: 300000,
+      provider: 'codex',
+      model: 'gpt-5.3-codex',
+      record: false,
     });
+  });
+
+  it('parses provider/model recording flags in live mode and rejects unsupported combinations', () => {
+    const parsed = parseEvalImplementCliArgs([
+      '--fixtures', fixturesDir,
+      '--mode', 'live',
+      '--worktree', '/tmp/live-repo',
+      '--provider', 'claude',
+      '--model', 'claude-sonnet-4-6',
+      '--record',
+    ]) as any;
+
+    assert.deepStrictEqual(parsed, {
+      fixturesDir: path.resolve(fixturesDir),
+      fixtureIds: [],
+      json: false,
+      mode: 'live',
+      worktreePath: path.resolve('/tmp/live-repo'),
+      timeoutMs: 300000,
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      record: true,
+    });
+
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--provider', 'claude']),
+      /live mode/i,
+    );
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--record']),
+      /requires --mode live/i,
+    );
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--record', '--judge']),
+      /--record.*--judge/i,
+    );
+    assert.throws(
+      () => parseEvalImplementCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--provider', 'claude', '--model', 'gpt-5.3-codex']),
+      /does not match provider/i,
+    );
   });
 
   it('parses optional judge flags for live mode and rejects them in replay mode', () => {
@@ -87,6 +133,9 @@ describe('implement eval cli', () => {
       mode: 'live',
       worktreePath: path.resolve('/tmp/live-repo'),
       timeoutMs: 300000,
+      provider: 'codex',
+      model: 'gpt-5.3-codex',
+      record: false,
       judge: { maxRevisions: 1 },
     });
 
@@ -118,7 +167,7 @@ describe('implement eval cli', () => {
   it('dispatches live mode through the live suite and preserves the CLI JSON shape', async () => {
     let stdout = '';
     const exitCode = await main(
-      ['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--json'],
+      ['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--provider', 'claude', '--model', 'claude-sonnet-4-6', '--json'],
       {
         loadFixtures: async () => [{ id: 'live-implement' } as any],
         runReplaySuite: () => {
@@ -127,6 +176,8 @@ describe('implement eval cli', () => {
         runLiveSuite: async (_fixtures, options) => {
           assert.strictEqual(options.worktreePath, path.resolve('/tmp/live-repo'));
           assert.strictEqual(options.timeoutMs, 300000);
+          assert.strictEqual((options as any).provider, 'claude');
+          assert.strictEqual((options as any).model, 'claude-sonnet-4-6');
           return {
             schemaId: 'implement-response-v1',
             results: [{
@@ -160,6 +211,130 @@ describe('implement eval cli', () => {
     assert.strictEqual(parsed.mode, 'live');
     assert.strictEqual(parsed.results[0]?.id, 'live-implement');
     assert.strictEqual(parsed.summary.total, 1);
+  });
+
+  it('records only selected successful live fixtures back into their source files', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'implement-live-record-'));
+    const successPath = path.join(tempDir, 'record-me.json');
+    const parseErrorPath = path.join(tempDir, 'parse-error.json');
+    const untouchedPath = path.join(tempDir, 'untouched.json');
+    try {
+      await writeFile(successPath, JSON.stringify({
+        id: 'record-me',
+        ticket: { title: 'Record successful live output', description: 'Persist the selected fixture only.' },
+        specBundle: [{ path: 'proposal.md', content: '# Proposal' }],
+        operatorComments: [],
+        finalResponse: JSON.stringify({ filesWritten: [], commitMessage: 'chore: noop', summary: 'Old summary', followUps: [] }),
+        expected: { status: 'produced' },
+      }, null, 2), 'utf8');
+      await writeFile(parseErrorPath, JSON.stringify({
+        id: 'parse-error',
+        ticket: { title: 'Do not record failed live output', description: 'Leave parse-error fixtures unchanged.' },
+        specBundle: [{ path: 'proposal.md', content: '# Proposal' }],
+        operatorComments: [],
+        finalResponse: JSON.stringify({ filesWritten: [], commitMessage: 'chore: old', summary: 'Old parse-error summary', followUps: [] }),
+        expected: { status: 'parse_error' },
+      }, null, 2), 'utf8');
+      await writeFile(untouchedPath, JSON.stringify({
+        id: 'untouched',
+        ticket: { title: 'Unselected fixture', description: 'Should not be rewritten.' },
+        specBundle: [{ path: 'proposal.md', content: '# Proposal' }],
+        operatorComments: [],
+        finalResponse: JSON.stringify({ filesWritten: [], commitMessage: 'chore: untouched', summary: 'Untouched summary', followUps: [] }),
+        expected: { status: 'empty' },
+      }, null, 2), 'utf8');
+
+      const exitCode = await main(
+        ['--fixtures', tempDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--fixture', 'record-me', '--fixture', 'parse-error', '--record'],
+        {
+          loadFixtures: loadImplementReplayFixtures,
+          runReplaySuite: () => {
+            throw new Error('replay suite should not run in live mode');
+          },
+          runLiveSuite: async (fixtures, options) => {
+            assert.deepStrictEqual(fixtures.map((fixture) => fixture.id), ['parse-error', 'record-me']);
+            (options as any).onGeneratorResult?.(fixtures[0], {
+              finalText: '{invalid-json',
+              usage: { input_tokens: 3, cached_input_tokens: 0, output_tokens: 1 },
+              costMicroUsd: 12,
+            });
+            (options as any).onGeneratorResult?.(fixtures[1], {
+              finalText: JSON.stringify({
+                filesWritten: [{ path: 'src/feature.ts', content: 'export const implemented = true;\n' }],
+                commitMessage: 'feat: record live implement fixture',
+                summary: 'Records the selected implement fixture.',
+                followUps: ['Add an integration test for the CLI.'],
+              }),
+              usage: { input_tokens: 50, cached_input_tokens: 8, output_tokens: 11 },
+              costMicroUsd: 654,
+            });
+            return {
+              schemaId: 'implement-response-v1',
+              results: [
+                {
+                  id: 'parse-error',
+                  status: 'parse_error',
+                  filesWrittenCount: 0,
+                  totalContentChars: 0,
+                  commitMessageLength: 0,
+                  summaryLength: 0,
+                  followUpsCount: 0,
+                  costMicroUsd: 12,
+                  totalTokens: 4,
+                  errorMessage: 'Response was not valid JSON: Unexpected token i',
+                },
+                {
+                  id: 'record-me',
+                  status: 'produced',
+                  filesWrittenCount: 1,
+                  totalContentChars: 33,
+                  commitMessageLength: 34,
+                  summaryLength: 38,
+                  followUpsCount: 1,
+                  costMicroUsd: 654,
+                  totalTokens: 61,
+                },
+              ],
+              summary: {
+                total: 2,
+                byStatus: { produced: 1, empty: 0, parse_error: 1, schema_error: 0 },
+                totalCostMicroUsd: 666,
+                totalTokens: 65,
+                avgCostMicroUsd: 333,
+                expectationMismatches: 0,
+              },
+            } as any;
+          },
+          stdout: { write: () => true },
+          stderr: { write: () => true },
+        },
+      );
+
+      assert.strictEqual(exitCode, 0);
+
+      const recordedFixture = JSON.parse(await readFile(successPath, 'utf8')) as any;
+      assert.strictEqual(recordedFixture.expected.status, 'produced');
+      assert.strictEqual(recordedFixture.fixturePath, undefined);
+      assert.strictEqual(recordedFixture.recordedCostMicroUsd, 654);
+      assert.deepStrictEqual(recordedFixture.recordedUsage, {
+        input_tokens: 50,
+        cached_input_tokens: 8,
+        output_tokens: 11,
+      });
+      assert.strictEqual(JSON.parse(recordedFixture.recordedFinalText).filesWritten[0].path, 'src/feature.ts');
+
+      const parseErrorFixture = JSON.parse(await readFile(parseErrorPath, 'utf8')) as any;
+      assert.strictEqual(parseErrorFixture.recordedFinalText, undefined);
+      assert.strictEqual(parseErrorFixture.recordedUsage, undefined);
+      assert.strictEqual(parseErrorFixture.recordedCostMicroUsd, undefined);
+
+      const untouchedFixture = JSON.parse(await readFile(untouchedPath, 'utf8')) as any;
+      assert.strictEqual(untouchedFixture.recordedFinalText, undefined);
+      assert.strictEqual(untouchedFixture.recordedUsage, undefined);
+      assert.strictEqual(untouchedFixture.recordedCostMicroUsd, undefined);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('includes judge telemetry in live-mode JSON output and treats judge errors as failures', async () => {

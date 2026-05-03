@@ -18,7 +18,7 @@ import {
   type SpecifyReplayResult,
   type SpecifyReplaySuiteResult,
 } from './specify-replay';
-import { addRecordedUsage, buildLiveEvalComments, buildLiveEvalIssue, createDefaultLiveTurnRunner, type LiveTurnRunner } from './live-common';
+import { addRecordedUsage, buildLiveEvalComments, buildLiveEvalIssue, createDefaultLiveTurnRunner, type LiveTurnResult, type LiveTurnRunner } from './live-common';
 
 export interface SpecifyLiveSuiteOptions {
   worktreePath: string;
@@ -27,6 +27,7 @@ export interface SpecifyLiveSuiteOptions {
   judge?: LiveJudgeOptions;
   provider?: string;
   model?: string;
+  onGeneratorResult?: (fixture: SpecifyReplayFixture, result: LiveTurnResult) => void;
 }
 
 const SPECIFY_JUDGE_SYSTEM_PROMPT = buildPromptHardeningPreamble('You are reviewing a live specify eval output for operator-facing quality.');
@@ -127,6 +128,11 @@ export async function runSpecifyLiveFixture(
       result = evaluateSpecifyResponse(fixture, {
         finalText,
         usage: totalUsage,
+        costMicroUsd: totalCostMicroUsd,
+      });
+      options.onGeneratorResult?.(fixture, {
+        finalText,
+        ...(totalUsage ? { usage: totalUsage } : {}),
         costMicroUsd: totalCostMicroUsd,
       });
     } catch (error) {

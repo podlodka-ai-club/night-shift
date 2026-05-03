@@ -207,6 +207,49 @@ describe('implement live eval harness', () => {
     ]);
   });
 
+  it('surfaces generator outputs through the live recording callback', async () => {
+    const seen: Array<{ id: string; finalText: string; usage?: unknown; costMicroUsd?: number }> = [];
+
+    const result = await runImplementLiveFixture({
+      id: 'record-callback',
+      ticket: {
+        title: 'Expose live generator output for recording',
+        description: 'Recording should see the evaluated live result.',
+        labels: ['feature'],
+      },
+      specBundle: [{ path: 'proposal.md', content: '# Proposal' }],
+      operatorComments: [],
+    } as any, {
+      worktreePath: '/tmp/eval-worktree',
+      onGeneratorResult: (fixture, recording) => {
+        seen.push({ id: fixture.id, ...recording });
+      },
+      turnRunner: async () => ({
+        finalText: JSON.stringify({
+          filesWritten: [{ path: 'src/feature.ts', content: 'export const implemented = true;\n' }],
+          commitMessage: 'feat: expose recording callback',
+          summary: 'Exposes live implement output for recording.',
+          followUps: [],
+        }),
+        usage: { input_tokens: 11, cached_input_tokens: 3, output_tokens: 5 },
+        costMicroUsd: 234,
+      }),
+    });
+
+    assert.strictEqual(result.status, 'produced');
+    assert.deepStrictEqual(seen, [{
+      id: 'record-callback',
+      finalText: JSON.stringify({
+        filesWritten: [{ path: 'src/feature.ts', content: 'export const implemented = true;\n' }],
+        commitMessage: 'feat: expose recording callback',
+        summary: 'Exposes live implement output for recording.',
+        followUps: [],
+      }),
+      usage: { input_tokens: 11, cached_input_tokens: 3, output_tokens: 5 },
+      costMicroUsd: 234,
+    }]);
+  });
+
   it('captures live runner failures as parse errors so the suite remains comparable', async () => {
     const suite = await runImplementLiveSuite([
       {

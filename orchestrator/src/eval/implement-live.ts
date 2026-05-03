@@ -20,7 +20,7 @@ import {
   type ImplementReplayResult,
   type ImplementReplaySuiteResult,
 } from './implement-replay';
-import { addRecordedUsage, buildLiveEvalComments, buildLiveEvalIssue, createDefaultLiveTurnRunner, type LiveTurnRunner } from './live-common';
+import { addRecordedUsage, buildLiveEvalComments, buildLiveEvalIssue, createDefaultLiveTurnRunner, type LiveTurnResult, type LiveTurnRunner } from './live-common';
 
 export interface ImplementLiveSuiteOptions {
   worktreePath: string;
@@ -29,6 +29,7 @@ export interface ImplementLiveSuiteOptions {
   judge?: LiveJudgeOptions;
   provider?: string;
   model?: string;
+  onGeneratorResult?: (fixture: ImplementReplayFixture, result: LiveTurnResult) => void;
 }
 
 const EMPTY_PULL_REQUEST_FEEDBACK: OpenPullRequestFeedback = {
@@ -153,6 +154,11 @@ export async function runImplementLiveFixture(
       result = evaluateImplementResponse(fixture, {
         finalText,
         usage: totalUsage,
+        costMicroUsd: totalCostMicroUsd,
+      });
+      options.onGeneratorResult?.(fixture, {
+        finalText,
+        ...(totalUsage ? { usage: totalUsage } : {}),
         costMicroUsd: totalCostMicroUsd,
       });
     } catch (error) {

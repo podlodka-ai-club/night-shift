@@ -1,5 +1,7 @@
+import { writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import path from 'node:path';
+import { resolveAgentProviderSelection } from '../agent-provider';
 import { hasJudgeFailure, MAX_LIVE_JUDGE_REVISIONS } from '../eval/live-judge';
 import {
   loadSpecifyReplayFixtures,
@@ -9,6 +11,7 @@ import {
   type SpecifyReplaySummary,
 } from '../eval/specify-replay';
 import { runSpecifyLiveSuite } from '../eval/specify-live';
+import type { LiveTurnResult } from '../eval/live-common';
 
 const USAGE = `orchestrator eval:specify
 
@@ -18,8 +21,11 @@ Usage:
 Options:
   --fixtures <dir>    Directory containing fixture *.json files (required)
   --mode <mode>       replay (default) or live
+  --provider <id>     Live-mode provider: codex (default) or claude
+  --model <id>        Live-mode model id (default: provider default)
   --worktree <dir>    Repository/worktree path for live mode (default: current working directory)
   --timeout-ms <n>    Live-mode timeout per fixture in milliseconds (default: 300000)
+  --record            Live mode only: write successful generator output back into the source fixture file
   --judge             Run an additional judge pass in live mode
   --max-revisions <n> Live-mode judge revisions to allow per fixture (default: 0, max: 2)
   --fixture <id>      Run only the fixture with this id (repeatable)
@@ -42,7 +48,15 @@ type CliOptions = {
   json: boolean;
 } & (
   | { mode: 'replay' }
-  | { mode: 'live'; worktreePath: string; timeoutMs: number; judge?: { maxRevisions: number } }
+  | {
+    mode: 'live';
+    worktreePath: string;
+    timeoutMs: number;
+    provider: string;
+    model: string;
+    record: boolean;
+    judge?: { maxRevisions: number };
+  }
 );
 
 interface Writer {
@@ -86,8 +100,11 @@ export function parseEvalSpecifyCliArgs(argv: ReadonlyArray<string>): CliOptions
     options: {
       fixtures: { type: 'string' },
       mode: { type: 'string', default: 'replay' },
+      provider: { type: 'string' },
+      model: { type: 'string' },
       worktree: { type: 'string' },
       'timeout-ms': { type: 'string' },
+      record: { type: 'boolean', default: false },
       judge: { type: 'boolean', default: false },
       'max-revisions': { type: 'string' },
       fixture: { type: 'string', multiple: true, default: [] },
@@ -114,18 +131,31 @@ export function parseEvalSpecifyCliArgs(argv: ReadonlyArray<string>): CliOptions
   };
 
   if (values.mode === 'live') {
+    if (values.record === true && values.judge === true) {
+      throw new EvalSpecifyCliUsageError(64, '--record cannot be combined with --judge\n', 'stderr');
+    }
     const timeoutMs = parseTimeoutMs(values['timeout-ms']);
+    const selection = parseLiveSelection(values.provider, values.model);
     const judge = parseJudgeOptions(values.judge === true, values['max-revisions']);
     return {
       ...baseOptions,
       mode: 'live',
       worktreePath: path.resolve(values.worktree ?? process.cwd()),
       timeoutMs,
+      provider: selection.provider,
+      model: selection.model,
+      record: values.record === true,
       ...(judge ? { judge } : {}),
     };
   }
 
+  if (values.record === true) {
+    throw new EvalSpecifyCliUsageError(64, '--record requires --mode live\n', 'stderr');
+  }
+
   const liveOnlyFlags = [
+    values.provider !== undefined ? '--provider' : undefined,
+    values.model !== undefined ? '--model' : undefined,
     values.judge === true ? '--judge' : undefined,
     values['max-revisions'] !== undefined ? '--max-revisions' : undefined,
     values.worktree !== undefined ? '--worktree' : undefined,
@@ -159,13 +189,28 @@ export async function main(argv: ReadonlyArray<string> = process.argv.slice(2), 
     return 1;
   }
 
+  const capturedGeneratorResults = new Map<string, LiveTurnResult>();
   const suite = options.mode === 'live'
     ? await deps.runLiveSuite(loadedFixtures, {
       worktreePath: options.worktreePath,
       timeoutMs: options.timeoutMs,
+      provider: options.provider,
+      model: options.model,
+      ...(options.record ? {
+        onGeneratorResult: (fixture, result) => {
+          capturedGeneratorResults.set(fixture.id, result);
+        },
+      } : {}),
       ...(options.judge ? { judge: options.judge } : {}),
     })
     : deps.runReplaySuite(loadedFixtures);
+  if (options.mode === 'live' && options.record) {
+    await persistRecordedFixtures(
+      loadedFixtures,
+      suite.results.filter(isSuccessfulRecordingResult).map((result) => result.id),
+      capturedGeneratorResults,
+    );
+  }
   if (options.json) {
     deps.stdout.write(JSON.stringify({
       mode: options.mode,
@@ -212,6 +257,14 @@ function parseTimeoutMs(value: string | undefined): number {
   return parsed;
 }
 
+function parseLiveSelection(provider: string | undefined, model: string | undefined): { provider: string; model: string } {
+  try {
+    return resolveAgentProviderSelection({ provider, model });
+  } catch (error) {
+    throw new EvalSpecifyCliUsageError(64, `${error instanceof Error ? error.message : String(error)}\n`, 'stderr');
+  }
+}
+
 function parseJudgeOptions(enabled: boolean, maxRevisionsValue: string | undefined): { maxRevisions: number } | undefined {
   if (!enabled && maxRevisionsValue === undefined) {
     return undefined;
@@ -252,6 +305,40 @@ function isFailureResult(result: SpecifyReplayResult, fixture: SpecifyReplayFixt
     return fixture?.expected?.status !== result.status;
   }
   return false;
+}
+
+function isSuccessfulRecordingResult(result: SpecifyReplayResult): boolean {
+  return result.status !== 'parse_error' && result.status !== 'schema_error';
+}
+
+async function persistRecordedFixtures(
+  fixtures: readonly SpecifyReplayFixture[],
+  successfulFixtureIds: ReadonlyArray<string>,
+  capturedGeneratorResults: ReadonlyMap<string, LiveTurnResult>,
+): Promise<void> {
+  const successful = new Set(successfulFixtureIds);
+  for (const fixture of fixtures) {
+    if (!successful.has(fixture.id)) {
+      continue;
+    }
+
+    const captured = capturedGeneratorResults.get(fixture.id);
+    if (!captured) {
+      continue;
+    }
+    if (!fixture.fixturePath) {
+      throw new Error(`fixture ${fixture.id} is missing fixturePath required for recording`);
+    }
+
+    const { fixturePath: _fixturePath, ...serializableFixture } = fixture;
+    const updatedFixture = {
+      ...serializableFixture,
+      recordedFinalText: captured.finalText,
+      recordedUsage: captured.usage,
+      recordedCostMicroUsd: captured.costMicroUsd === undefined ? undefined : Math.round(captured.costMicroUsd),
+    };
+    await writeFile(fixture.fixturePath, JSON.stringify(updatedFixture, null, 2) + '\n', 'utf8');
+  }
 }
 
 function isDirectCliExecution(argv: ReadonlyArray<string> = process.argv): boolean {

@@ -240,6 +240,55 @@ describe('specify live eval harness', () => {
     ]);
   });
 
+  it('surfaces generator outputs through the live recording callback', async () => {
+    const seen: Array<{ id: string; finalText: string; usage?: unknown; costMicroUsd?: number }> = [];
+
+    const result = await runSpecifyLiveFixture({
+      id: 'record-callback',
+      ticket: {
+        title: 'Expose live generator output for recording',
+        description: 'Recording should see the evaluated live result.',
+        labels: ['enhancement'],
+      },
+      priorDraft: [{ path: 'proposal.md', content: '# Proposal' }],
+      operatorComments: [],
+    } as any, {
+      worktreePath: '/tmp/eval-worktree',
+      onGeneratorResult: (fixture, recording) => {
+        seen.push({ id: fixture.id, ...recording });
+      },
+      turnRunner: async () => ({
+        finalText: JSON.stringify({
+          files: [
+            { path: 'proposal.md', content: '# Recorded proposal' },
+            { path: 'tasks.md', content: '- [ ] Confirm the rollout plan' },
+          ],
+          openQuestions: [],
+          assumptions: [],
+          risks: [],
+        }),
+        usage: { input_tokens: 9, cached_input_tokens: 2, output_tokens: 4 },
+        costMicroUsd: 123,
+      }),
+    });
+
+    assert.strictEqual(result.status, 'refined');
+    assert.deepStrictEqual(seen, [{
+      id: 'record-callback',
+      finalText: JSON.stringify({
+        files: [
+          { path: 'proposal.md', content: '# Recorded proposal' },
+          { path: 'tasks.md', content: '- [ ] Confirm the rollout plan' },
+        ],
+        openQuestions: [],
+        assumptions: [],
+        risks: [],
+      }),
+      usage: { input_tokens: 9, cached_input_tokens: 2, output_tokens: 4 },
+      costMicroUsd: 123,
+    }]);
+  });
+
   it('reports missing live fixture inputs as parse errors without calling the runner', async () => {
     let calls = 0;
     const suite = await runSpecifyLiveSuite([

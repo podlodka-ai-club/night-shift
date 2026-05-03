@@ -1,16 +1,19 @@
 import assert from 'assert';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { describe, it } from 'mocha';
 import { main, parseEvalSpecifyCliArgs } from '../cli/eval-specify';
+import { loadSpecifyReplayFixtures } from '../eval/specify-replay';
 
 const orchestratorRoot = path.resolve(__dirname, '..', '..');
 const cliPath = path.join(orchestratorRoot, 'src', 'cli', 'eval-specify.ts');
 const fixturesDir = path.join(orchestratorRoot, 'eval', 'fixtures', 'specify');
 
-describe('specify eval cli', () => {
+describe('specify eval cli', function () {
+  this.timeout(5_000);
+
   it('emits donor-like JSON output and supports fixture filtering in replay mode', async () => {
     const result = await runCli(['--fixtures', fixturesDir, '--fixture', 'refined-bug-fix', '--json']);
 
@@ -67,7 +70,50 @@ describe('specify eval cli', () => {
       mode: 'live',
       worktreePath: path.resolve('/tmp/live-repo'),
       timeoutMs: 300000,
+      provider: 'codex',
+      model: 'gpt-5.3-codex',
+      record: false,
     });
+  });
+
+  it('parses provider/model recording flags in live mode and rejects unsupported combinations', () => {
+    const parsed = parseEvalSpecifyCliArgs([
+      '--fixtures', fixturesDir,
+      '--mode', 'live',
+      '--worktree', '/tmp/live-repo',
+      '--provider', 'claude',
+      '--model', 'claude-sonnet-4-6',
+      '--record',
+    ]) as any;
+
+    assert.deepStrictEqual(parsed, {
+      fixturesDir: path.resolve(fixturesDir),
+      fixtureIds: [],
+      json: false,
+      mode: 'live',
+      worktreePath: path.resolve('/tmp/live-repo'),
+      timeoutMs: 300000,
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
+      record: true,
+    });
+
+    assert.throws(
+      () => parseEvalSpecifyCliArgs(['--fixtures', fixturesDir, '--provider', 'claude']),
+      /live mode/i,
+    );
+    assert.throws(
+      () => parseEvalSpecifyCliArgs(['--fixtures', fixturesDir, '--record']),
+      /requires --mode live/i,
+    );
+    assert.throws(
+      () => parseEvalSpecifyCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--record', '--judge']),
+      /--record.*--judge/i,
+    );
+    assert.throws(
+      () => parseEvalSpecifyCliArgs(['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--provider', 'claude', '--model', 'gpt-5.3-codex']),
+      /does not match provider/i,
+    );
   });
 
   it('parses optional judge flags for live mode and rejects them in replay mode', () => {
@@ -86,6 +132,9 @@ describe('specify eval cli', () => {
       mode: 'live',
       worktreePath: path.resolve('/tmp/live-repo'),
       timeoutMs: 300000,
+      provider: 'codex',
+      model: 'gpt-5.3-codex',
+      record: false,
       judge: { maxRevisions: 1 },
     });
 
@@ -117,7 +166,7 @@ describe('specify eval cli', () => {
   it('dispatches live mode through the live suite and preserves the CLI JSON shape', async () => {
     let stdout = '';
     const exitCode = await main(
-      ['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--json'],
+      ['--fixtures', fixturesDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--provider', 'claude', '--model', 'claude-sonnet-4-6', '--json'],
       {
         loadFixtures: async () => [{ id: 'live-specify' } as any],
         runReplaySuite: () => {
@@ -126,6 +175,8 @@ describe('specify eval cli', () => {
         runLiveSuite: async (_fixtures, options) => {
           assert.strictEqual(options.worktreePath, path.resolve('/tmp/live-repo'));
           assert.strictEqual(options.timeoutMs, 300000);
+          assert.strictEqual((options as any).provider, 'claude');
+          assert.strictEqual((options as any).model, 'claude-sonnet-4-6');
           return {
             schemaId: 'specify-response-v1',
             results: [{
@@ -158,6 +209,128 @@ describe('specify eval cli', () => {
     assert.strictEqual(parsed.mode, 'live');
     assert.strictEqual(parsed.results[0]?.id, 'live-specify');
     assert.strictEqual(parsed.summary.total, 1);
+  });
+
+  it('records only selected successful live fixtures back into their source files', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'specify-live-record-'));
+    const successPath = path.join(tempDir, 'record-me.json');
+    const parseErrorPath = path.join(tempDir, 'parse-error.json');
+    const untouchedPath = path.join(tempDir, 'untouched.json');
+    try {
+      await writeFile(successPath, JSON.stringify({
+        id: 'record-me',
+        ticket: { title: 'Record successful live output', description: 'Persist the selected fixture only.' },
+        priorDraft: [],
+        operatorComments: [],
+        finalResponse: JSON.stringify({ files: [{ path: 'proposal.md', content: '# Old' }], openQuestions: [], assumptions: [], risks: [] }),
+        expected: { status: 'refined' },
+      }, null, 2), 'utf8');
+      await writeFile(parseErrorPath, JSON.stringify({
+        id: 'parse-error',
+        ticket: { title: 'Do not record failed live output', description: 'Leave parse-error fixtures unchanged.' },
+        priorDraft: [],
+        operatorComments: [],
+        finalResponse: JSON.stringify({ files: [{ path: 'proposal.md', content: '# Old parse error' }], openQuestions: [], assumptions: [], risks: [] }),
+        expected: { status: 'parse_error' },
+      }, null, 2), 'utf8');
+      await writeFile(untouchedPath, JSON.stringify({
+        id: 'untouched',
+        ticket: { title: 'Unselected fixture', description: 'Should not be rewritten.' },
+        priorDraft: [],
+        operatorComments: [],
+        finalResponse: JSON.stringify({ files: [{ path: 'proposal.md', content: '# Untouched' }], openQuestions: [], assumptions: [], risks: [] }),
+        expected: { status: 'refined' },
+      }, null, 2), 'utf8');
+
+      const exitCode = await main(
+        ['--fixtures', tempDir, '--mode', 'live', '--worktree', '/tmp/live-repo', '--fixture', 'record-me', '--fixture', 'parse-error', '--record'],
+        {
+          loadFixtures: loadSpecifyReplayFixtures,
+          runReplaySuite: () => {
+            throw new Error('replay suite should not run in live mode');
+          },
+          runLiveSuite: async (fixtures, options) => {
+            assert.deepStrictEqual(fixtures.map((fixture) => fixture.id), ['parse-error', 'record-me']);
+            (options as any).onGeneratorResult?.(fixtures[0], {
+              finalText: '{invalid-json',
+              usage: { input_tokens: 4, cached_input_tokens: 0, output_tokens: 1 },
+              costMicroUsd: 20,
+            });
+            (options as any).onGeneratorResult?.(fixtures[1], {
+              finalText: JSON.stringify({
+                files: [{ path: 'proposal.md', content: '# Recorded proposal' }],
+                openQuestions: [],
+                assumptions: ['Existing metrics remain valid.'],
+                risks: [],
+              }),
+              usage: { input_tokens: 40, cached_input_tokens: 5, output_tokens: 7 },
+              costMicroUsd: 321,
+            });
+            return {
+              schemaId: 'specify-response-v1',
+              results: [
+                {
+                  id: 'parse-error',
+                  status: 'parse_error',
+                  openQuestionsCount: 0,
+                  assumptionsCount: 0,
+                  risksCount: 0,
+                  filesCount: 0,
+                  costMicroUsd: 20,
+                  totalTokens: 5,
+                  errorMessage: 'Response was not valid JSON: Unexpected token i',
+                },
+                {
+                  id: 'record-me',
+                  status: 'refined',
+                  openQuestionsCount: 0,
+                  assumptionsCount: 1,
+                  risksCount: 0,
+                  filesCount: 1,
+                  costMicroUsd: 321,
+                  totalTokens: 47,
+                },
+              ],
+              summary: {
+                total: 2,
+                byStatus: { refined: 1, needs_input: 0, parse_error: 1, schema_error: 0 },
+                totalCostMicroUsd: 341,
+                totalTokens: 52,
+                avgCostMicroUsd: 170.5,
+                expectationMismatches: 0,
+              },
+            } as any;
+          },
+          stdout: { write: () => true },
+          stderr: { write: () => true },
+        },
+      );
+
+      assert.strictEqual(exitCode, 0);
+
+      const recordedFixture = JSON.parse(await readFile(successPath, 'utf8')) as any;
+      assert.strictEqual(recordedFixture.expected.status, 'refined');
+      assert.strictEqual(recordedFixture.fixturePath, undefined);
+      assert.strictEqual(recordedFixture.recordedCostMicroUsd, 321);
+      assert.deepStrictEqual(recordedFixture.recordedUsage, {
+        input_tokens: 40,
+        cached_input_tokens: 5,
+        output_tokens: 7,
+      });
+      assert.strictEqual(JSON.parse(recordedFixture.recordedFinalText).assumptions[0], 'Existing metrics remain valid.');
+
+      const parseErrorFixture = JSON.parse(await readFile(parseErrorPath, 'utf8')) as any;
+      assert.strictEqual(parseErrorFixture.recordedFinalText, undefined);
+      assert.strictEqual(parseErrorFixture.recordedUsage, undefined);
+      assert.strictEqual(parseErrorFixture.recordedCostMicroUsd, undefined);
+
+      const untouchedFixture = JSON.parse(await readFile(untouchedPath, 'utf8')) as any;
+      assert.strictEqual(untouchedFixture.recordedFinalText, undefined);
+      assert.strictEqual(untouchedFixture.recordedUsage, undefined);
+      assert.strictEqual(untouchedFixture.recordedCostMicroUsd, undefined);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('includes judge telemetry in live-mode JSON output and treats revise verdicts as failures', async () => {
