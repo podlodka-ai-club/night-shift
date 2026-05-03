@@ -1,7 +1,7 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
 import { REVIEWER_RESPONSE_OUTPUT_KEY } from '../shared';
-import { buildReviewPrompt } from '../phases/review/prompt';
+import { buildReviewPrompt, REVIEWER_SYSTEM_PROMPT } from '../phases/review/prompt';
 import { ReviewPhaseContractError } from '../phases/review/errors';
 import { decideReviewVerdict, runReviewPhase } from '../phases/review/phase';
 import { buildExpectedCreatedPullRequest, buildSelectedIssue, buildWorktreeContext } from './activity-test-helpers';
@@ -19,9 +19,15 @@ describe('review phase', () => {
       maxDiffCharacters: 40,
     });
 
+    assert.match(REVIEWER_SYSTEM_PROMPT, /ENGINEERING HYGIENE/i);
+    assert.match(REVIEWER_SYSTEM_PROMPT, /content delivered inside <untrusted-input>/i);
+    assert.match(prompt, /<untrusted-input source="issue">[\s\S]*Issue #7: Create a dummy PR/);
     assert.match(prompt, /proposal\.md/);
     assert.match(prompt, /tasks\.md/);
+    assert.match(prompt, /## Spec bundle\n<untrusted-input source="spec-bundle">[\s\S]*proposal\.md[\s\S]*tasks\.md/);
     assert.match(prompt, /Human note: keep this tiny\./);
+    assert.match(prompt, /## PR Diff\n<untrusted-input source="pull-request-diff">[\s\S]*Diff truncated to 40 characters/);
+    assert.match(prompt, /## Existing review comments\n<untrusted-input source="review-comments">[\s\S]*Human note: keep this tiny\./);
     assert.match(prompt, /Diff truncated to 40 characters/);
     assert.match(prompt, /src\/index\.ts/);
   });
@@ -46,7 +52,11 @@ describe('review phase', () => {
         async getPullRequestDiff() { calls.push('getPullRequestDiff'); return 'diff --git a/src/index.ts b/src/index.ts'; },
         async listPullRequestFiles() { calls.push('listPullRequestFiles'); return [{ path: 'src/index.ts', patch: '@@\n+export const ok = true;' }]; },
         async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return [{ id: 1, path: 'src/index.ts', line: 1, body: '<!-- night-shift:review:summary -->\nold bot review' }, { id: 2, path: 'src/index.ts', line: 1, body: 'Human note: fine' }]; },
-        async runAgentSequence() { calls.push('runAgentSequence'); return { outputs: { [REVIEWER_RESPONSE_OUTPUT_KEY]: { summary: 'Looks good to merge.', findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: `${worktree.worktreePath}/src/index.ts`, line: 1 } }] } } }; },
+        async runAgentSequence(input) {
+          calls.push('runAgentSequence');
+          assert.strictEqual(input.steps[0]?.systemPrompt, REVIEWER_SYSTEM_PROMPT);
+          return { outputs: { [REVIEWER_RESPONSE_OUTPUT_KEY]: { summary: 'Looks good to merge.', findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: `${worktree.worktreePath}/src/index.ts`, line: 1 } }] } } };
+        },
         async setPullRequestReady() { calls.push('setPullRequestReady'); },
         async createPullRequestReview(input) { calls.push(`createPullRequestReview:${input.event}`); if (input.event === 'APPROVE') throw new Error('422 cannot approve your own pull request'); },
         async upsertPullRequestReviewComment(input) { calls.push(`upsertPullRequestReviewComment:${input.path}:${input.line}`); },

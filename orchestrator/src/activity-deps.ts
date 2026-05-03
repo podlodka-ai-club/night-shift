@@ -48,6 +48,7 @@ export interface AgentProgressEvent {
 
 export interface AgentTurnOptions {
   outputSchema?: unknown;
+  systemPrompt?: string;
   signal?: AbortSignal;
   onEvent?: (event: AgentProgressEvent) => void;
 }

@@ -110,7 +110,7 @@ async function runAgentSequenceSteps(
     let pendingStep: PendingStepCompletion;
 
     if (step.kind === 'prompt') {
-      const turn = await runAgentTurnWithHeartbeat(deps, currentSession, step.prompt, buildAgentTurnOptions(deps, handleProgressEvent), () => ({
+      const turn = await runAgentTurnWithHeartbeat(deps, currentSession, step.prompt, buildAgentTurnOptions(deps, handleProgressEvent, step.systemPrompt), () => ({
         threadId: currentSession.id ?? threadId,
         completedStepIds,
         outputs,
@@ -123,6 +123,7 @@ async function runAgentSequenceSteps(
       const { finalResponse: structuredResponse, parsedOutput } = await runStructuredAgentTurn(deps, currentSession, {
         stepId: step.id,
         prompt: step.prompt,
+        systemPrompt: step.systemPrompt,
         contract: {
           jsonSchema: schemaDefinition.jsonSchema,
           parse: (value) => schemaDefinition.schema.parse(value),
@@ -227,9 +228,11 @@ function codex(deps: AgentActivityDeps, cwd: string, prompt: string, agentProfil
 function buildAgentTurnOptions(
   deps: Pick<AgentActivityDeps, 'getCancellationSignal'>,
   onEvent?: (event: AgentProgressEvent) => void,
+  systemPrompt?: string,
 ): AgentTurnOptions {
   const signal = deps.getCancellationSignal();
   return {
+    ...(systemPrompt ? { systemPrompt } : {}),
     ...(signal ? { signal } : {}),
     ...(onEvent ? { onEvent } : {}),
   };

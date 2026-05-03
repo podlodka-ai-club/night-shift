@@ -2,7 +2,7 @@ import assert from 'assert';
 import { describe, it } from 'mocha';
 import { buildExpectedCreatedPullRequest, buildSelectedIssue, buildWorktreeContext } from './activity-test-helpers';
 import { IMPLEMENT_RESPONSE_OUTPUT_KEY } from '../shared';
-import { buildImplementPrompt } from '../phases/implement/prompt';
+import { buildImplementPrompt, IMPLEMENT_SYSTEM_PROMPT } from '../phases/implement/prompt';
 import { runImplementPhase } from '../phases/implement/phase';
 
 describe('implement phase', () => {
@@ -28,17 +28,24 @@ describe('implement phase', () => {
       },
     });
 
+    assert.match(prompt, /<untrusted-input source="issue">[\s\S]*Issue #7: Create a dummy PR/);
+    assert.match(IMPLEMENT_SYSTEM_PROMPT, /ENGINEERING HYGIENE/i);
+    assert.match(IMPLEMENT_SYSTEM_PROMPT, /content delivered inside <untrusted-input>/i);
     assert.match(prompt, /Operator note: keep the change set small\./);
+    assert.match(prompt, /Approved spec bundle: openspec\/changes\/7-demo-change\n<untrusted-input source="spec-bundle-files">[\s\S]*# Proposal/);
+    assert.match(prompt, /Recent operator comments:\n<untrusted-input source="operator-comments">[\s\S]*Operator note: keep the change set small\./);
     assert.doesNotMatch(prompt, /night-shift:implement:summary/);
     assert.match(prompt, /proposal\.md/);
     assert.match(prompt, /# Proposal/);
     assert.match(prompt, /Review requested changes/);
     assert.match(prompt, /Please tighten the public API\./);
+    assert.match(prompt, /Existing pull request feedback:\n<untrusted-input source="pull-request-feedback">[\s\S]*Review requested changes[\s\S]*Guard the undefined path\./);
     assert.match(prompt, /Inline comment 1 \(src\/index\.ts:8\)/);
     assert.match(prompt, /Guard the undefined path\./);
     assert.doesNotMatch(prompt, /night-shift:review:summary/);
     assert.doesNotMatch(prompt, /night-shift:review:finding/);
     assert.match(prompt, /Previous attempt #1 failed with: make check failed/i);
+    assert.match(prompt, /Retry feedback:\n<untrusted-input source="retry-feedback">[\s\S]*Previous attempt #1 failed with: make check failed/i);
   });
 
   it('retries once after a gate failure, feeds retry feedback into the next prompt, and only performs in-review side effects once', async () => {
@@ -71,6 +78,7 @@ describe('implement phase', () => {
         async runAgentSequence(input: any) {
           runAgentSequenceCallCount += 1;
           calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+          assert.strictEqual(input.steps[0]?.systemPrompt, IMPLEMENT_SYSTEM_PROMPT);
           assert.match(input.steps[0].prompt, /Please wire the retry through the existing helper\./);
           assert.match(input.steps[0].prompt, /Keep the helper pure\./);
           if (runAgentSequenceCallCount === 2) {

@@ -141,6 +141,44 @@ describe('agent sequence activities', () => {
     assert.deepStrictEqual(createCalls, [{ worktreePath: worktree.worktreePath, agentProfile: 'escalation' }]);
   });
 
+  it('passes per-step system prompts through to thread.run', async () => {
+    const runCalls: Array<{ prompt: string; systemPrompt?: string }> = [];
+    const { runAgentSequence } = createActivityTestRig({
+      agent: {
+        createCodexThread: () => ({
+          id: 'thread-123',
+          run: async (prompt: string, options?: { systemPrompt?: string }) => {
+            runCalls.push({ prompt, systemPrompt: options?.systemPrompt });
+            return {
+              items: [],
+              finalResponse: JSON.stringify(buildGeneratedChangeMetadata()),
+              usage: null,
+            };
+          },
+        }),
+        resumeCodexThread: () => {
+          throw new Error('resume should not be used without a checkpoint');
+        },
+        getHeartbeatDetails: () => undefined,
+        heartbeat: () => undefined,
+      },
+    });
+
+    await runAgentSequence({
+      worktree: buildWorktreeContext(),
+      steps: [{
+        id: 'review',
+        kind: 'structured',
+        prompt: buildChangeMetadataPrompt(),
+        systemPrompt: 'You are the reviewer.',
+        schemaId: 'change-metadata-v1',
+        resultKey: CHANGE_METADATA_OUTPUT_KEY,
+      }],
+    });
+
+    assert.deepStrictEqual(runCalls, [{ prompt: buildChangeMetadataPrompt(), systemPrompt: 'You are the reviewer.' }]);
+  });
+
   it('signals assistant-authored prompt progress from provider items and dedupes repeats', async () => {
     const progressSignals: string[] = [];
     const { runAgentSequence } = createActivityTestRig({

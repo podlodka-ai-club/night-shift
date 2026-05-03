@@ -2,7 +2,7 @@ import { REVIEWER_RESPONSE_OUTPUT_KEY, type AgentStep, type MoveProjectItemStatu
 import { isNightShiftMarkerComment } from '../../comment-markers';
 import { buildChangeName } from '../change-name';
 import { ReviewPhaseContractError } from './errors';
-import { buildReviewPrompt } from './prompt';
+import { buildReviewPrompt, REVIEWER_SYSTEM_PROMPT } from './prompt';
 import { parseReviewerResponse, type Finding, type ReviewerResponse } from './response';
 
 const DEFAULT_MAX_REVIEW_ITERATIONS = 3;
@@ -92,7 +92,7 @@ async function generateReviewResponse(
   try {
     const result = await deps.runAgentSequence({
       worktree: input.worktree,
-      steps: [{ id: 'review', kind: 'structured', prompt: buildReviewPrompt({ issue: input.issue, changeName, pullRequest: pullRequestDetails, specBundleFiles, diff, changedFiles, reviewComments }), schemaId: 'reviewer-response-v1', resultKey: REVIEWER_RESPONSE_OUTPUT_KEY }],
+      steps: [{ id: 'review', kind: 'structured', prompt: buildReviewPrompt({ issue: input.issue, changeName, pullRequest: pullRequestDetails, specBundleFiles, diff, changedFiles, reviewComments }), systemPrompt: REVIEWER_SYSTEM_PROMPT, schemaId: 'reviewer-response-v1', resultKey: REVIEWER_RESPONSE_OUTPUT_KEY }],
     });
     return parseReviewerResponse(result.outputs?.[REVIEWER_RESPONSE_OUTPUT_KEY]);
   } catch (error) {

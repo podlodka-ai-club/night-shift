@@ -15,6 +15,7 @@ export interface StructuredTurnContract<TParsedOutput> {
 export interface RunStructuredAgentTurnInput<TParsedOutput> {
   stepId: string;
   prompt: string;
+  systemPrompt?: string;
   contract: StructuredTurnContract<TParsedOutput>;
   getCheckpointDetails: () => AgentCheckpoint;
   onEvent?: (event: AgentProgressEvent) => void;
@@ -92,6 +93,7 @@ export async function runStructuredAgentTurn<TParsedOutput>(
 ): Promise<{ finalResponse: string; parsedOutput: TParsedOutput }> {
   const turnOptions = buildTurnOptions(deps, {
     outputSchema: input.contract.jsonSchema,
+    systemPrompt: input.systemPrompt,
     onEvent: input.onEvent,
   });
 
@@ -130,7 +132,7 @@ export async function runStructuredAgentTurn<TParsedOutput>(
 
 function buildTurnOptions(
   deps: Pick<AgentActivityDeps, 'getCancellationSignal'>,
-  options: { outputSchema?: unknown; onEvent?: (event: AgentProgressEvent) => void },
+  options: { outputSchema?: unknown; systemPrompt?: string; onEvent?: (event: AgentProgressEvent) => void },
 ): AgentTurnOptions {
   const signal = deps.getCancellationSignal();
   return {

@@ -1,6 +1,6 @@
 import { SPECIFY_RESPONSE_OUTPUT_KEY, type AgentStep, type CreatedPullRequest, type IssueComment, type MoveProjectItemStatusInput, type OpenSpecChangeFile, type SelectedProjectIssue, type WorktreeContext } from '../../shared';
 import { parseSpecifyResponse, type SpecifyResponse } from './response';
-import { buildSpecifyChangeName, buildSpecifyPrompt } from './prompt';
+import { buildSpecifyChangeName, buildSpecifyPrompt, SPECIFY_SYSTEM_PROMPT } from './prompt';
 import { SpecifyPhaseContractError } from './errors';
 
 export interface RunSpecifyPhaseInput {
@@ -111,6 +111,7 @@ function buildSpecifyStep(
     id: 'specify',
     kind: 'structured',
     prompt: buildSpecifyPrompt({ issue, changeName, issueComments, currentDraftFiles, validationError }),
+    systemPrompt: SPECIFY_SYSTEM_PROMPT,
     schemaId: 'specify-response-v1',
     resultKey: SPECIFY_RESPONSE_OUTPUT_KEY,
   };

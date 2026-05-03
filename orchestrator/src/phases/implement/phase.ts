@@ -13,7 +13,7 @@ import {
 } from '../../shared';
 import { parseImplementResponse, type ImplementResponse } from './response';
 import { ImplementPhaseContractError } from './errors';
-import { buildImplementPrompt, type ImplementRetryFeedback } from './prompt';
+import { buildImplementPrompt, IMPLEMENT_SYSTEM_PROMPT, type ImplementRetryFeedback } from './prompt';
 import { buildChangeName } from '../change-name';
 
 export interface RunImplementPhaseInput {
@@ -159,6 +159,7 @@ async function generateImplementResponse(
       id: 'implement',
       kind: 'structured',
       prompt: buildImplementPrompt({ issue, changeName, specBundleFiles, issueComments, pullRequestFeedback, retryFeedback }),
+      systemPrompt: IMPLEMENT_SYSTEM_PROMPT,
       schemaId: 'implement-response-v1',
       resultKey: IMPLEMENT_RESPONSE_OUTPUT_KEY,
     }];

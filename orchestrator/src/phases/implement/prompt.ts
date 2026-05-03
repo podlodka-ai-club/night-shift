@@ -1,5 +1,8 @@
 import { isNightShiftMarkerComment } from '../../comment-markers';
 import type { IssueComment, OpenPullRequestFeedback, OpenSpecChangeFile, SelectedProjectIssue } from '../../shared';
+import { buildPromptHardeningPreamble, wrapUntrustedInput } from '../prompt-hardening';
+
+export const IMPLEMENT_SYSTEM_PROMPT = buildPromptHardeningPreamble('You are implementing the approved spec bundle for the linked issue.');
 
 export interface ImplementRetryFeedback {
   attempt: number;
@@ -17,13 +20,8 @@ export interface BuildImplementPromptInput {
 
 export function buildImplementPrompt(input: BuildImplementPromptInput): string {
   return [
-    'You are implementing the approved spec bundle for the linked issue.',
-    '',
-    `Issue #${input.issue.issueNumber}: ${input.issue.issueTitle}`,
-    `URL: ${input.issue.issueUrl}`,
-    '',
-    'Description:',
-    input.issue.taskDescription,
+    'Issue:',
+    wrapUntrustedInput('issue', renderIssue(input.issue)),
     '',
     `Approved spec bundle: openspec/changes/${input.changeName}`,
     renderSpecBundleFiles(input.specBundleFiles),
@@ -40,17 +38,21 @@ export function buildImplementPrompt(input: BuildImplementPromptInput): string {
   ].join('\n');
 }
 
+function renderIssue(issue: SelectedProjectIssue): string {
+  return [`Issue #${issue.issueNumber}: ${issue.issueTitle}`, `URL: ${issue.issueUrl}`, '', 'Description:', issue.taskDescription].join('\n');
+}
+
 function renderSpecBundleFiles(specBundleFiles: readonly OpenSpecChangeFile[]): string {
   return specBundleFiles.length === 0
     ? '- (none)'
-    : specBundleFiles.map((file) => `- ${file.path}\n${file.content.trim()}`).join('\n');
+    : wrapUntrustedInput('spec-bundle-files', specBundleFiles.map((file) => `- ${file.path}\n${file.content.trim()}`).join('\n'));
 }
 
 function renderIssueComments(issueComments: readonly IssueComment[]): string {
   const visibleComments = issueComments.filter((comment) => !isNightShiftMarkerComment(comment.body));
   return visibleComments.length === 0
     ? '- (none)'
-    : visibleComments.map((comment, index) => `- Comment ${index + 1}:\n${comment.body.trim()}`).join('\n');
+    : wrapUntrustedInput('operator-comments', visibleComments.map((comment, index) => `- Comment ${index + 1}:\n${comment.body.trim()}`).join('\n'));
 }
 
 function renderPullRequestFeedback(pullRequestFeedback: OpenPullRequestFeedback | undefined): string {
@@ -69,7 +71,7 @@ function renderPullRequestFeedback(pullRequestFeedback: OpenPullRequestFeedback 
     ?? [];
   const reviewEntries = reviewBodies.map((body, index) => `- Review ${index + 1}:\n${body}`);
   const entries = [...reviewEntries, ...reviewComments];
-  return entries.length === 0 ? '- (none)' : entries.join('\n');
+  return entries.length === 0 ? '- (none)' : wrapUntrustedInput('pull-request-feedback', entries.join('\n'));
 }
 
 function normalizeFeedbackBody(body: string): string {
@@ -80,5 +82,5 @@ function renderRetryFeedback(retryFeedback: ImplementRetryFeedback | undefined):
   if (!retryFeedback) {
     return 'Retry feedback:\n(none)';
   }
-  return `Retry feedback:\nPrevious attempt #${retryFeedback.attempt} failed with: ${retryFeedback.failure}\nPlease address this before resubmitting.`;
+  return `Retry feedback:\n${wrapUntrustedInput('retry-feedback', `Previous attempt #${retryFeedback.attempt} failed with: ${retryFeedback.failure}\nPlease address this before resubmitting.`)}`;
 }

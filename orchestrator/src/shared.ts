@@ -145,12 +145,14 @@ export interface AgentPromptStep {
   id: string;
   kind: 'prompt';
   prompt: string;
+  systemPrompt?: string;
 }
 
 export interface AgentStructuredStep {
   id: string;
   kind: 'structured';
   prompt: string;
+  systemPrompt?: string;
   schemaId: AgentSchemaId;
   resultKey: AgentOutputKey;
 }

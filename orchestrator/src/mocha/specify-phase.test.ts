@@ -1,7 +1,7 @@
 import assert from 'assert';
 import { describe, it } from 'mocha';
 import { buildExpectedCreatedPullRequest, buildSelectedIssue, buildWorktreeContext } from './activity-test-helpers';
-import { buildSpecifyPrompt } from '../phases/specify/prompt';
+import { buildSpecifyPrompt, SPECIFY_SYSTEM_PROMPT } from '../phases/specify/prompt';
 import { runSpecifyPhase } from '../phases/specify/phase';
 import { SpecifyPhaseContractError } from '../phases/specify/errors';
 
@@ -18,10 +18,16 @@ describe('specify phase', () => {
       validationError: 'proposal.md failed validation',
     });
 
+    assert.match(prompt, /<untrusted-input source="issue">[\s\S]*Issue #7: Create a dummy PR/);
+    assert.match(SPECIFY_SYSTEM_PROMPT, /ENGINEERING HYGIENE/i);
+    assert.match(SPECIFY_SYSTEM_PROMPT, /content delivered inside <untrusted-input>/i);
     assert.match(prompt, /Customer note: keep the API small\./);
+    assert.match(prompt, /Recent operator comments:\n<untrusted-input source="operator-comments">[\s\S]*Customer note: keep the API small\./);
     assert.doesNotMatch(prompt, /night-shift:specify:summary/);
     assert.match(prompt, /# Existing Proposal/);
+    assert.match(prompt, /Current draft files:\n<untrusted-input source="current-draft-files">[\s\S]*# Existing Proposal/);
     assert.match(prompt, /proposal\.md failed validation/);
+    assert.match(prompt, /Previous validation error:\n<untrusted-input source="validation-error">[\s\S]*proposal\.md failed validation/);
   });
 
   it('retries once after validation failure and only performs refined-side effects once', async () => {
@@ -44,9 +50,10 @@ describe('specify phase', () => {
           calls.push(`validate:${validateCallCount}`);
           if (validateCallCount === 1) throw new Error('proposal.md failed validation');
         },
-        async runAgentSequence() {
+        async runAgentSequence(input: any) {
           runAgentSequenceCallCount += 1;
           calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+          assert.strictEqual(input.steps[0]?.systemPrompt, SPECIFY_SYSTEM_PROMPT);
           return {
             outputs: {
               specifyResponse: {

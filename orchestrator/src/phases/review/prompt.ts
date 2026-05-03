@@ -1,6 +1,8 @@
 import type { OpenSpecChangeFile, PullRequestChangedFile, PullRequestDetails, PullRequestReviewComment, SelectedProjectIssue } from '../../shared';
+import { buildPromptHardeningPreamble, wrapUntrustedInput } from '../prompt-hardening';
 
 const DEFAULT_MAX_DIFF_CHARACTERS = 12_000;
+export const REVIEWER_SYSTEM_PROMPT = buildPromptHardeningPreamble('You are reviewing the linked pull request against the approved spec bundle.');
 
 export interface BuildReviewPromptInput {
   issue: SelectedProjectIssue;
@@ -16,13 +18,10 @@ export interface BuildReviewPromptInput {
 export function buildReviewPrompt(input: BuildReviewPromptInput): string {
   const maxDiffCharacters = input.maxDiffCharacters ?? DEFAULT_MAX_DIFF_CHARACTERS;
   return [
-    `# Review issue #${input.issue.issueNumber}: ${input.issue.issueTitle}`,
-    `Issue URL: ${input.issue.issueUrl}`,
+    '## Issue',
+    wrapUntrustedInput('issue', renderIssue(input.issue)),
     `Change: openspec/changes/${input.changeName}`,
     `Pull request: ${input.pullRequest.pullRequestUrl}`,
-    '',
-    '## Description',
-    input.issue.taskDescription,
     '',
     '## Spec bundle',
     renderSpecBundle(input.specBundleFiles),
@@ -43,18 +42,22 @@ export function buildReviewPrompt(input: BuildReviewPromptInput): string {
   ].join('\n');
 }
 
+function renderIssue(issue: SelectedProjectIssue): string {
+  return [`Issue #${issue.issueNumber}: ${issue.issueTitle}`, `Issue URL: ${issue.issueUrl}`, '', '## Description', issue.taskDescription].join('\n');
+}
+
 function renderSpecBundle(files: readonly OpenSpecChangeFile[]): string {
   if (files.length === 0) return '- none';
-  return files.map((file) => [`### ${file.path}`, '```md', file.content.trimEnd(), '```'].join('\n')).join('\n\n');
+  return wrapUntrustedInput('spec-bundle', files.map((file) => [`### ${file.path}`, '```md', file.content.trimEnd(), '```'].join('\n')).join('\n\n'));
 }
 
 function renderDiff(diff: string, changedFiles: readonly PullRequestChangedFile[], maxDiffCharacters: number): string {
   const trimmedDiff = diff.trim();
   if (trimmedDiff.length <= maxDiffCharacters) {
-    return ['```diff', trimmedDiff || '(empty diff)', '```'].join('\n');
+    return wrapUntrustedInput('pull-request-diff', ['```diff', trimmedDiff || '(empty diff)', '```'].join('\n'));
   }
 
-  return [
+  return wrapUntrustedInput('pull-request-diff', [
     `_Diff truncated to ${maxDiffCharacters} characters. Review the changed-file summary below._`,
     '',
     '### Changed files',
@@ -65,12 +68,12 @@ function renderDiff(diff: string, changedFiles: readonly PullRequestChangedFile[
     '```diff',
     `${trimmedDiff.slice(0, maxDiffCharacters).trimEnd()}\n...[truncated]`,
     '```',
-  ].join('\n');
+  ].join('\n'));
 }
 
 function renderReviewComments(comments: readonly PullRequestReviewComment[]): string {
   if (comments.length === 0) return '- none';
-  return comments.map((comment) => `- ${comment.path}${comment.line ? `:${comment.line}` : ''} — ${comment.body.replace(/\s+/g, ' ').trim()}`).join('\n');
+  return wrapUntrustedInput('review-comments', comments.map((comment) => `- ${comment.path}${comment.line ? `:${comment.line}` : ''} — ${comment.body.replace(/\s+/g, ' ').trim()}`).join('\n'));
 }
 
 function summarizePatch(patch: string): string {
