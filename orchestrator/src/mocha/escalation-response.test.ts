@@ -4,6 +4,7 @@ import { getAgentSchema } from '../agent-schema-registry';
 import {
   escalationResponseJsonSchemaSource,
   escalationResponseSchema,
+  type EscalationResponse,
   parseEscalationResponse,
 } from '../phases/escalation/response';
 
@@ -51,6 +52,31 @@ describe('EscalationResponse', () => {
     });
 
     assert.strictEqual(result.resolution.resumeStatus, 'In review');
+  });
+
+  it('keeps the registry parser aligned with provider-facing nullable escalation fields', () => {
+    const schema = getAgentSchema('escalation-response-v1');
+    const result = schema.schema.parse({
+      outcome: 'resolved',
+      originPhase: 'implement',
+      confidence: 'high',
+      rootCause: {
+        category: 'agent_contract_failure',
+        summary: 'The provider returned nullable optional fields.',
+        evidence: ['commitMessage was null', 'resumeStatus was null'],
+      },
+      resolution: {
+        summary: 'Normalize nullable optional fields before continuing.',
+        files: [],
+        commitMessage: null,
+        validationPlan: ['Retry the structured step with normalized output'],
+        resumeStatus: null,
+      },
+      issueComment: 'Escalation Manager normalized provider-friendly nulls.',
+    }) as EscalationResponse;
+
+    assert.ok(!('commitMessage' in result.resolution));
+    assert.strictEqual(result.resolution.resumeStatus, 'Ready');
   });
 
   it('rejects forbidden paths, duplicate writes, and credential-like targets', () => {
