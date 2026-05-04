@@ -7,7 +7,7 @@ import { decideReviewVerdict, runReviewPhase } from '../phases/review/phase';
 import { buildExpectedCreatedPullRequest, buildSelectedIssue, buildWorktreeContext } from './activity-test-helpers';
 
 describe('review phase', () => {
-  it('renders donor-faithful review prompt markers for reviewer guidance, diff framing, and comment filtering', () => {
+  it('renders donor-faithful review prompt markers for reviewer guidance, diff framing, comment filtering, project guidance, and response instructions', () => {
     const issue = { ...buildSelectedIssue(), labels: ['review', 'tiny'] } as any;
     const prompt = buildReviewPrompt({
       issue,
@@ -22,6 +22,10 @@ describe('review phase', () => {
       ],
       retryFeedback: { attempt: 2, failure: 'Previous review attempt could not approve because the diff context was incomplete.' },
       maxDiffCharacters: 40,
+      projectExtensionPromptContributions: {
+        prepend: ['Verify spec acceptance criteria explicitly.'],
+        append: ['Prefer inline findings that point to concrete changed lines.'],
+      },
     });
 
     assert.match(REVIEWER_SYSTEM_PROMPT, /You are the Reviewer role in the Night-Shift system\./);
@@ -40,12 +44,14 @@ describe('review phase', () => {
     assert.match(prompt, /\| src\/index\.ts \| \+1 \| -0 \|/);
     assert.match(prompt, /## Existing review comments\n<untrusted-input source="github-review-comments">[\s\S]*### src\/index\.ts:1 — @human-reviewer — 2026-05-03T12:00:00Z[\s\S]*Human note: keep this tiny\./);
     assert.match(prompt, /## Retry feedback\n<untrusted-input source="previous-attempt-error">[\s\S]*Previous attempt #2 failed with: Previous review attempt could not approve because the diff context was incomplete\./);
+    assert.match(prompt, /## Project extension guidance\nVerify spec acceptance criteria explicitly\.[\s\S]*Prefer inline findings that point to concrete changed lines\./);
     assert.match(prompt, /## Response\nReturn a JSON object with keys: `summary`/);
     assert.match(prompt, /Each Finding has: `severity` \("error" \| "warning"\), `message`/);
     assert.ok(prompt.indexOf('## Spec bundle') < prompt.indexOf('## PR Diff'));
     assert.ok(prompt.indexOf('## PR Diff') < prompt.indexOf('## Existing review comments'));
     assert.ok(prompt.indexOf('## Existing review comments') < prompt.indexOf('## Retry feedback'));
-    assert.ok(prompt.indexOf('## Retry feedback') < prompt.indexOf('## Response'));
+    assert.ok(prompt.indexOf('## Retry feedback') < prompt.indexOf('## Project extension guidance'));
+    assert.ok(prompt.indexOf('## Project extension guidance') < prompt.indexOf('## Response'));
   });
 
   it('truncates UTF-8 diffs at code point boundaries without replacement characters', () => {
@@ -79,7 +85,19 @@ describe('review phase', () => {
     const calls: string[] = [];
 
     const result = await runReviewPhase(
-      { issue, worktree, pullRequest },
+      {
+        issue,
+        worktree,
+        pullRequest,
+        projectExtensionManifest: {
+          prompts: {
+            specify: { prepend: ['Specify extension guidance.'], append: [] },
+            implement: { prepend: ['Implement extension guidance.'], append: [] },
+            review: { prepend: ['Review extension guidance.'], append: ['Review trailing guidance.'] },
+          },
+          qualityGates: [],
+        },
+      },
       {
         async readOpenSpecChangeFiles() { calls.push('readOpenSpecChangeFiles'); return [{ path: 'proposal.md', content: '# Proposal' }, { path: 'tasks.md', content: '# Tasks' }]; },
         async getPullRequestDetails() { calls.push('getPullRequestDetails'); return { pullRequestNumber: pullRequest.pullRequestNumber, pullRequestUrl: pullRequest.pullRequestUrl, headSha: 'abc123', isDraft: true }; },
@@ -89,6 +107,10 @@ describe('review phase', () => {
         async runAgentSequence(input) {
           calls.push('runAgentSequence');
           assert.strictEqual(input.steps[0]?.systemPrompt, REVIEWER_SYSTEM_PROMPT);
+          assert.match(input.steps[0].prompt, /Review extension guidance\./);
+          assert.match(input.steps[0].prompt, /Review trailing guidance\./);
+          assert.doesNotMatch(input.steps[0].prompt, /Specify extension guidance\./);
+          assert.doesNotMatch(input.steps[0].prompt, /Implement extension guidance\./);
           return { outputs: { [REVIEWER_RESPONSE_OUTPUT_KEY]: { summary: 'Looks good to merge.', findings: [{ severity: 'warning', message: 'Document the helper intent.', location: { file: `${worktree.worktreePath}/src/index.ts`, line: 1 } }] } } };
         },
         async setPullRequestReady() { calls.push('setPullRequestReady'); },

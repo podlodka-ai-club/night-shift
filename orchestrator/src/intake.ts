@@ -3,6 +3,7 @@ import type { WorkflowClient } from '@temporalio/client';
 import {
   BLOCKED_REASON_BOARD_SIGNAL_RULES,
   TASK_QUEUE,
+  assertIssueMatchesExpectedRepo,
   type AutomateReadyIssueInput,
   type ListedProjectIssue,
   type ListProjectIssuesByStatusInput,
@@ -24,7 +25,7 @@ import {
 type StartPhase = Extract<WorkflowPhase, 'specify' | 'implement'>;
 
 export interface IntakeCandidate {
-  issue: { issueNumber: number };
+  issue: Pick<ListedProjectIssue, 'issueNumber' | 'repoOwner' | 'repoName'>;
   boardStatusName: ProjectStatusName;
   createdAt: string;
   startPhase?: StartPhase;
@@ -113,6 +114,7 @@ export async function handleWorkflowTrigger(
   workflowInput: AutomateReadyIssueInput,
   candidate: IntakeCandidate,
 ): Promise<WorkflowTriggerAction> {
+  assertIssueMatchesExpectedRepo(candidate.issue, workflowInput);
   const workflowId = buildIssueWorkflowId(candidate.issue.issueNumber);
   const initialAction = resolveWorkflowTriggerAction({ boardStatusName: candidate.boardStatusName, workflowId, workflowState: await deps.getWorkflowState(workflowId) });
   if (initialAction.type === 'signal') {

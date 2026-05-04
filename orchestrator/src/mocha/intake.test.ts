@@ -183,6 +183,32 @@ describe('intake trigger handling', () => {
     assert.deepStrictEqual(action, { type: 'noop', workflowId: 'ticket-7', reason: 'workflow_not_found' });
   });
 
+  it('fails explicitly when the selected issue repo does not match the configured target binding', async () => {
+    await assert.rejects(
+      () => handleWorkflowTrigger(
+        {
+          async getWorkflowState() {
+            throw new Error('getWorkflowState should not run for repo mismatch');
+          },
+          async startWorkflow() {
+            throw new Error('startWorkflow should not run for repo mismatch');
+          },
+          async signalWorkflow() {
+            throw new Error('signalWorkflow should not run for repo mismatch');
+          },
+        },
+        {
+          ...buildWorkflowInput(),
+          targetId: 'acme-web',
+          expectedRepoOwner: 'acme',
+          expectedRepoName: 'web',
+        },
+        buildCandidate({ issueNumber: 7, boardStatusName: 'Ready' }),
+      ),
+      /target "acme-web" is bound to acme\/web/,
+    );
+  });
+
   it('caps pickup actions across both starts and signals', async () => {
     const input = buildWorkflowInput();
     const calls: string[] = [];

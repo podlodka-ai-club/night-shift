@@ -7,10 +7,13 @@ import {
   type OpenPullRequestFeedback,
   type OpenSpecChangeFile,
   type QualityGateResult,
+  type RunQualityGateInput,
   type RepositoryFile,
   type SelectedProjectIssue,
   type WorktreeContext,
+  type ProjectExtensionManifest,
 } from '../../shared';
+import { createEmptyProjectExtensionManifest } from '../../project-extension-manifest';
 import { parseImplementResponse, type ImplementResponse } from './response';
 import { ImplementPhaseContractError } from './errors';
 import { buildImplementPrompt, IMPLEMENT_SYSTEM_PROMPT, type ImplementRetryFeedback } from './prompt';
@@ -20,6 +23,7 @@ export interface RunImplementPhaseInput {
   issue: SelectedProjectIssue;
   branchPrefix?: string;
   deferBlockedStatus?: boolean;
+  projectExtensionManifest?: ProjectExtensionManifest;
   onProgress?: (message: string) => void;
 }
 
@@ -28,9 +32,10 @@ export interface RunImplementPhaseDeps {
   listIssueComments: (input: { repoOwner: string; repoName: string; issueNumber: number }) => Promise<IssueComment[]>;
   listOpenPullRequestFeedback: (input: { worktree: WorktreeContext }) => Promise<OpenPullRequestFeedback>;
   readOpenSpecChangeFiles: (input: { worktree: WorktreeContext; changeName: string }) => Promise<OpenSpecChangeFile[]>;
+  loadProjectExtensionManifest?: (input: { worktree: WorktreeContext }) => Promise<ProjectExtensionManifest>;
   runAgentSequence: (input: { worktree: WorktreeContext; steps: [AgentStep, ...AgentStep[]] }) => Promise<{ outputs?: Record<string, unknown> }>;
   writeRepositoryFiles: (input: { worktree: WorktreeContext; files: RepositoryFile[] }) => Promise<void>;
-  runQualityGate: (input: { worktree: WorktreeContext }) => Promise<QualityGateResult>;
+  runQualityGate: (input: RunQualityGateInput) => Promise<QualityGateResult>;
   commitAndPush: (input: { worktree: WorktreeContext; commitMessage?: string }) => Promise<void>;
   openPullRequest: (input: { worktree: WorktreeContext; title?: string; body?: string; draft?: boolean; updateIfExists?: boolean }) => Promise<CreatedPullRequest>;
   upsertIssueComment: (input: { repoOwner: string; repoName: string; issueNumber: number; marker: string; body: string }) => Promise<void>;
@@ -41,6 +46,7 @@ export interface RunImplementPhaseResult {
   outcome: 'pr_opened' | 'needs_input';
   worktree: WorktreeContext;
   changeName: string;
+  projectExtensionManifest: ProjectExtensionManifest;
   summaryCommentBody: string;
   pullRequest?: CreatedPullRequest;
 }
@@ -53,6 +59,9 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
     issue: input.issue,
     branchPrefix: input.branchPrefix,
   });
+  const projectExtensionManifest = input.projectExtensionManifest
+    ?? await deps.loadProjectExtensionManifest?.({ worktree })
+    ?? createEmptyProjectExtensionManifest();
   const issueComments = await deps.listIssueComments({
     repoOwner: input.issue.repoOwner,
     repoName: input.issue.repoName,
@@ -72,7 +81,7 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
     if (!input.deferBlockedStatus) {
       await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
     }
-    return { outcome: 'needs_input', worktree, changeName, summaryCommentBody };
+    return { outcome: 'needs_input', worktree, changeName, projectExtensionManifest, summaryCommentBody };
   }
 
   const pullRequestFeedback = await deps.listOpenPullRequestFeedback({ worktree });
@@ -85,7 +94,7 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
 
   for (let attempt = 1; attempt <= MAX_IMPLEMENT_ATTEMPTS; attempt += 1) {
     try {
-      latestResponse = await generateImplementResponse(deps, worktree, input.issue, changeName, issueComments, pullRequestFeedback, specBundleFiles, retryFeedback);
+      latestResponse = await generateImplementResponse(deps, worktree, input.issue, changeName, issueComments, pullRequestFeedback, specBundleFiles, retryFeedback, projectExtensionManifest);
     } catch (error) {
       if (!(error instanceof ImplementPhaseContractError)) throw error;
       const summaryCommentBody = buildDeterministicFailureSummaryComment(input.issue, changeName, error.message);
@@ -99,11 +108,11 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
       if (!input.deferBlockedStatus) {
         await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
       }
-      return { outcome: 'needs_input', worktree, changeName, summaryCommentBody };
+      return { outcome: 'needs_input', worktree, changeName, projectExtensionManifest, summaryCommentBody };
     }
 
     await deps.writeRepositoryFiles({ worktree, files: latestResponse.filesWritten });
-    const gateResult = await deps.runQualityGate({ worktree });
+    const gateResult = await deps.runQualityGate({ worktree, qualityGates: projectExtensionManifest.qualityGates });
     if (gateResult.passed) {
       const summaryCommentBody = buildSuccessSummaryComment(input.issue, changeName, latestResponse, gateResult);
       await deps.commitAndPush({ worktree, commitMessage: latestResponse.commitMessage });
@@ -121,7 +130,7 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
         body: summaryCommentBody,
       });
       await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.inReviewOptionId));
-      return { outcome: 'pr_opened', worktree, changeName, pullRequest, summaryCommentBody };
+      return { outcome: 'pr_opened', worktree, changeName, projectExtensionManifest, pullRequest, summaryCommentBody };
     }
 
     retryFeedback = {
@@ -141,7 +150,7 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
   if (!input.deferBlockedStatus) {
     await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
   }
-  return { outcome: 'needs_input', worktree, changeName, summaryCommentBody };
+  return { outcome: 'needs_input', worktree, changeName, projectExtensionManifest, summaryCommentBody };
 }
 
 async function generateImplementResponse(
@@ -153,12 +162,21 @@ async function generateImplementResponse(
   pullRequestFeedback: OpenPullRequestFeedback,
   specBundleFiles: readonly OpenSpecChangeFile[],
   retryFeedback: ImplementRetryFeedback | undefined,
+  projectExtensionManifest: ProjectExtensionManifest,
 ): Promise<ImplementResponse> {
   try {
     const steps: [AgentStep, ...AgentStep[]] = [{
       id: 'implement',
       kind: 'structured',
-      prompt: buildImplementPrompt({ issue, changeName, specBundleFiles, issueComments, pullRequestFeedback, retryFeedback }),
+      prompt: buildImplementPrompt({
+        issue,
+        changeName,
+        specBundleFiles,
+        issueComments,
+        pullRequestFeedback,
+        retryFeedback,
+        projectExtensionPromptContributions: projectExtensionManifest.prompts.implement,
+      }),
       systemPrompt: IMPLEMENT_SYSTEM_PROMPT,
       schemaId: 'implement-response-v1',
       resultKey: IMPLEMENT_RESPONSE_OUTPUT_KEY,

@@ -1,4 +1,6 @@
 import { SPECIFY_RESPONSE_OUTPUT_KEY, type AgentStep, type CreatedPullRequest, type IssueComment, type MoveProjectItemStatusInput, type OpenSpecChangeFile, type SelectedProjectIssue, type WorktreeContext } from '../../shared';
+import { createEmptyProjectExtensionManifest } from '../../project-extension-manifest';
+import type { ProjectExtensionManifest } from '../../shared';
 import { parseSpecifyResponse, type SpecifyResponse } from './response';
 import { buildSpecifyChangeName, buildSpecifyPrompt, SPECIFY_SYSTEM_PROMPT } from './prompt';
 import { SpecifyPhaseContractError } from './errors';
@@ -7,6 +9,7 @@ export interface RunSpecifyPhaseInput {
   issue: SelectedProjectIssue;
   branchPrefix?: string;
   deferBlockedStatus?: boolean;
+  projectExtensionManifest?: ProjectExtensionManifest;
   onProgress?: (message: string) => void;
 }
 
@@ -16,6 +19,7 @@ export interface RunSpecifyPhaseDeps {
   readOpenSpecChangeFiles: (input: { worktree: WorktreeContext; changeName: string }) => Promise<OpenSpecChangeFile[]>;
   writeOpenSpecChangeFiles: (input: { worktree: WorktreeContext; changeName: string; files: OpenSpecChangeFile[] }) => Promise<void>;
   validateOpenSpecChange: (input: { worktree: WorktreeContext; changeName: string }) => Promise<void>;
+  loadProjectExtensionManifest?: (input: { worktree: WorktreeContext }) => Promise<ProjectExtensionManifest>;
   runAgentSequence: (input: { worktree: WorktreeContext; steps: [AgentStep, ...AgentStep[]] }) => Promise<{ outputs?: Record<string, unknown> }>;
   commitAndPush: (input: { worktree: WorktreeContext; commitMessage?: string }) => Promise<void>;
   openPullRequest: (input: { worktree: WorktreeContext; title?: string; body?: string; draft?: boolean; updateIfExists?: boolean }) => Promise<CreatedPullRequest>;
@@ -27,6 +31,7 @@ export interface RunSpecifyPhaseResult {
   outcome: 'refined' | 'needs_input';
   worktree: WorktreeContext;
   changeName: string;
+  projectExtensionManifest: ProjectExtensionManifest;
   pullRequest?: CreatedPullRequest;
   summaryCommentBody: string;
 }
@@ -36,9 +41,12 @@ export async function runSpecifyPhase(input: RunSpecifyPhaseInput, deps: RunSpec
   input.onProgress?.(`Moving issue #${input.issue.issueNumber} into ${input.issue.refinementStatusName}.`);
   await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.refinementOptionId));
   const worktree = await deps.createWorktreeForIssueIfNeeded({ issue: input.issue, branchPrefix: input.branchPrefix });
+  const projectExtensionManifest = input.projectExtensionManifest
+    ?? await deps.loadProjectExtensionManifest?.({ worktree })
+    ?? createEmptyProjectExtensionManifest();
   const issueComments = await deps.listIssueComments({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, issueNumber: input.issue.issueNumber });
   const currentDraftFiles = await deps.readOpenSpecChangeFiles({ worktree, changeName });
-  let specifyResponse = await generateSpecifyResponse(deps, worktree, input.issue, changeName, issueComments, currentDraftFiles, undefined);
+  let specifyResponse = await generateSpecifyResponse(deps, worktree, input.issue, changeName, issueComments, currentDraftFiles, undefined, projectExtensionManifest);
   let validationError: string | undefined;
 
   await deps.writeOpenSpecChangeFiles({ worktree, changeName, files: specifyResponse.files });
@@ -46,7 +54,7 @@ export async function runSpecifyPhase(input: RunSpecifyPhaseInput, deps: RunSpec
     await deps.validateOpenSpecChange({ worktree, changeName });
   } catch (error) {
     validationError = toErrorMessage(error);
-    specifyResponse = await generateSpecifyResponse(deps, worktree, input.issue, changeName, issueComments, specifyResponse.files, validationError);
+    specifyResponse = await generateSpecifyResponse(deps, worktree, input.issue, changeName, issueComments, specifyResponse.files, validationError, projectExtensionManifest);
     await deps.writeOpenSpecChangeFiles({ worktree, changeName, files: specifyResponse.files });
     try {
       await deps.validateOpenSpecChange({ worktree, changeName });
@@ -62,7 +70,7 @@ export async function runSpecifyPhase(input: RunSpecifyPhaseInput, deps: RunSpec
     if (!input.deferBlockedStatus) {
       await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.blockedOptionId));
     }
-    return { outcome: 'needs_input', worktree, changeName, summaryCommentBody };
+    return { outcome: 'needs_input', worktree, changeName, projectExtensionManifest, summaryCommentBody };
   }
 
   await deps.commitAndPush({ worktree, commitMessage: `docs(spec): draft OpenSpec change for #${input.issue.issueNumber}` });
@@ -76,7 +84,7 @@ export async function runSpecifyPhase(input: RunSpecifyPhaseInput, deps: RunSpec
   await deps.upsertIssueComment({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, issueNumber: input.issue.issueNumber, marker: 'specify:summary', body: `${summaryCommentBody}\n\nDraft PR: ${pullRequest.pullRequestUrl}` });
   input.onProgress?.(`Specify phase produced a draft PR for issue #${input.issue.issueNumber}.`);
   await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, input.issue.refinedOptionId));
-  return { outcome: 'refined', worktree, changeName, pullRequest, summaryCommentBody };
+  return { outcome: 'refined', worktree, changeName, projectExtensionManifest, pullRequest, summaryCommentBody };
 }
 
 async function generateSpecifyResponse(
@@ -87,9 +95,10 @@ async function generateSpecifyResponse(
   issueComments: readonly IssueComment[],
   currentDraftFiles: readonly OpenSpecChangeFile[],
   validationError: string | undefined,
+  projectExtensionManifest: ProjectExtensionManifest,
 ): Promise<SpecifyResponse> {
   try {
-    const steps: [AgentStep, ...AgentStep[]] = [buildSpecifyStep(issue, changeName, issueComments, currentDraftFiles, validationError)];
+    const steps: [AgentStep, ...AgentStep[]] = [buildSpecifyStep(issue, changeName, issueComments, currentDraftFiles, validationError, projectExtensionManifest)];
     const result = await deps.runAgentSequence({ worktree, steps });
     return parseSpecifyResponse(result.outputs?.[SPECIFY_RESPONSE_OUTPUT_KEY]);
   } catch (error) {
@@ -106,11 +115,19 @@ function buildSpecifyStep(
   issueComments: readonly IssueComment[],
   currentDraftFiles: readonly OpenSpecChangeFile[],
   validationError: string | undefined,
+  projectExtensionManifest: ProjectExtensionManifest,
 ): AgentStep {
   return {
     id: 'specify',
     kind: 'structured',
-    prompt: buildSpecifyPrompt({ issue, changeName, issueComments, currentDraftFiles, validationError }),
+    prompt: buildSpecifyPrompt({
+      issue,
+      changeName,
+      issueComments,
+      currentDraftFiles,
+      validationError,
+      projectExtensionPromptContributions: projectExtensionManifest.prompts.specify,
+    }),
     systemPrompt: SPECIFY_SYSTEM_PROMPT,
     schemaId: 'specify-response-v1',
     resultKey: SPECIFY_RESPONSE_OUTPUT_KEY,

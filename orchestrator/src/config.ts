@@ -36,6 +36,27 @@ const CONFIG_FILENAMES = [
   'night-shift.config.mjs',
 ] as const;
 
+const orchestratorTargetProjectSchema = z.object({
+  owner: z.string(),
+  number: z.number().int().positive(),
+  backlogStatusName: z.string().default(DEFAULT_BACKLOG_STATUS),
+  readyStatusName: z.string().default(DEFAULT_READY_STATUS),
+  inReviewStatusName: z.string().default(DEFAULT_IN_REVIEW_STATUS),
+  escalatedStatusName: z.string().default(DEFAULT_ESCALATED_STATUS),
+  blockedStatusName: z.string().default(DEFAULT_BLOCKED_STATUS),
+});
+
+const orchestratorTargetRepoSchema = z.object({
+  owner: z.string(),
+  name: z.string(),
+});
+
+const orchestratorTargetSchema = z.object({
+  id: z.string().min(1),
+  project: orchestratorTargetProjectSchema,
+  repo: orchestratorTargetRepoSchema,
+});
+
 const orchestratorConfigSchema = z.object({
   temporal: z.object({
     address: z.string().default('localhost:7233'),
@@ -74,10 +95,17 @@ const orchestratorConfigSchema = z.object({
     blockedStatusName: DEFAULT_BLOCKED_STATUS,
     branchPrefix: DEFAULT_BRANCH_PREFIX,
   }),
+  git: z.object({
+    branchPrefix: z.string().default(DEFAULT_BRANCH_PREFIX),
+  }).default({
+    branchPrefix: DEFAULT_BRANCH_PREFIX,
+  }),
+  targets: z.array(orchestratorTargetSchema).default([]),
 });
 
 export type OrchestratorConfig = z.infer<typeof orchestratorConfigSchema>;
 export type OrchestratorConfigInput = z.input<typeof orchestratorConfigSchema>;
+export type OrchestratorTarget = z.infer<typeof orchestratorTargetSchema>;
 
 export interface LoadOrchestratorConfigOptions {
   explicitPath?: string;

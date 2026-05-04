@@ -1,4 +1,5 @@
-import { REVIEWER_RESPONSE_OUTPUT_KEY, type AgentStep, type MoveProjectItemStatusInput, type OpenSpecChangeFile, type PullRequestChangedFile, type PullRequestDetails, type PullRequestReviewComment, type SelectedProjectIssue, type WorktreeContext } from '../../shared';
+import { REVIEWER_RESPONSE_OUTPUT_KEY, type AgentStep, type MoveProjectItemStatusInput, type OpenSpecChangeFile, type ProjectExtensionManifest, type PullRequestChangedFile, type PullRequestDetails, type PullRequestReviewComment, type SelectedProjectIssue, type WorktreeContext } from '../../shared';
+import { createEmptyProjectExtensionManifest } from '../../project-extension-manifest';
 import { isNightShiftMarkerComment } from '../../comment-markers';
 import { buildChangeName } from '../change-name';
 import { ReviewPhaseContractError } from './errors';
@@ -14,6 +15,7 @@ export interface RunReviewPhaseInput {
   issue: SelectedProjectIssue;
   worktree: WorktreeContext;
   pullRequest: { pullRequestNumber: number; pullRequestUrl: string };
+  projectExtensionManifest?: ProjectExtensionManifest;
   reviewIteration?: number;
   deferEscalatedStatus?: boolean;
   onProgress?: (message: string) => void;
@@ -25,6 +27,7 @@ export interface RunReviewPhaseDeps {
   getPullRequestDiff: (input: { repoOwner: string; repoName: string; pullRequestNumber: number }) => Promise<string>;
   listPullRequestFiles: (input: { repoOwner: string; repoName: string; pullRequestNumber: number }) => Promise<PullRequestChangedFile[]>;
   listPullRequestReviewComments: (input: { repoOwner: string; repoName: string; pullRequestNumber: number }) => Promise<PullRequestReviewComment[]>;
+  loadProjectExtensionManifest?: (input: { worktree: WorktreeContext }) => Promise<ProjectExtensionManifest>;
   runAgentSequence: (input: { worktree: WorktreeContext; steps: [AgentStep, ...AgentStep[]] }) => Promise<{ outputs?: Record<string, unknown> }>;
   setPullRequestReady: (input: { repoOwner: string; repoName: string; pullRequestNumber: number; ready: boolean }) => Promise<void>;
   createPullRequestReview: (input: { repoOwner: string; repoName: string; pullRequestNumber: number; event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'; body: string }) => Promise<void>;
@@ -38,6 +41,7 @@ export interface RunReviewPhaseResult {
   outcome: 'ready_to_merge' | 'needs_fix' | 'escalated';
   verdict: ReviewVerdict;
   response: ReviewerResponse;
+  projectExtensionManifest: ProjectExtensionManifest;
   pullRequestDetails: PullRequestDetails;
   summaryCommentBody: string;
 }
@@ -45,13 +49,16 @@ export interface RunReviewPhaseResult {
 export async function runReviewPhase(input: RunReviewPhaseInput, deps: RunReviewPhaseDeps): Promise<RunReviewPhaseResult> {
   const changeName = buildChangeName(input.issue);
   const reviewIteration = input.reviewIteration ?? 0;
+  const projectExtensionManifest = input.projectExtensionManifest
+    ?? await deps.loadProjectExtensionManifest?.({ worktree: input.worktree })
+    ?? createEmptyProjectExtensionManifest();
   const pullRequestDetails = await deps.getPullRequestDetails({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, pullRequestNumber: input.pullRequest.pullRequestNumber });
   const specBundleFiles = await deps.readOpenSpecChangeFiles({ worktree: input.worktree, changeName });
   const diff = await deps.getPullRequestDiff({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, pullRequestNumber: input.pullRequest.pullRequestNumber });
   const changedFiles = await deps.listPullRequestFiles({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, pullRequestNumber: input.pullRequest.pullRequestNumber });
   const reviewComments = (await deps.listPullRequestReviewComments({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, pullRequestNumber: input.pullRequest.pullRequestNumber }))
     .filter((comment) => !isNightShiftMarkerComment(comment.body));
-  const response = await generateReviewResponse(deps, input, changeName, pullRequestDetails, specBundleFiles, diff, changedFiles, reviewComments);
+  const response = await generateReviewResponse(deps, input, changeName, pullRequestDetails, specBundleFiles, diff, changedFiles, reviewComments, projectExtensionManifest);
   const normalizedResponse = { ...response, findings: normalizeFindingLocations(response.findings, changedFiles, input.worktree) };
   const verdict = decideReviewVerdict(normalizedResponse.findings, reviewIteration, DEFAULT_MAX_REVIEW_ITERATIONS);
   const summaryCommentBody = buildReviewSummaryComment(input.issue, changeName, pullRequestDetails, verdict, normalizedResponse, reviewIteration);
@@ -71,7 +78,7 @@ export async function runReviewPhase(input: RunReviewPhaseInput, deps: RunReview
     await deps.moveProjectItemStatus(buildStatusUpdateInput(input.issue, verdict));
   }
 
-  return { outcome: verdictToOutcome(verdict), verdict, response: normalizedResponse, pullRequestDetails, summaryCommentBody };
+  return { outcome: verdictToOutcome(verdict), verdict, response: normalizedResponse, projectExtensionManifest, pullRequestDetails, summaryCommentBody };
 }
 
 export function decideReviewVerdict(findings: readonly Finding[], iteration: number, maxReviewIterations = DEFAULT_MAX_REVIEW_ITERATIONS): ReviewVerdict {
@@ -88,11 +95,28 @@ async function generateReviewResponse(
   diff: string,
   changedFiles: readonly PullRequestChangedFile[],
   reviewComments: readonly PullRequestReviewComment[],
+  projectExtensionManifest: ProjectExtensionManifest,
 ): Promise<ReviewerResponse> {
   try {
     const result = await deps.runAgentSequence({
       worktree: input.worktree,
-      steps: [{ id: 'review', kind: 'structured', prompt: buildReviewPrompt({ issue: input.issue, changeName, pullRequest: pullRequestDetails, specBundleFiles, diff, changedFiles, reviewComments }), systemPrompt: REVIEWER_SYSTEM_PROMPT, schemaId: 'reviewer-response-v1', resultKey: REVIEWER_RESPONSE_OUTPUT_KEY }],
+      steps: [{
+        id: 'review',
+        kind: 'structured',
+        prompt: buildReviewPrompt({
+          issue: input.issue,
+          changeName,
+          pullRequest: pullRequestDetails,
+          specBundleFiles,
+          diff,
+          changedFiles,
+          reviewComments,
+          projectExtensionPromptContributions: projectExtensionManifest.prompts.review,
+        }),
+        systemPrompt: REVIEWER_SYSTEM_PROMPT,
+        schemaId: 'reviewer-response-v1',
+        resultKey: REVIEWER_RESPONSE_OUTPUT_KEY,
+      }],
     });
     return parseReviewerResponse(result.outputs?.[REVIEWER_RESPONSE_OUTPUT_KEY]);
   } catch (error) {

@@ -17,6 +17,103 @@ const { runWorkflow, runWorkflowWithHandle } = createWorkflowTestRig();
 describe('workflow failure paths', function () {
   this.timeout(60_000);
 
+  it('hands project extension manifest load failures to escalation and blocks for human retry', async () => {
+    const calls: string[] = [];
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const statusUpdates: MoveProjectItemStatusInput[] = [];
+
+    const markers: string[] = [];
+    const commentBodies = new Map<string, string>();
+
+    await runWorkflowWithHandle(
+      {
+        workflowId: 'automate-ready-issue-project-extension-failure-test',
+        expectedWorkerWarnings: [/invalid project extension/],
+        activities: {
+          async getTopReadyIssue() { calls.push('getTopReadyIssue'); return issue; },
+          async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded:7'); return worktree; },
+          async loadProjectExtensionManifest() { calls.push('loadProjectExtensionManifest:7'); throw new Error('invalid project extension'); },
+          async listIssueComments() { calls.push('listIssueComments:7'); return []; },
+          async readOpenSpecChangeFiles() {
+            calls.push('readOpenSpecChangeFiles:7');
+            return [
+              { path: 'proposal.md', content: '# Proposal' },
+              { path: 'tasks.md', content: '# Tasks' },
+            ];
+          },
+          async runAgentSequence() {
+            calls.push('runAgentSequence:7');
+            return {
+              outputs: {
+                escalationResponse: {
+                  outcome: 'needs_human',
+                  originPhase: 'implement',
+                  confidence: 'low',
+                  rootCause: {
+                    category: 'infrastructure_failure',
+                    summary: 'The project extension manifest could not be loaded.',
+                    evidence: ['invalid project extension'],
+                  },
+                  resolution: {
+                    summary: 'A human needs to fix the project extension before Implement can continue.',
+                    files: [],
+                    validationPlan: [],
+                    resumeStatus: 'Ready',
+                  },
+                  humanRequest: {
+                    question: 'Fix the project extension, then move the issue back to Ready.',
+                    recommendedStatusAfterAnswer: 'Ready',
+                  },
+                  issueComment: 'Escalation Manager could not recover the project extension manifest failure automatically.',
+                },
+              } as any,
+            };
+          },
+          async writeRepositoryFiles() { throw new Error('writeRepositoryFiles should not run after extension load failure'); },
+          async runQualityGate() { throw new Error('runQualityGate should not run after extension load failure'); },
+          async commitAndPush() { throw new Error('commitAndPush should not run after extension load failure'); },
+          async openPullRequest() { throw new Error('openPullRequest should not run after extension load failure'); },
+          async upsertIssueComment(input: { marker: string; body: string }) {
+            markers.push(input.marker);
+            commentBodies.set(input.marker, input.body);
+            calls.push(`upsertIssueComment:${input.marker}`);
+          },
+          async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
+            statusUpdates.push(input);
+            calls.push(`moveProjectItemStatus:${input.projectItemId}`);
+          },
+        },
+      },
+      async (handle) => {
+        assert.strictEqual(await waitForBlockedReason(handle, 'implement_needs_input'), 'implement_needs_input');
+        await handle.terminate('done');
+      },
+    );
+
+    assert.deepStrictEqual(calls, [
+      'getTopReadyIssue',
+      'createWorktreeForIssueIfNeeded:7',
+      'loadProjectExtensionManifest:7',
+      'moveProjectItemStatus:item-1',
+      'createWorktreeForIssueIfNeeded:7',
+      'listIssueComments:7',
+      'readOpenSpecChangeFiles:7',
+      'runAgentSequence:7',
+      'upsertIssueComment:escalation:human-needed',
+      'moveProjectItemStatus:item-1',
+      'upsertIssueComment:workflow:phase-failure',
+    ]);
+    assert.deepStrictEqual(statusUpdates, [
+      buildStatusUpdateInput(issue, issue.escalatedOptionId),
+      buildStatusUpdateInput(issue, issue.blockedOptionId),
+    ]);
+    assert.deepStrictEqual(markers, ['escalation:human-needed', 'workflow:phase-failure']);
+    assert.match(commentBodies.get('escalation:human-needed') ?? '', /project extension/i);
+    assert.match(commentBodies.get('workflow:phase-failure') ?? '', /invalid project extension/i);
+    assert.match(commentBodies.get('workflow:phase-failure') ?? '', /Ready/i);
+  });
+
   it('blocks through escalation after exhausted agent failures move the issue to In progress', async () => {
     const calls: string[] = [];
     const issue = buildSelectedIssue();

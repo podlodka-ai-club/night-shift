@@ -173,6 +173,80 @@ describe('github activities', () => {
     assert.strictEqual(fetchCalls.length, 2);
   });
 
+  it('filters project issues to the configured repo binding before selecting the top issue', async () => {
+    const matchingReady = buildSelectedIssue();
+    const foreignOlderReady = {
+      ...buildSelectedIssue(),
+      projectItemId: 'item-5',
+      issueNumber: 5,
+      issueTitle: 'Foreign ready issue',
+      taskDescription: 'Foreign ready task',
+      issueUrl: 'https://github.com/Mugenor/other-repo/issues/5',
+      repoName: 'other-repo',
+    };
+    const fetchCalls: FetchCall[] = [];
+    const { getTopReadyIssue, listProjectIssuesByStatus } = createActivityTestRig({
+      github: {
+        fetch: createFetchSequenceMock([
+          jsonResponse(
+            buildProjectQueryResponse(matchingReady, {
+              items: [
+                buildProjectItemNode(foreignOlderReady, {
+                  id: 'item-5',
+                  statusName: 'Ready',
+                  createdAt: '2026-04-28T08:00:00.000Z',
+                }),
+                buildProjectItemNode(matchingReady, {
+                  id: 'item-7',
+                  statusName: 'Ready',
+                  createdAt: '2026-04-28T11:00:00.000Z',
+                }),
+              ],
+            }),
+          ),
+          jsonResponse(
+            buildProjectQueryResponse(matchingReady, {
+              items: [
+                buildProjectItemNode(foreignOlderReady, {
+                  id: 'item-5',
+                  statusName: 'Ready',
+                  createdAt: '2026-04-28T08:00:00.000Z',
+                }),
+                buildProjectItemNode(matchingReady, {
+                  id: 'item-7',
+                  statusName: 'Ready',
+                  createdAt: '2026-04-28T11:00:00.000Z',
+                }),
+              ],
+            }),
+          ),
+        ], fetchCalls),
+      },
+    });
+
+    const listedIssues = await listProjectIssuesByStatus({
+      projectOwner: 'Mugenor',
+      projectNumber: 1,
+      statusNames: ['Ready'],
+      expectedRepoOwner: 'Mugenor',
+      expectedRepoName: 'orchestrator-testing',
+    });
+    const selectedIssue = await getTopReadyIssue({
+      projectOwner: 'Mugenor',
+      projectNumber: 1,
+      expectedRepoOwner: 'Mugenor',
+      expectedRepoName: 'orchestrator-testing',
+    });
+
+    assert.deepStrictEqual(listedIssues.map((issue) => [issue.issueNumber, issue.repoOwner, issue.repoName]), [
+      [7, 'Mugenor', 'orchestrator-testing'],
+    ]);
+    assert.strictEqual(selectedIssue.issueNumber, 7);
+    assert.strictEqual(selectedIssue.projectItemId, 'item-7');
+    assert.strictEqual(selectedIssue.repoOwner, 'Mugenor');
+    assert.strictEqual(selectedIssue.repoName, 'orchestrator-testing');
+  });
+
   it('creates missing canonical project status options before selecting the Ready issue', async () => {
     const selectedIssue = buildSelectedIssue();
     const fetchCalls: FetchCall[] = [];

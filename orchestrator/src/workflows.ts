@@ -8,6 +8,7 @@ import {
   setHandler,
 } from '@temporalio/workflow';
 import {
+  assertIssueMatchesExpectedRepo,
   WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME,
   WORKFLOW_SIGNAL_NAMES,
 } from './shared';
@@ -23,6 +24,7 @@ import type {
   AutomateReadyIssueInput,
   AutomateReadyIssueResult,
   CreatedPullRequest,
+  ProjectExtensionManifest,
   SelectedProjectIssue,
   WorkflowBlockedReason,
   WorkflowPhase,
@@ -56,6 +58,13 @@ const {
 } = proxyActivities<typeof activities>({
   retry: {
     maximumAttempts: 3,
+  },
+  startToCloseTimeout: '2 minutes',
+});
+
+const { loadProjectExtensionManifest } = proxyActivities<Pick<typeof activities, 'loadProjectExtensionManifest'>>({
+  retry: {
+    maximumAttempts: 1,
   },
   startToCloseTimeout: '2 minutes',
 });
@@ -115,6 +124,7 @@ export async function automateTopReadyIssue(
   let selectedImplementIssue: SelectedProjectIssue | undefined;
   let activeWorktree: WorktreeContext | undefined;
   let activePullRequest: CreatedPullRequest | undefined;
+  let projectExtensionManifest: ProjectExtensionManifest | undefined;
   let allowSpecReviewed = false;
   let allowSpecifyRetry = false;
   let allowImplementRetry = false;
@@ -176,6 +186,11 @@ export async function automateTopReadyIssue(
         branchName: worktree.branchName,
       });
     }
+  };
+
+  const ensureProjectExtensionManifest = async (worktree: WorktreeContext): Promise<ProjectExtensionManifest> => {
+    projectExtensionManifest ??= await loadProjectExtensionManifest({ worktree });
+    return projectExtensionManifest;
   };
 
   setHandler(getBlockedReasonQuery, () => shellState.blockedReason);
@@ -440,6 +455,7 @@ export async function automateTopReadyIssue(
     if (shellState.currentPhase === 'specify') {
       selectedSpecifyIssue ??= await getTopBacklogIssue(input);
       const issue = selectedSpecifyIssue;
+      assertIssueMatchesExpectedRepo(issue, input);
       shellState.issueNumber = issue.issueNumber;
       shellState.issueTitle = issue.issueTitle;
       recordActivity(`Selected Backlog issue #${issue.issueNumber} for Specify.`);
@@ -451,6 +467,7 @@ export async function automateTopReadyIssue(
             issue,
             branchPrefix: input.branchPrefix,
             deferBlockedStatus: true,
+            projectExtensionManifest,
             onProgress: recordActivity,
           },
           {
@@ -459,6 +476,7 @@ export async function automateTopReadyIssue(
             readOpenSpecChangeFiles,
             writeOpenSpecChangeFiles,
             validateOpenSpecChange,
+            loadProjectExtensionManifest: async ({ worktree }) => ensureProjectExtensionManifest(worktree),
             runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
             commitAndPush,
             openPullRequest,
@@ -475,6 +493,7 @@ export async function automateTopReadyIssue(
       }
 
       activeWorktree = specifyResult.worktree;
+      projectExtensionManifest = specifyResult.projectExtensionManifest;
       if (specifyResult.outcome === 'needs_input') {
         const escalation = await escalatePhase('specify', issue, {
           blockedReason: 'specify_needs_input',
@@ -518,6 +537,7 @@ export async function automateTopReadyIssue(
     if (shellState.currentPhase === 'implement') {
       selectedImplementIssue ??= await getTopReadyIssue(input);
       const issue = selectedImplementIssue;
+      assertIssueMatchesExpectedRepo(issue, input);
       shellState.issueNumber = issue.issueNumber;
       shellState.issueTitle = issue.issueTitle;
       recordActivity(`Selected Ready issue #${issue.issueNumber} for Implement.`);
@@ -529,6 +549,7 @@ export async function automateTopReadyIssue(
             issue,
             branchPrefix: input.branchPrefix,
             deferBlockedStatus: true,
+            projectExtensionManifest,
             onProgress: recordActivity,
           },
           {
@@ -536,6 +557,7 @@ export async function automateTopReadyIssue(
             listIssueComments,
             listOpenPullRequestFeedback,
             readOpenSpecChangeFiles,
+            loadProjectExtensionManifest: async ({ worktree }) => ensureProjectExtensionManifest(worktree),
             runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
             writeRepositoryFiles,
             runQualityGate,
@@ -554,6 +576,7 @@ export async function automateTopReadyIssue(
       }
 
       activeWorktree = implementResult.worktree;
+      projectExtensionManifest = implementResult.projectExtensionManifest;
       if (implementResult.outcome === 'needs_input') {
         const escalation = await escalatePhase('implement', issue, {
           blockedReason: 'implement_needs_input',
@@ -599,6 +622,7 @@ export async function automateTopReadyIssue(
             issue,
             worktree: activeWorktree,
             pullRequest: activePullRequest,
+            projectExtensionManifest,
             reviewIteration: shellState.reviewIteration,
             deferEscalatedStatus: true,
             onProgress: recordActivity,
@@ -609,6 +633,7 @@ export async function automateTopReadyIssue(
             getPullRequestDiff,
             listPullRequestFiles,
             listPullRequestReviewComments,
+            loadProjectExtensionManifest: async ({ worktree }) => ensureProjectExtensionManifest(worktree),
             runAgentSequence: (agentInput) => getRunAgentSequenceActivityWithRetry(agentInput.steps, ['AgentContractError'])(agentInput),
             setPullRequestReady,
             createPullRequestReview,
@@ -626,6 +651,7 @@ export async function automateTopReadyIssue(
         throw error;
       }
 
+      projectExtensionManifest = reviewResult.projectExtensionManifest;
       if (reviewResult.outcome === 'needs_fix') {
         shellState.reviewIteration += 1;
         shellState.currentPhase = 'implement';

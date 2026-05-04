@@ -10,6 +10,7 @@ import {
   buildStatusUpdateInput,
   createWorkflowTestRig,
 } from './workflow-test-helpers';
+import { createEmptyProjectExtensionManifest } from '../project-extension-manifest';
 
 const { runWorkflow } = createWorkflowTestRig();
 
@@ -40,6 +41,7 @@ describe('workflow success paths', function () {
     assert.deepStrictEqual(calls, [
       'getTopReadyIssue',
       'createWorktreeForIssueIfNeeded:7',
+      'loadProjectExtensionManifest:7',
       'listIssueComments:7',
       'readOpenSpecChangeFiles:7',
       'moveProjectItemStatus:item-1',
@@ -199,6 +201,7 @@ function createImplementSuccessActivities({
   upsertIssueComment,
   moveProjectItemStatus,
   cleanupWorktree,
+  loadProjectExtensionManifest,
 }: {
   issue: ReturnType<typeof buildSelectedIssue>;
   worktree: ReturnType<typeof buildWorktreeContext>;
@@ -209,6 +212,7 @@ function createImplementSuccessActivities({
   upsertIssueComment?: (input: any) => Promise<void>;
   moveProjectItemStatus?: (input: MoveProjectItemStatusInput) => Promise<void>;
   cleanupWorktree?: (input: any) => Promise<void>;
+  loadProjectExtensionManifest?: (input: any) => Promise<any>;
 }) {
   let runAgentSequenceCallCount = 0;
 
@@ -220,6 +224,10 @@ function createImplementSuccessActivities({
     async createWorktreeForIssueIfNeeded() {
       calls.push('createWorktreeForIssueIfNeeded:7');
       return worktree;
+    },
+    async loadProjectExtensionManifest() {
+      calls.push('loadProjectExtensionManifest:7');
+      return await (loadProjectExtensionManifest?.({ worktree }) ?? createEmptyProjectExtensionManifest());
     },
     async listIssueComments() {
       calls.push('listIssueComments:7');

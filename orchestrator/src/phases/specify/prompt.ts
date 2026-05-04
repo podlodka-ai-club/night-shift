@@ -1,6 +1,7 @@
 import { isNightShiftMarkerComment } from '../../comment-markers';
-import type { IssueComment, OpenSpecChangeFile, SelectedProjectIssue } from '../../shared';
+import type { IssueComment, OpenSpecChangeFile, ProjectExtensionPromptContributions, SelectedProjectIssue } from '../../shared';
 import { buildChangeName } from '../change-name';
+import { renderProjectExtensionGuidance } from '../project-extension-guidance';
 import { renderPromptContextHeading, wrapUntrustedInput } from '../prompt-hardening';
 
 export const SPECIFY_SYSTEM_PROMPT = [
@@ -37,6 +38,7 @@ export interface BuildSpecifyPromptInput {
   issueComments: readonly IssueComment[];
   currentDraftFiles: readonly OpenSpecChangeFile[];
   validationError?: string;
+  projectExtensionPromptContributions?: ProjectExtensionPromptContributions;
 }
 
 export function buildSpecifyPrompt(input: BuildSpecifyPromptInput): string {
@@ -54,6 +56,11 @@ export function buildSpecifyPrompt(input: BuildSpecifyPromptInput): string {
 
   if (input.validationError) {
     parts.push('## Previous validation error', wrapUntrustedInput('previous-validation-error', input.validationError), '');
+  }
+
+  const projectExtensionGuidance = renderProjectExtensionGuidance(input.projectExtensionPromptContributions);
+  if (projectExtensionGuidance.length > 0) {
+    parts.push(...projectExtensionGuidance, '');
   }
 
   parts.push(

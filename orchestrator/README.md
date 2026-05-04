@@ -35,7 +35,7 @@ Operational defaults:
 - per-ticket branches/worktrees are stable and reusable across retries
 - automation uses a normal `git push -u origin <branch>` policy and does **not** force-push
 - corrupt pre-existing worktrees are recreated instead of being trusted blindly
-- the quality gate is repo-aware: run `make check` when a root `Makefile` declares `check`, otherwise run `npm run check` when a root `package.json` declares it, otherwise treat the repo as having no configured gate
+- repos may register explicit project-extension quality gates that run via `zsh -c`; when no explicit gates are registered, the fallback remains repo-aware: run `make check` when a root `Makefile` declares `check`, otherwise run `npm run check` when a root `package.json` declares it, otherwise treat the repo as having no configured gate
 - the generic intake layer and generic `runAgentSequence` activity are intentional steady-state seams beneath the donor-style phase state machine
 
 ## Project board status model
@@ -120,8 +120,15 @@ Example config:
 import { defineOrchestratorConfig } from './src/config';
 
 export default defineOrchestratorConfig({
-  github: { projectOwner: 'your-org', projectNumber: 123 },
+  git: { branchPrefix: 'orchestrator' },
   pickup: { enabled: true, intervalSeconds: 10, maxConcurrent: 5 },
+  targets: [
+    {
+      id: 'main-repo',
+      project: { owner: 'your-org', number: 123 },
+      repo: { owner: 'your-org', name: 'main-repo' },
+    },
+  ],
 });
 ```
 
@@ -134,8 +141,20 @@ Key config fields:
 - `pickup.enabled` — whether worker startup creates/updates `pickup-schedule`, defaults to `true`
 - `pickup.intervalSeconds` — pickup schedule cadence, defaults to `10`
 - `pickup.maxConcurrent` — max pickup start/signal actions per schedule tick, defaults to `5`
-- `github.projectOwner` / `github.projectNumber` — Project v2 coordinates used by both worker and client
-- `github.branchPrefix` — naming prefix for generated branches
+- `git.branchPrefix` — naming prefix for generated branches
+- `targets[].id` — stable logical target name used for selection and error reporting
+- `targets[].project.owner` / `targets[].project.number` — GitHub Project v2 coordinates monitored for that target
+- `targets[].repo.owner` / `targets[].repo.name` — expected repository binding for issues selected from that target
+
+Target selection precedence is:
+
+1. explicit CLI project owner/number
+2. `GITHUB_PROJECT_OWNER` / `GITHUB_PROJECT_NUMBER`
+3. the only configured target, when `targets[]` has length `1`
+
+If multiple targets exist and no selector is provided, startup/manual intake fails fast with a clear target-selection error.
+
+The configured repo binding is enforced before automation starts. If a selected board item belongs to a different repository than the chosen target, the run fails explicitly instead of silently acting on the wrong repo.
 
 You can pass the GitHub project owner/number directly:
 
@@ -171,6 +190,32 @@ Optional overrides:
 - `GITHUB_BLOCKED_STATUS`
 - `GITHUB_BRANCH_PREFIX`
 - `GITHUB_PICKUP_MAX_ACTIONS`
+
+## Repo-local project extensions
+
+Each cloned repo may provide `.orchestrator/project.extension.ts`.
+
+Trust model: monitored repos are trusted to provide project-extension code and shell quality gates with the same authority the orchestrator already uses to clone, edit, and validate those repos.
+
+Authoring shape:
+
+```ts
+export default defineProjectExtension((project) => {
+  project.prompt('implement').prepend('Use pnpm commands in this repo.');
+  project.prompt('review').append('Check the docs examples touched by the diff.');
+  project.qualityGate('typecheck', { run: 'pnpm typecheck' });
+  project.qualityGate('test', { run: 'pnpm test -- --runInBand' });
+});
+```
+
+Behavior notes:
+
+- the extension is loaded once per target run after the repo worktree exists
+- prompt contributions affect only the phase user prompt body in a dedicated project-extension guidance section
+- system prompts and prompt-hardening wrappers remain orchestrator-owned and immutable
+- explicit quality gates run from the worktree via `zsh -c <run>` in registration order
+- when the extension registers zero quality gates, the fallback remains `make check` / `npm run check` autodetection
+- invalid extension code fails only that target run; it does not take down unrelated configured targets
 
 Value precedence for client/manual intake is:
 

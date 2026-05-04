@@ -53,21 +53,80 @@ describe('config loading', () => {
     }
   });
 
+  it('loads multi-target config with a global git.branchPrefix', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-config-targets-'));
+    try {
+      await writeFile(
+        path.join(tempDir, 'orchestrator.config.ts'),
+        [
+          'export default {',
+          "  git: { branchPrefix: 'feature' },",
+          '  targets: [',
+          '    {',
+          "      id: 'acme-web',",
+          "      project: { owner: 'acme', number: 42, readyStatusName: 'Queued' },",
+          "      repo: { owner: 'acme', name: 'web' },",
+          '    },',
+          '    {',
+          "      id: 'acme-api',",
+          "      project: { owner: 'acme', number: 43 },",
+          "      repo: { owner: 'acme', name: 'api' },",
+          '    },',
+          '  ],',
+          '};',
+        ].join('\n'),
+        'utf8',
+      );
+
+      const config = await loadOrchestratorConfig({ cwd: tempDir });
+
+      assert.strictEqual(config.git.branchPrefix, 'feature');
+      assert.deepStrictEqual(config.targets, [
+        {
+          id: 'acme-web',
+          project: {
+            owner: 'acme',
+            number: 42,
+            backlogStatusName: 'Backlog',
+            readyStatusName: 'Queued',
+            inReviewStatusName: 'In review',
+            blockedStatusName: 'Blocked',
+          },
+          repo: { owner: 'acme', name: 'web' },
+        },
+        {
+          id: 'acme-api',
+          project: {
+            owner: 'acme',
+            number: 43,
+            backlogStatusName: 'Backlog',
+            readyStatusName: 'Ready',
+            inReviewStatusName: 'In review',
+            blockedStatusName: 'Blocked',
+          },
+          repo: { owner: 'acme', name: 'api' },
+        },
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('prefers an explicit config path over env override and discovered files', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-config-precedence-'));
     const originalConfigEnv = process.env.ORCHESTRATOR_CONFIG;
     try {
       const explicitPath = path.join(tempDir, 'explicit.config.ts');
       const envPath = path.join(tempDir, 'env.config.ts');
-      await writeFile(path.join(tempDir, 'orchestrator.config.ts'), "export default { github: { projectOwner: 'discovered', projectNumber: 1 } };\n", 'utf8');
-      await writeFile(envPath, "export default { github: { projectOwner: 'env', projectNumber: 2 } };\n", 'utf8');
-      await writeFile(explicitPath, "export default { github: { projectOwner: 'explicit', projectNumber: 3 } };\n", 'utf8');
+      await writeFile(path.join(tempDir, 'orchestrator.config.ts'), "export default { targets: [{ id: 'discovered', project: { owner: 'discovered', number: 1 }, repo: { owner: 'acme', name: 'repo' } }] };\n", 'utf8');
+      await writeFile(envPath, "export default { targets: [{ id: 'env', project: { owner: 'env', number: 2 }, repo: { owner: 'acme', name: 'repo' } }] };\n", 'utf8');
+      await writeFile(explicitPath, "export default { targets: [{ id: 'explicit', project: { owner: 'explicit', number: 3 }, repo: { owner: 'acme', name: 'repo' } }] };\n", 'utf8');
       process.env.ORCHESTRATOR_CONFIG = envPath;
 
       const config = await loadOrchestratorConfig({ cwd: tempDir, explicitPath });
 
-      assert.strictEqual(config.github.projectOwner, 'explicit');
-      assert.strictEqual(config.github.projectNumber, 3);
+      assert.strictEqual(config.targets[0]?.project.owner, 'explicit');
+      assert.strictEqual(config.targets[0]?.project.number, 3);
     } finally {
       if (originalConfigEnv === undefined) delete process.env.ORCHESTRATOR_CONFIG;
       else process.env.ORCHESTRATOR_CONFIG = originalConfigEnv;
@@ -81,15 +140,15 @@ describe('config loading', () => {
     const originalNightShiftConfig = process.env.NIGHT_SHIFT_CONFIG;
     try {
       const envPath = path.join(tempDir, 'night-shift-env.config.ts');
-      await writeFile(path.join(tempDir, 'orchestrator.config.ts'), "export default { github: { projectOwner: 'discovered', projectNumber: 1 } };\n", 'utf8');
-      await writeFile(envPath, "export default { github: { projectOwner: 'night-shift-env', projectNumber: 9 } };\n", 'utf8');
+      await writeFile(path.join(tempDir, 'orchestrator.config.ts'), "export default { targets: [{ id: 'discovered', project: { owner: 'discovered', number: 1 }, repo: { owner: 'acme', name: 'repo' } }] };\n", 'utf8');
+      await writeFile(envPath, "export default { targets: [{ id: 'night-shift-env', project: { owner: 'night-shift-env', number: 9 }, repo: { owner: 'acme', name: 'repo' } }] };\n", 'utf8');
       delete process.env.ORCHESTRATOR_CONFIG;
       process.env.NIGHT_SHIFT_CONFIG = envPath;
 
       const config = await loadOrchestratorConfig({ cwd: tempDir });
 
-      assert.strictEqual(config.github.projectOwner, 'night-shift-env');
-      assert.strictEqual(config.github.projectNumber, 9);
+      assert.strictEqual(config.targets[0]?.project.owner, 'night-shift-env');
+      assert.strictEqual(config.targets[0]?.project.number, 9);
     } finally {
       if (originalOrchestratorConfig === undefined) delete process.env.ORCHESTRATOR_CONFIG;
       else process.env.ORCHESTRATOR_CONFIG = originalOrchestratorConfig;
@@ -111,10 +170,14 @@ describe('config loading', () => {
         path.join(tempDir, 'night-shift.config.ts'),
         [
           'export default {',
-          '  github: {',
-          '    projectOwner: process.env.GITHUB_PROJECT_OWNER,',
-          "    projectNumber: Number(process.env.GITHUB_PROJECT_NUMBER ?? '0'),",
-          '  },',
+          '  targets: [{',
+          "    id: 'dotenv-target',",
+          '    project: {',
+          '      owner: process.env.GITHUB_PROJECT_OWNER,',
+          "      number: Number(process.env.GITHUB_PROJECT_NUMBER ?? '0'),",
+          '    },',
+          "    repo: { owner: 'acme', name: 'repo' },",
+          '  }],',
           '};',
         ].join('\n'),
         'utf8',
@@ -122,8 +185,8 @@ describe('config loading', () => {
 
       const config = await loadOrchestratorConfig({ cwd: tempDir });
 
-      assert.strictEqual(config.github.projectOwner, 'from-dotenv');
-      assert.strictEqual(config.github.projectNumber, 17);
+      assert.strictEqual(config.targets[0]?.project.owner, 'from-dotenv');
+      assert.strictEqual(config.targets[0]?.project.number, 17);
     } finally {
       if (originalOwner === undefined) delete process.env.GITHUB_PROJECT_OWNER;
       else process.env.GITHUB_PROJECT_OWNER = originalOwner;
@@ -139,13 +202,13 @@ describe('config loading', () => {
       const workspaceRoot = path.join(tempDir, 'repo-root');
       const packageDir = path.join(workspaceRoot, 'orchestrator');
       await mkdir(packageDir, { recursive: true });
-      await writeFile(path.join(workspaceRoot, 'orchestrator.config.ts'), "export default { github: { projectOwner: 'workspace-root', projectNumber: 33 } };\n", 'utf8');
+      await writeFile(path.join(workspaceRoot, 'orchestrator.config.ts'), "export default { targets: [{ id: 'workspace-root', project: { owner: 'workspace-root', number: 33 }, repo: { owner: 'acme', name: 'repo' } }] };\n", 'utf8');
       await writeFile(path.join(packageDir, 'placeholder.txt'), 'placeholder\n', 'utf8');
 
       const config = await loadOrchestratorConfig({ cwd: packageDir });
 
-      assert.strictEqual(config.github.projectOwner, 'workspace-root');
-      assert.strictEqual(config.github.projectNumber, 33);
+      assert.strictEqual(config.targets[0]?.project.owner, 'workspace-root');
+      assert.strictEqual(config.targets[0]?.project.number, 33);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -155,12 +218,12 @@ describe('config loading', () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator config#url-'));
     try {
       const explicitPath = path.join(tempDir, 'config with #hash.mjs');
-      await writeFile(explicitPath, "export default { github: { projectOwner: 'escaped-path', projectNumber: 21 } };\n", 'utf8');
+      await writeFile(explicitPath, "export default { targets: [{ id: 'escaped-path', project: { owner: 'escaped-path', number: 21 }, repo: { owner: 'acme', name: 'repo' } }] };\n", 'utf8');
 
       const config = await loadOrchestratorConfig({ explicitPath });
 
-      assert.strictEqual(config.github.projectOwner, 'escaped-path');
-      assert.strictEqual(config.github.projectNumber, 21);
+      assert.strictEqual(config.targets[0]?.project.owner, 'escaped-path');
+      assert.strictEqual(config.targets[0]?.project.number, 21);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

@@ -230,6 +230,85 @@ describe('workflow phased shell', function () {
     assert.ok(!calls.includes('getTopReadyIssue'));
   });
 
+  it('loads the project extension manifest once in Specify and reuses it after spec approval', async () => {
+    const calls: string[] = [];
+    const issue = buildSelectedIssue();
+    const worktree = buildWorktreeContext(issue);
+    const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    let readOpenSpecChangeFilesCallCount = 0;
+    let loadProjectExtensionManifestCallCount = 0;
+
+    await runWorkflowWithHandle<void>(
+      {
+        workflowId: 'workflow-shell-project-extension-cache-test',
+        workflowInput: { startPhase: 'specify' },
+        activities: {
+          async getTopBacklogIssue() { calls.push('getTopBacklogIssue'); return issue; },
+          async createWorktreeForIssueIfNeeded() { calls.push('createWorktreeForIssueIfNeeded'); return worktree; },
+          async loadProjectExtensionManifest() {
+            loadProjectExtensionManifestCallCount += 1;
+            calls.push(`loadProjectExtensionManifest:${loadProjectExtensionManifestCallCount}`);
+            return {
+              prompts: {
+                specify: { prepend: ['Specify instructions'], append: [] },
+                implement: { prepend: ['Implement instructions'], append: [] },
+                review: { prepend: [], append: [] },
+              },
+              qualityGates: [],
+            };
+          },
+          async listIssueComments() { calls.push('listIssueComments'); return []; },
+          async readOpenSpecChangeFiles() {
+            readOpenSpecChangeFilesCallCount += 1;
+            calls.push(`readOpenSpecChangeFiles:${readOpenSpecChangeFilesCallCount}`);
+            return readOpenSpecChangeFilesCallCount === 1
+              ? []
+              : [{ path: 'proposal.md', content: '# Proposal' }];
+          },
+          async runAgentSequence() {
+            calls.push('runAgentSequence');
+            return {
+              threadId: 'specify-thread-123',
+              completedStepIds: ['specify'],
+              outputs: {
+                specifyResponse: {
+                  files: [
+                    { path: 'proposal.md', content: '# Proposal' },
+                    { path: 'tasks.md', content: '# Tasks' },
+                  ],
+                  openQuestions: [],
+                  assumptions: [],
+                  risks: [],
+                },
+              } as any,
+              finalResponse: JSON.stringify({ refined: true }),
+            };
+          },
+          async writeOpenSpecChangeFiles() { calls.push('writeOpenSpecChangeFiles'); },
+          async validateOpenSpecChange() { calls.push('validateOpenSpecChange'); },
+          async commitAndPush() { calls.push('commitAndPush'); },
+          async openPullRequest() { calls.push('openPullRequest'); return pullRequest; },
+          async upsertIssueComment() { calls.push('upsertIssueComment'); },
+          async moveProjectItemStatus() { calls.push('moveProjectItemStatus'); },
+        },
+      },
+      async (handle) => {
+        assert.strictEqual(await waitForBlockedReason(handle, 'awaiting_spec_review'), 'awaiting_spec_review');
+        await handle.signal(specReviewedSignal);
+        assert.strictEqual(await waitForBlockedReason(handle, 'implement_needs_input'), 'implement_needs_input');
+        await terminateWorkflowForTest(handle, 'project extension cache verified');
+      },
+    );
+
+    assert.strictEqual(loadProjectExtensionManifestCallCount, 1);
+    assert.deepStrictEqual(
+      calls.filter((call) => call.startsWith('loadProjectExtensionManifest:')),
+      ['loadProjectExtensionManifest:1'],
+    );
+    assert.strictEqual(calls.filter((call) => call === 'createWorktreeForIssueIfNeeded').length, 2);
+    assert.ok(!calls.includes('getTopReadyIssue'));
+  });
+
   it('blocks on specify_needs_input for open questions and reruns specify after specifyRetry', async () => {
     const calls: string[] = [];
     const issue = buildSelectedIssue();

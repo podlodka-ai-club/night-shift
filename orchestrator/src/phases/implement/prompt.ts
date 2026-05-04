@@ -1,5 +1,6 @@
 import { isNightShiftMarkerComment } from '../../comment-markers';
-import type { IssueComment, OpenPullRequestFeedback, OpenSpecChangeFile, SelectedProjectIssue } from '../../shared';
+import type { IssueComment, OpenPullRequestFeedback, OpenSpecChangeFile, ProjectExtensionPromptContributions, SelectedProjectIssue } from '../../shared';
+import { renderProjectExtensionGuidance } from '../project-extension-guidance';
 import { renderPromptContextHeading, wrapUntrustedInput } from '../prompt-hardening';
 
 export const IMPLEMENT_SYSTEM_PROMPT = [
@@ -43,6 +44,7 @@ export interface BuildImplementPromptInput {
   issueComments: readonly IssueComment[];
   pullRequestFeedback?: OpenPullRequestFeedback;
   retryFeedback?: ImplementRetryFeedback;
+  projectExtensionPromptContributions?: ProjectExtensionPromptContributions;
 }
 
 export function buildImplementPrompt(input: BuildImplementPromptInput): string {
@@ -63,6 +65,11 @@ export function buildImplementPrompt(input: BuildImplementPromptInput): string {
   const retry = renderRetryFeedback(input.retryFeedback);
   if (retry) {
     parts.push('## Retry feedback', retry, '');
+  }
+
+  const projectExtensionGuidance = renderProjectExtensionGuidance(input.projectExtensionPromptContributions);
+  if (projectExtensionGuidance.length > 0) {
+    parts.push(...projectExtensionGuidance, '');
   }
 
   parts.push(

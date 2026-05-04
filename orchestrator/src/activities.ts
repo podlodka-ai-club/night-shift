@@ -1,6 +1,7 @@
 import { createAgentActivities } from './activity-agent-sequence';
 import { createActivityDependencies, type ActivityRuntimes, type CreateActivityDependenciesOptions } from './activity-deps';
 import { createGitHubActivities } from './activity-github';
+import { createProjectExtensionActivities } from './project-extension';
 import { createWorktreeActivities } from './activity-worktree';
 
 export { createActivityDependencies } from './activity-deps';
@@ -21,6 +22,7 @@ export function createActivities(runtimes: ActivityRuntimes) {
     ...createGitHubActivities(runtimes.github),
     ...createWorktreeActivities(runtimes.worktree),
     ...createAgentActivities(runtimes.agent),
+    ...createProjectExtensionActivities(),
   };
 }
 
@@ -55,6 +57,7 @@ export const {
   validateOpenSpecChange,
   writeRepositoryFiles,
   runQualityGate,
+  loadProjectExtensionManifest,
   commitAndPush,
   cleanupWorktree,
   runAgentLegacy,

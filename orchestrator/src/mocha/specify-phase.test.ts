@@ -6,7 +6,7 @@ import { runSpecifyPhase } from '../phases/specify/phase';
 import { SpecifyPhaseContractError } from '../phases/specify/errors';
 
 describe('specify phase', () => {
-  it('renders donor-faithful specify prompt markers for ticket, comments, draft, retry context, and response instructions', () => {
+  it('renders donor-faithful specify prompt markers for ticket, comments, draft, retry context, project guidance, and response instructions', () => {
     const issue = { ...buildSelectedIssue(), labels: ['api', 'p1'] } as any;
     const prompt = buildSpecifyPrompt({
       issue,
@@ -17,6 +17,10 @@ describe('specify phase', () => {
       ],
       currentDraftFiles: [{ path: 'proposal.md', content: '# Existing Proposal' }],
       validationError: 'proposal.md failed validation',
+      projectExtensionPromptContributions: {
+        prepend: ['Use pnpm commands in examples.'],
+        append: ['Call out any rollout constraints explicitly.'],
+      },
     });
 
     assert.match(SPECIFY_SYSTEM_PROMPT, /You are the Specifier role in the Night-Shift system\./);
@@ -32,13 +36,15 @@ describe('specify phase', () => {
     assert.match(prompt, /## Current draft\nThe following files already exist on the ticket branch\. Revise them as needed\./);
     assert.match(prompt, /<untrusted-input source="prior-draft">[\s\S]*### proposal\.md[\s\S]*```markdown[\s\S]*# Existing Proposal/);
     assert.match(prompt, /## Previous validation error\n<untrusted-input source="previous-validation-error">[\s\S]*proposal\.md failed validation/);
+    assert.match(prompt, /## Project extension guidance\nUse pnpm commands in examples\.[\s\S]*Call out any rollout constraints explicitly\./);
     assert.match(prompt, /## Response\nReturn a JSON object with keys: `files`/);
     assert.match(prompt, /`files` MUST include `proposal\.md` and `tasks\.md`/);
     assert.match(prompt, /It MAY include `design\.md` and one or more `specs\/<capability>\/spec\.md`/);
     assert.match(prompt, /openspec\/changes\/7-demo-change/);
     assert.ok(prompt.indexOf('## Comments') < prompt.indexOf('## Current draft'));
     assert.ok(prompt.indexOf('## Current draft') < prompt.indexOf('## Previous validation error'));
-    assert.ok(prompt.indexOf('## Previous validation error') < prompt.indexOf('## Response'));
+    assert.ok(prompt.indexOf('## Previous validation error') < prompt.indexOf('## Project extension guidance'));
+    assert.ok(prompt.indexOf('## Project extension guidance') < prompt.indexOf('## Response'));
   });
 
   it('retries once after validation failure and only performs refined-side effects once', async () => {
@@ -50,7 +56,17 @@ describe('specify phase', () => {
     let runAgentSequenceCallCount = 0;
 
     const result = await runSpecifyPhase(
-      { issue },
+      {
+        issue,
+        projectExtensionManifest: {
+          prompts: {
+            specify: { prepend: ['Specify extension guidance.'], append: ['Specify trailing guidance.'] },
+            implement: { prepend: ['Implement extension guidance.'], append: [] },
+            review: { prepend: ['Review extension guidance.'], append: [] },
+          },
+          qualityGates: [],
+        },
+      },
       {
         async createWorktreeForIssueIfNeeded() { calls.push('createWorktree'); return worktree; },
         async listIssueComments() { calls.push('listIssueComments'); return []; },
@@ -65,6 +81,10 @@ describe('specify phase', () => {
           runAgentSequenceCallCount += 1;
           calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
           assert.strictEqual(input.steps[0]?.systemPrompt, SPECIFY_SYSTEM_PROMPT);
+          assert.match(input.steps[0].prompt, /Specify extension guidance\./);
+          assert.match(input.steps[0].prompt, /Specify trailing guidance\./);
+          assert.doesNotMatch(input.steps[0].prompt, /Implement extension guidance\./);
+          assert.doesNotMatch(input.steps[0].prompt, /Review extension guidance\./);
           return {
             outputs: {
               specifyResponse: {

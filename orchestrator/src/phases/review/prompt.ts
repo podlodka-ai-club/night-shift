@@ -1,5 +1,6 @@
 import { isNightShiftMarkerComment } from '../../comment-markers';
-import type { OpenSpecChangeFile, PullRequestChangedFile, PullRequestDetails, PullRequestReviewComment, SelectedProjectIssue } from '../../shared';
+import type { OpenSpecChangeFile, ProjectExtensionPromptContributions, PullRequestChangedFile, PullRequestDetails, PullRequestReviewComment, SelectedProjectIssue } from '../../shared';
+import { renderProjectExtensionGuidance } from '../project-extension-guidance';
 import { renderPromptContextHeading, wrapUntrustedInput } from '../prompt-hardening';
 
 const DEFAULT_MAX_DIFF_CHARACTERS = 12_000;
@@ -46,6 +47,7 @@ export interface BuildReviewPromptInput {
   reviewComments: readonly PullRequestReviewComment[];
   retryFeedback?: ReviewRetryFeedback;
   maxDiffCharacters?: number;
+  projectExtensionPromptContributions?: ProjectExtensionPromptContributions;
 }
 
 export interface ReviewRetryFeedback {
@@ -73,6 +75,11 @@ export function buildReviewPrompt(input: BuildReviewPromptInput): string {
   const retryFeedback = renderRetryFeedback(input.retryFeedback);
   if (retryFeedback) {
     parts.push('', '## Retry feedback', retryFeedback);
+  }
+
+  const projectExtensionGuidance = renderProjectExtensionGuidance(input.projectExtensionPromptContributions);
+  if (projectExtensionGuidance.length > 0) {
+    parts.push('', ...projectExtensionGuidance);
   }
 
   parts.push(

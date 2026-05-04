@@ -131,6 +131,10 @@ export function createWorktreeActivities(deps: WorktreeActivityDeps) {
     },
 
     async runQualityGate(input: RunQualityGateInput): Promise<QualityGateResult> {
+      if (input.qualityGates.length > 0) {
+        return runProjectExtensionQualityGates(deps, input);
+      }
+
       const command = await resolveQualityGateCommand(deps, input.worktree.worktreePath);
       if (!command) {
         return {
@@ -235,6 +239,34 @@ async function resolveQualityGateCommand(
   }
 
   return null;
+}
+
+async function runProjectExtensionQualityGates(
+  deps: WorktreeActivityDeps,
+  input: RunQualityGateInput,
+): Promise<QualityGateResult> {
+  const logSections: string[] = [];
+
+  for (const gate of input.qualityGates) {
+    const result = await deps.execFile('zsh', ['-c', gate.run], { cwd: input.worktree.worktreePath });
+    const combinedLogs = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+    if (combinedLogs) {
+      logSections.push(`## ${gate.id}\n${combinedLogs}`);
+    }
+    if (result.exitCode !== 0) {
+      return {
+        passed: false,
+        summary: `quality gate failed: ${gate.id}`,
+        logs: truncateQualityGateLogs(logSections.join('\n\n')),
+      };
+    }
+  }
+
+  return {
+    passed: true,
+    summary: `quality gates passed: ${input.qualityGates.map((gate) => gate.id).join(', ')}`,
+    logs: truncateQualityGateLogs(logSections.join('\n\n')),
+  };
 }
 
 function hasMakeCheckTarget(makefileContents: string): boolean {

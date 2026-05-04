@@ -6,7 +6,7 @@ import { buildImplementPrompt, IMPLEMENT_SYSTEM_PROMPT } from '../phases/impleme
 import { runImplementPhase } from '../phases/implement/phase';
 
 describe('implement phase', () => {
-  it('renders donor-faithful implement prompt markers for spec bundle, review feedback, retry context, and response instructions', () => {
+  it('renders donor-faithful implement prompt markers for spec bundle, review feedback, retry context, project guidance, and response instructions', () => {
     const issue = { ...buildSelectedIssue(), labels: ['backend', 'urgent'] } as any;
     const prompt = buildImplementPrompt({
       issue,
@@ -27,6 +27,10 @@ describe('implement phase', () => {
         attempt: 1,
         failure: 'make check failed: src/index.ts(1,1): error TS1005',
       },
+      projectExtensionPromptContributions: {
+        prepend: ['Run targeted tests before broad verification.'],
+        append: ['Prefer existing repo conventions over introducing new abstractions.'],
+      },
     });
 
     assert.match(IMPLEMENT_SYSTEM_PROMPT, /You are the Implementer role in the Night-Shift system\./);
@@ -46,24 +50,37 @@ describe('implement phase', () => {
     assert.doesNotMatch(prompt, /night-shift:review:summary/);
     assert.doesNotMatch(prompt, /night-shift:review:finding/);
     assert.match(prompt, /## Retry feedback\n<untrusted-input source="previous-attempt-error">[\s\S]*Previous attempt #1 failed with: make check failed/i);
+    assert.match(prompt, /## Project extension guidance\nRun targeted tests before broad verification\.[\s\S]*Prefer existing repo conventions over introducing new abstractions\./);
     assert.match(prompt, /## Response\nReturn a JSON object with keys: `filesWritten`/);
     assert.match(prompt, /`path` MUST be a repo-relative POSIX path; absolute paths and `\.\.` segments are rejected\./);
     assert.ok(prompt.indexOf('## Spec bundle') < prompt.indexOf('## Comments'));
     assert.ok(prompt.indexOf('## Comments') < prompt.indexOf('## Existing review feedback'));
     assert.ok(prompt.indexOf('## Existing review feedback') < prompt.indexOf('## Retry feedback'));
-    assert.ok(prompt.indexOf('## Retry feedback') < prompt.indexOf('## Response'));
+    assert.ok(prompt.indexOf('## Retry feedback') < prompt.indexOf('## Project extension guidance'));
+    assert.ok(prompt.indexOf('## Project extension guidance') < prompt.indexOf('## Response'));
   });
 
   it('retries once after a gate failure, feeds retry feedback into the next prompt, and only performs in-review side effects once', async () => {
     const issue = buildSelectedIssue();
     const worktree = buildWorktreeContext(issue);
     const pullRequest = buildExpectedCreatedPullRequest(worktree);
+    const qualityGates = [{ id: 'typecheck', run: 'pnpm typecheck' }];
     const calls: string[] = [];
     let runAgentSequenceCallCount = 0;
     let runQualityGateCallCount = 0;
 
     const result = await runImplementPhase(
-      { issue },
+      {
+        issue,
+        projectExtensionManifest: {
+          prompts: {
+            specify: { prepend: ['Specify extension guidance.'], append: [] },
+            implement: { prepend: ['Implement extension guidance.'], append: ['Implement trailing guidance.'] },
+            review: { prepend: ['Review extension guidance.'], append: [] },
+          },
+          qualityGates,
+        },
+      },
       {
         async createWorktreeForIssueIfNeeded() { calls.push('createWorktree'); return worktree; },
         async listIssueComments() { calls.push('listIssueComments'); return []; },
@@ -85,10 +102,14 @@ describe('implement phase', () => {
           runAgentSequenceCallCount += 1;
           calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
           assert.strictEqual(input.steps[0]?.systemPrompt, IMPLEMENT_SYSTEM_PROMPT);
+          assert.match(input.steps[0].prompt, /Implement extension guidance\./);
+          assert.match(input.steps[0].prompt, /Implement trailing guidance\./);
+          assert.doesNotMatch(input.steps[0].prompt, /Specify extension guidance\./);
+          assert.doesNotMatch(input.steps[0].prompt, /Review extension guidance\./);
           assert.match(input.steps[0].prompt, /Please wire the retry through the existing helper\./);
           assert.match(input.steps[0].prompt, /Keep the helper pure\./);
           if (runAgentSequenceCallCount === 2) {
-            assert.match(input.steps[0].prompt, /Previous attempt #1 failed with: make check failed/i);
+            assert.match(input.steps[0].prompt, /Previous attempt #1 failed with: quality gate failed: typecheck/i);
             assert.match(input.steps[0].prompt, /src\/index\.ts\(1,1\): error TS1005/);
           }
           return {
@@ -106,19 +127,20 @@ describe('implement phase', () => {
           calls.push('writeRepositoryFiles');
           assert.deepStrictEqual(input.files, [{ path: 'src/index.ts', content: `export const attempt = ${runAgentSequenceCallCount};\n` }]);
         },
-        async runQualityGate() {
+        async runQualityGate(input: any) {
           runQualityGateCallCount += 1;
           calls.push(`runQualityGate:${runQualityGateCallCount}`);
+          assert.deepStrictEqual(input.qualityGates, qualityGates);
           if (runQualityGateCallCount === 1) {
             return {
               passed: false,
-              summary: 'make check failed',
+              summary: 'quality gate failed: typecheck',
               logs: 'src/index.ts(1,1): error TS1005',
             };
           }
           return {
             passed: true,
-            summary: 'make check passed',
+            summary: 'quality gates passed: typecheck',
             logs: '',
           };
         },

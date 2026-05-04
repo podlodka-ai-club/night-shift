@@ -723,7 +723,7 @@ describe('worktree activities', () => {
       },
     });
 
-    const result = await runQualityGate({ worktree });
+    const result = await runQualityGate({ worktree, qualityGates: [] });
 
     assert.deepStrictEqual(gitCalls, [
       { cwd: worktree.worktreePath, args: ['make', 'check'] },
@@ -759,7 +759,7 @@ describe('worktree activities', () => {
       },
     });
 
-    const result = await runQualityGate({ worktree });
+    const result = await runQualityGate({ worktree, qualityGates: [] });
 
     assert.deepStrictEqual(gitCalls, [
       { cwd: worktree.worktreePath, args: ['npm', 'run', 'check'] },
@@ -779,11 +779,71 @@ describe('worktree activities', () => {
       },
     });
 
-    const result = await runQualityGate({ worktree });
+    const result = await runQualityGate({ worktree, qualityGates: [] });
 
     assert.strictEqual(result.passed, true);
     assert.strictEqual(result.summary, 'no quality gate configured');
     assert.strictEqual(result.logs, '');
+  });
+
+  it('runs explicit project extension quality gates via zsh -c in manifest order', async () => {
+    const worktree = buildWorktreeContext();
+    const gateCalls: GitCall[] = [];
+    const { runQualityGate } = createActivityTestRig({
+      worktree: {
+        access: async () => { throw new Error('fallback detection should not run when explicit quality gates are provided'); },
+        readFile: async () => { throw new Error('fallback detection should not read repo files when explicit quality gates are provided'); },
+        execFile: async (file, args, options) => {
+          gateCalls.push({ cwd: options?.cwd, args: [String(file), ...args] });
+          const command = args[1];
+          return { stdout: `${command} ok`, stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    const result = await runQualityGate({
+      worktree,
+      qualityGates: [
+        { id: 'lint', run: 'pnpm lint' },
+        { id: 'test', run: 'pnpm test -- --runInBand' },
+      ],
+    });
+
+    assert.deepStrictEqual(gateCalls, [
+      { cwd: worktree.worktreePath, args: ['zsh', '-c', 'pnpm lint'] },
+      { cwd: worktree.worktreePath, args: ['zsh', '-c', 'pnpm test -- --runInBand'] },
+    ]);
+    assert.strictEqual(result.passed, true);
+    assert.strictEqual(result.summary, 'quality gates passed: lint, test');
+    assert.match(result.logs, /pnpm lint ok/);
+    assert.match(result.logs, /pnpm test -- --runInBand ok/);
+  });
+
+  it('fails on the first explicit project extension quality gate and skips fallback commands', async () => {
+    const worktree = buildWorktreeContext();
+    const gateCalls: GitCall[] = [];
+    const { runQualityGate } = createActivityTestRig({
+      worktree: {
+        access: async () => { throw new Error('fallback detection should not run when explicit quality gates are provided'); },
+        readFile: async () => { throw new Error('fallback detection should not read repo files when explicit quality gates are provided'); },
+        execFile: async (file, args, options) => {
+          gateCalls.push({ cwd: options?.cwd, args: [String(file), ...args] });
+          return { stdout: '', stderr: 'src/index.ts(1,1): error TS1005', exitCode: 1 };
+        },
+      },
+    });
+
+    const result = await runQualityGate({
+      worktree,
+      qualityGates: [{ id: 'typecheck', run: 'pnpm typecheck' }],
+    });
+
+    assert.deepStrictEqual(gateCalls, [
+      { cwd: worktree.worktreePath, args: ['zsh', '-c', 'pnpm typecheck'] },
+    ]);
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.summary, 'quality gate failed: typecheck');
+    assert.match(result.logs, /src\/index\.ts\(1,1\): error TS1005/);
   });
 
   it('builds deterministic worktree helper values', () => {

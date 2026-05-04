@@ -20,6 +20,7 @@ import {
   type MoveProjectItemStatusInput,
   type SelectedProjectIssue,
 } from '../shared';
+import { createEmptyProjectExtensionManifest } from '../project-extension-manifest';
 
 type WorkflowActivities = Record<string, (...args: any[]) => unknown | Promise<unknown>>;
 type ExpectedWorkerWarning = RegExp | string;
@@ -167,6 +168,7 @@ function withDefaultWorkflowActivities(activities: WorkflowActivities): Workflow
   return {
     cleanupWorktree: async () => undefined,
     listOpenPullRequestFeedback: async () => ({ reviewBodies: [], reviewComments: [] }),
+    loadProjectExtensionManifest: async () => createEmptyProjectExtensionManifest(),
     ...activities,
   };
 }

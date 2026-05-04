@@ -457,11 +457,21 @@ function listProjectIssuesForStatuses(
     .filter(
       (item): item is ReadyProjectItem => {
         const statusName = item.fieldValueByName?.name;
-        return typeof statusName === 'string' && targetStatuses.has(statusName as ProjectStatusName) && isProjectIssueContent(item.content);
+        return typeof statusName === 'string'
+          && targetStatuses.has(statusName as ProjectStatusName)
+          && isProjectIssueContent(item.content)
+          && matchesExpectedRepoBinding(item.content, input);
       },
     )
     .sort((left, right) => compareProjectIssueItems(left, right))
     .map((projectItem) => buildListedProjectIssue(project, statusField, input, projectItem));
+}
+
+function matchesExpectedRepoBinding(issue: ProjectIssueContent, input: AutomateReadyIssueInput): boolean {
+  if (!input.expectedRepoOwner || !input.expectedRepoName) {
+    return true;
+  }
+  return issue.repository.owner.login === input.expectedRepoOwner && issue.repository.name === input.expectedRepoName;
 }
 
 function compareProjectIssueItems(left: ReadyProjectItem, right: ReadyProjectItem): number {

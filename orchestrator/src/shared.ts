@@ -45,6 +45,23 @@ export const WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME = 'activityProgress';
 export const WORKFLOW_PHASES = ['specify', 'implement', 'review'] as const;
 export type WorkflowPhase = (typeof WORKFLOW_PHASES)[number];
 
+export type ProjectExtensionPromptPhase = WorkflowPhase;
+
+export interface ProjectExtensionPromptContributions {
+  prepend: string[];
+  append: string[];
+}
+
+export interface ProjectExtensionQualityGate {
+  id: string;
+  run: string;
+}
+
+export interface ProjectExtensionManifest {
+  prompts: Record<ProjectExtensionPromptPhase, ProjectExtensionPromptContributions>;
+  qualityGates: ProjectExtensionQualityGate[];
+}
+
 export const BLOCKED_REASON_BOARD_SIGNAL_RULES = [
   { blockedReason: 'specify_needs_input', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
   { blockedReason: 'awaiting_spec_review', boardStatusName: 'Backlog', signalName: 'specifyRetry' },
@@ -71,8 +88,11 @@ export interface ResolvedProjectStatusOptions {
 }
 
 export interface AutomateReadyIssueInput {
+  targetId?: string;
   projectOwner: string;
   projectNumber: number;
+  expectedRepoOwner?: string;
+  expectedRepoName?: string;
   startPhase?: WorkflowPhase;
   backlogStatusName?: string;
   refinementStatusName?: string;
@@ -121,6 +141,24 @@ export interface SelectedProjectIssue {
 export interface ListedProjectIssue extends SelectedProjectIssue {
   currentStatusName: ProjectStatusName;
   createdAt: string;
+}
+
+export function assertIssueMatchesExpectedRepo(
+  issue: Pick<SelectedProjectIssue, 'issueNumber' | 'repoOwner' | 'repoName'>,
+  input: Pick<AutomateReadyIssueInput, 'targetId' | 'projectOwner' | 'projectNumber' | 'expectedRepoOwner' | 'expectedRepoName'>,
+): void {
+  if (!input.expectedRepoOwner || !input.expectedRepoName) {
+    return;
+  }
+  if (issue.repoOwner === input.expectedRepoOwner && issue.repoName === input.expectedRepoName) {
+    return;
+  }
+  const targetLabel = input.targetId
+    ? `target "${input.targetId}"`
+    : `GitHub Project ${input.projectOwner}/${input.projectNumber}`;
+  throw new Error(
+    `Selected issue #${issue.issueNumber} belongs to ${issue.repoOwner}/${issue.repoName}, but ${targetLabel} is bound to ${input.expectedRepoOwner}/${input.expectedRepoName}.`,
+  );
 }
 
 export interface CreateWorktreeForIssueIfNeededInput {
@@ -355,6 +393,7 @@ export interface WriteRepositoryFilesInput {
 
 export interface RunQualityGateInput {
   worktree: WorktreeContext;
+  qualityGates: ProjectExtensionQualityGate[];
 }
 
 export interface QualityGateResult {
