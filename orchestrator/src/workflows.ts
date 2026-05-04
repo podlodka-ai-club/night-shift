@@ -261,7 +261,7 @@ export async function automateTopReadyIssue(
         writeOpenSpecChangeFiles,
         writeRepositoryFiles,
         validateOpenSpecChange,
-        runQualityGate,
+        runQualityGate: ({ worktree }) => runQualityGate({ worktree, qualityGates: projectExtensionManifest?.qualityGates ?? [] }),
         commitAndPush,
         openPullRequest,
         upsertIssueComment,
@@ -465,6 +465,7 @@ export async function automateTopReadyIssue(
         specifyResult = await runSpecifyPhase(
           {
             issue,
+            agents: input.agents,
             branchPrefix: input.branchPrefix,
             deferBlockedStatus: true,
             projectExtensionManifest,
@@ -547,6 +548,7 @@ export async function automateTopReadyIssue(
         implementResult = await runImplementPhase(
           {
             issue,
+            agents: input.agents,
             branchPrefix: input.branchPrefix,
             deferBlockedStatus: true,
             projectExtensionManifest,
@@ -622,6 +624,7 @@ export async function automateTopReadyIssue(
             issue,
             worktree: activeWorktree,
             pullRequest: activePullRequest,
+            agents: input.agents,
             projectExtensionManifest,
             reviewIteration: shellState.reviewIteration,
             deferEscalatedStatus: true,

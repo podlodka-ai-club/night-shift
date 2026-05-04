@@ -1,7 +1,11 @@
 import { describe, it } from 'mocha';
 import assert from 'assert';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { type MoveProjectItemStatusInput } from '../shared';
 import { getBlockedReasonQuery } from '../workflows';
+import { loadWorkerEntrypointConfig } from '../entrypoint-config';
 import {
   buildSelectedIssue,
   buildWorktreeContext,
@@ -337,6 +341,107 @@ describe('workflow failure paths', function () {
       buildStatusUpdateInput(issue, issue.blockedOptionId),
       buildStatusUpdateInput(issue, issue.blockedOptionId),
     ]);
+  });
+
+  it('threads entrypoint and project agent selections into specify before surfacing a phase failure', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-workflow-agents-failure-'));
+    try {
+      await writeFile(
+        path.join(tempDir, 'orchestrator.config.ts'),
+        [
+          'export default {',
+          "  agents: { default: { config: { reasoningEffort: 'high' } }, specify: { config: { model: 'claude-haiku-4-5', temperature: 0.2 } } },",
+          "  targets: [{ id: 'orchestrator-testing', project: { owner: 'Mugenor', number: 1 }, repo: { owner: 'Mugenor', name: 'orchestrator-testing' } }],",
+          '};',
+        ].join('\n'),
+        'utf8',
+      );
+      const { workflowInput } = await loadWorkerEntrypointConfig({ cwd: tempDir, env: {} });
+      const issue = buildSelectedIssue();
+      const worktree = buildWorktreeContext(issue);
+      const statusUpdates: MoveProjectItemStatusInput[] = [];
+      const runAgentSelections: unknown[] = [];
+
+      await runWorkflowWithHandle(
+        {
+            workflowId: 'automate-ready-issue-specify-agent-failure-test',
+            workflowInput: { ...workflowInput, startPhase: 'specify' },
+            expectedWorkerWarnings: [/specify agent failed/],
+            activities: {
+              async getTopBacklogIssue() { return issue; },
+              async createWorktreeForIssueIfNeeded() { return worktree; },
+              async loadProjectExtensionManifest() {
+                return {
+                  prompts: {
+                    specify: { prepend: [], append: [] },
+                    implement: { prepend: [], append: [] },
+                    review: { prepend: [], append: [] },
+                  },
+                  agentDefaults: { config: { maxTurns: 5 } },
+                  agents: {
+                    specify: { config: { model: 'claude-sonnet-4-6', temperature: 0.1 } },
+                  },
+                  qualityGates: [],
+                };
+              },
+              async listIssueComments() { return []; },
+              async readOpenSpecChangeFiles() { return []; },
+              async writeOpenSpecChangeFiles() { throw new Error('writeOpenSpecChangeFiles should not run after the agent failure'); },
+              async validateOpenSpecChange() { throw new Error('validateOpenSpecChange should not run after the agent failure'); },
+              async runAgentSequence(input: { providerSelection?: unknown }) {
+                if (input.providerSelection !== undefined) {
+                  runAgentSelections.push(input.providerSelection);
+                }
+                throw new Error('specify agent failed');
+              },
+              async commitAndPush() { throw new Error('commitAndPush should not run after the agent failure'); },
+              async openPullRequest() { throw new Error('openPullRequest should not run after the agent failure'); },
+              async upsertIssueComment() { return undefined; },
+              async moveProjectItemStatus(input: MoveProjectItemStatusInput) {
+                statusUpdates.push(input);
+              },
+            },
+          },
+        async (handle) => {
+          assert.strictEqual(await waitForBlockedReason(handle, 'specify_needs_input'), 'specify_needs_input');
+          await handle.terminate('done');
+        },
+      );
+
+      assert.deepStrictEqual(runAgentSelections, [
+        {
+          config: {
+            model: 'claude-sonnet-4-6',
+            reasoningEffort: 'high',
+            temperature: 0.1,
+            maxTurns: 5,
+          },
+        },
+        {
+          config: {
+            model: 'claude-sonnet-4-6',
+            reasoningEffort: 'high',
+            temperature: 0.1,
+            maxTurns: 5,
+          },
+        },
+        {
+          config: {
+            model: 'claude-sonnet-4-6',
+            reasoningEffort: 'high',
+            temperature: 0.1,
+            maxTurns: 5,
+          },
+        },
+      ]);
+      assert.deepStrictEqual(statusUpdates, [
+        buildStatusUpdateInput(issue, issue.refinementOptionId),
+        buildStatusUpdateInput(issue, issue.escalatedOptionId),
+        buildStatusUpdateInput(issue, issue.blockedOptionId),
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

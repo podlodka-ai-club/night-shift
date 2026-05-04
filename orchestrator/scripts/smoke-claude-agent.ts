@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   }
 
   const model = process.env.SMOKE_MODEL ?? DEFAULT_AGENT_MODEL_BY_PROVIDER.claude;
-  const session = createProviderAgentAdapter({ provider: 'claude', model }, createActivityDependencies()).createSession(WORKTREE_PATH);
+  const session = createProviderAgentAdapter({ provider: 'claude', config: { model } }, createActivityDependencies()).createSession(WORKTREE_PATH);
 
   console.log(`===== Claude (${model}) =====`);
   console.log('worktree:', WORKTREE_PATH);

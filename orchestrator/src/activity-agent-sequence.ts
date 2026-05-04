@@ -16,6 +16,7 @@ import { type AgentProfileName, type AgentSequenceResult, type AgentStep, type R
 import {
   CODEX_COMMAND,
   createCodexAgentAdapter,
+  createProviderAgentAdapter,
   execCommand,
   type AgentActivityDeps,
   type AgentProgressEvent,
@@ -36,7 +37,7 @@ export function createAgentActivities(deps: AgentActivityDeps) {
       }
 
       try {
-        return await runAgentSequenceSteps(deps, input.worktree, input.steps, input.agentProfile);
+        return await runAgentSequenceSteps(deps, input.worktree, input.steps, input.agentProfile, input.providerSelection);
       } catch (error) {
         if (error instanceof AgentContractError) {
           throw ApplicationFailure.fromError(error, { nonRetryable: true });
@@ -52,6 +53,7 @@ async function runAgentSequenceSteps(
   worktree: WorktreeContext,
   steps: AgentStep[],
   agentProfile: AgentProfileName | undefined,
+  providerSelection: RunAgentSequenceInput['providerSelection'],
 ): Promise<AgentSequenceResult> {
   assertUniqueStepIds(steps);
   const checkpoint = readAgentCheckpoint(deps.getHeartbeatDetails());
@@ -61,7 +63,10 @@ async function runAgentSequenceSteps(
   const outputs = cloneAgentOutputs(checkpoint.outputs ?? {});
   let finalResponse = checkpoint.finalResponse;
   let threadId = checkpoint.threadId;
-  const adapter = createCodexAgentAdapter(deps);
+  const useProviderAdapter = providerSelection !== undefined;
+  const adapter = useProviderAdapter
+    ? createProviderAgentAdapter(providerSelection, deps)
+    : createCodexAgentAdapter(deps);
   let lastProgressMessage: string | undefined;
 
   if (checkpoint.pendingStep) {
@@ -70,7 +75,7 @@ async function runAgentSequenceSteps(
     finalResponse = resumedState.finalResponse;
 
     if (!threadId) {
-      throw new Error(`Codex thread id was unavailable while finalizing step ${validatedPendingStep.stepId}.`);
+      throw new Error(`Agent session id was unavailable while finalizing step ${validatedPendingStep.stepId}.`);
     }
 
     deps.heartbeat(createCheckpointSnapshot({ threadId, completedStepIds, outputs, finalResponse }));
@@ -80,8 +85,18 @@ async function runAgentSequenceSteps(
 
   function getSession(): AgentSession {
     session ??= threadId
-      ? assertActivitySession(adapter.resumeSession(worktree.worktreePath, threadId, agentProfile), 'resumeCodexThread')
-      : assertActivitySession(adapter.createSession(worktree.worktreePath, agentProfile), 'createCodexThread');
+      ? assertActivitySession(
+        useProviderAdapter
+          ? adapter.resumeSession(worktree.worktreePath, threadId)
+          : adapter.resumeSession(worktree.worktreePath, threadId, agentProfile),
+        useProviderAdapter ? 'resumeSession' : 'resumeCodexThread',
+      )
+      : assertActivitySession(
+        useProviderAdapter
+          ? adapter.createSession(worktree.worktreePath)
+          : adapter.createSession(worktree.worktreePath, agentProfile),
+        useProviderAdapter ? 'createSession' : 'createCodexThread',
+      );
     return session;
   }
 
@@ -142,18 +157,18 @@ async function runAgentSequenceSteps(
 
     threadId = currentSession.id ?? threadId;
     if (!threadId) {
-      throw new Error(`Codex thread id was unavailable after completing step ${step.id}.`);
+      throw new Error(`Agent session id was unavailable after completing step ${step.id}.`);
     }
 
     deps.heartbeat(createCheckpointSnapshot({ threadId, completedStepIds, outputs, finalResponse, pendingStep }));
     // Keep the pending-step heartbeat separate from the finalized heartbeat so a crash between
-    // the two can resume by finalizing the already-completed step instead of re-running Codex.
+    // the two can resume by finalizing the already-completed step instead of re-running the agent turn.
     finalResponse = applyPendingStepCompletion(pendingStep, completedStepIds, outputs, finalResponse).finalResponse;
     deps.heartbeat(createCheckpointSnapshot({ threadId, completedStepIds, outputs, finalResponse }));
   }
 
   if (!threadId) {
-    throw new Error('Codex thread id was not available after running the agent sequence.');
+    throw new Error('Agent session id was not available after running the agent sequence.');
   }
 
   return { threadId, completedStepIds: [...completedStepIds], outputs: { ...outputs }, finalResponse };
@@ -201,17 +216,20 @@ function validatePendingStepCompletion(
   }
 }
 
-function assertActivitySession(value: unknown, methodName: 'createCodexThread' | 'resumeCodexThread'): AgentSession {
+function assertActivitySession(
+  value: unknown,
+  methodName: 'createSession' | 'resumeSession' | 'createCodexThread' | 'resumeCodexThread',
+): AgentSession {
   if (!value || typeof value !== 'object' || typeof (value as { run?: unknown }).run !== 'function') {
-    throw new Error(`Activity runtime ${methodName}() did not return an agent thread with a callable run() method.`);
+    throw new Error(`Activity runtime ${methodName}() did not return an agent session with a callable run() method.`);
   }
 
   const threadId = (value as { id?: unknown }).id;
   if (!(threadId === undefined || threadId === null || typeof threadId === 'string')) {
-    throw new Error(`Activity runtime ${methodName}() returned an agent thread with a non-string id.`);
+    throw new Error(`Activity runtime ${methodName}() returned an agent session with a non-string id.`);
   }
 
-  // Keep this assertion even though the real Codex adapter validates sessions already: tests inject
+  // Keep this assertion even though the real provider adapters validate sessions already: tests inject
   // raw mocked sessions directly through the activity deps and should still fail with a clear error.
   return value as AgentSession;
 }

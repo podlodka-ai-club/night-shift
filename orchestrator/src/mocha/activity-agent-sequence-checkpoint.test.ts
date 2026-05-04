@@ -35,6 +35,47 @@ describe('agent sequence checkpoint behavior', () => {
     assert.deepStrictEqual(result.outputs[CHANGE_METADATA_OUTPUT_KEY], buildGeneratedChangeMetadata());
   });
 
+  it('resumes checkpointed sequences with the requested provider adapter', async () => {
+    const worktree = buildWorktreeContext();
+    const runCalls: string[] = [];
+    const resumeCalls: Array<{ worktreePath: string; threadId: string; model?: string }> = [];
+    const { runAgentSequence } = createActivityTestRig({
+      agent: {
+        createCodexThread: () => {
+          throw new Error('codex should not be selected');
+        },
+        resumeCodexThread: () => {
+          throw new Error('codex should not be selected');
+        },
+        createClaudeSession: () => {
+          throw new Error('create should not be used when a checkpoint exists');
+        },
+        resumeClaudeSession: (worktreePath: string, threadId: string, model?: string) => {
+          resumeCalls.push({ worktreePath, threadId, model });
+          return {
+            id: threadId,
+            run: async (prompt: string) => {
+              runCalls.push(prompt);
+              return { items: [], finalResponse: JSON.stringify(buildGeneratedChangeMetadata()), usage: null };
+            },
+          };
+        },
+        getHeartbeatDetails: () => ({ threadId: 'claude-session-123', completedStepIds: ['edit'], outputs: {}, finalResponse: 'Implemented the requested change.' }),
+        heartbeat: () => undefined,
+      },
+    });
+
+    const result = await runAgentSequence({
+      worktree,
+      providerSelection: { provider: 'claude', config: { model: 'claude-sonnet-4-6' } },
+      steps: buildStructuredAgentSteps(worktree),
+    });
+
+    assert.deepStrictEqual(resumeCalls, [{ worktreePath: worktree.worktreePath, threadId: 'claude-session-123', model: 'claude-sonnet-4-6' }]);
+    assert.deepStrictEqual(runCalls, [buildChangeMetadataPrompt()]);
+    assert.deepStrictEqual(result.completedStepIds, ['edit', 'change-metadata']);
+  });
+
   it('finalizes pending structured and prompt checkpoints without rerunning Codex', async () => {
     const structuredHeartbeatCalls: unknown[] = [];
     const promptHeartbeatCalls: unknown[] = [];

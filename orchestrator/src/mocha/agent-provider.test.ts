@@ -40,16 +40,26 @@ describe('agent provider selection', () => {
   });
 
   it('infers the claude provider from a claude model when provider is omitted', () => {
-    assert.deepStrictEqual(resolveAgentProviderSelection({ model: 'claude-haiku-4-5' }), {
+    assert.deepStrictEqual(resolveAgentProviderSelection({ config: { model: 'claude-haiku-4-5' } }), {
       provider: 'claude',
       model: 'claude-haiku-4-5',
     });
   });
 
   it('infers the codex provider from gpt-family models when provider is omitted', () => {
-    assert.deepStrictEqual(resolveAgentProviderSelection({ model: 'gpt-5.4' }), {
+    assert.deepStrictEqual(resolveAgentProviderSelection({ config: { model: 'gpt-5.4' } }), {
       provider: 'codex',
       model: 'gpt-5.4',
+    });
+  });
+
+  it('ignores extra config fields while resolving the provider/model selection', () => {
+    assert.deepStrictEqual(resolveAgentProviderSelection({
+      provider: 'claude',
+      config: { model: 'claude-sonnet-4-6', temperature: 0.2 },
+    }), {
+      provider: 'claude',
+      model: 'claude-sonnet-4-6',
     });
   });
 
@@ -62,7 +72,7 @@ describe('agent provider selection', () => {
 
   it('rejects provider and model combinations from different provider families', () => {
     assert.throws(
-      () => resolveAgentProviderSelection({ provider: 'codex', model: 'claude-sonnet-4-6' }),
+      () => resolveAgentProviderSelection({ provider: 'codex', config: { model: 'claude-sonnet-4-6' } }),
       /does not match provider/i,
     );
   });

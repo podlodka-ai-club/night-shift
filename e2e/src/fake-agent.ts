@@ -5,21 +5,28 @@ export const FAKE_AGENT_FILE_PATH = 'e2e/fake-agent-output.md';
 const FAKE_AGENT_REVIEW_STATE_PATH = '.orchestrator-fake-agent-review-attempt';
 
 type FakeEscalationOriginPhase = 'specify' | 'implement' | 'review';
+type FakeAgentProvider = 'claude' | 'codex';
+
+interface FakeAgentSelection {
+  provider: FakeAgentProvider;
+  model?: string;
+}
 
 export function buildFakeAgentFileText(runMarker: string): string {
   return ['# Fake E2E Change', '', `Run marker: ${runMarker}`].join('\n');
 }
 
-export function buildFakeAgentImplementResponse(runMarker: string) {
+export function buildFakeAgentImplementResponse(runMarker: string, selection?: FakeAgentSelection) {
   return {
     filesWritten: [{ path: FAKE_AGENT_FILE_PATH, content: buildFakeAgentFileText(runMarker) }],
     commitMessage: `test: fake e2e change for ${runMarker}`,
     summary: `Deterministic fake e2e change for ${runMarker}.`,
-    followUps: [`Run marker: ${runMarker}`],
+    followUps: [`Run marker: ${runMarker}`, ...buildFakeAgentPhaseMarkers('Implement', selection)],
   };
 }
 
-export function buildFakeAgentReviewResponse(runMarker: string, attempt = 1) {
+export function buildFakeAgentReviewResponse(runMarker: string, attempt = 1, selection?: FakeAgentSelection) {
+  const providerMarkers = buildFakeAgentMarkerFindings('Review', selection);
   if (attempt === 1) {
     return {
       summary: `Review requires one deterministic rerun for ${runMarker}.`,
@@ -29,6 +36,7 @@ export function buildFakeAgentReviewResponse(runMarker: string, attempt = 1) {
           message: `Run marker ${runMarker} intentionally triggers one review rerun before ready-to-merge.`,
           location: { file: FAKE_AGENT_FILE_PATH, line: 3 },
         },
+        ...providerMarkers,
       ],
     };
   }
@@ -41,6 +49,7 @@ export function buildFakeAgentReviewResponse(runMarker: string, attempt = 1) {
         message: `Run marker ${runMarker} is embedded in the fake E2E artifact for traceability.`,
         location: { file: FAKE_AGENT_FILE_PATH, line: 3 },
       },
+      ...providerMarkers,
     ],
   };
 }
@@ -164,6 +173,8 @@ interface FakeAgentThreadState {
   worktreePath: string;
   runMarker: string;
   turnCount: number;
+  provider: FakeAgentProvider;
+  model?: string;
 }
 
 export function createFakeAgentDeps(baseDeps: AgentActivityDeps): AgentActivityDeps {
@@ -172,31 +183,47 @@ export function createFakeAgentDeps(baseDeps: AgentActivityDeps): AgentActivityD
 
   return {
     ...baseDeps,
-    createCodexThread: (worktreePath) => {
-      const state = createThreadState(`fake-thread-${nextThreadId++}`, worktreePath);
+    createCodexThread: (worktreePath, model) => {
+      const state = createThreadState(`fake-thread-${nextThreadId++}`, worktreePath, { provider: 'codex', model });
       threads.set(state.id, state);
       return createThread(baseDeps, state);
     },
-    resumeCodexThread: (worktreePath, threadId) => {
-      const state = threads.get(threadId) ?? createThreadState(threadId, worktreePath);
+    resumeCodexThread: (worktreePath, threadId, model) => {
+      const state = updateThreadState(threads.get(threadId), threadId, worktreePath, { provider: 'codex', model });
       threads.set(state.id, state);
       return createThread(baseDeps, state);
     },
-    createClaudeSession: (worktreePath) => {
-      const state = createThreadState(`fake-thread-${nextThreadId++}`, worktreePath);
+    createClaudeSession: (worktreePath, model) => {
+      const state = createThreadState(`fake-thread-${nextThreadId++}`, worktreePath, { provider: 'claude', model });
       threads.set(state.id, state);
       return createThread(baseDeps, state);
     },
-    resumeClaudeSession: (worktreePath, threadId) => {
-      const state = threads.get(threadId) ?? createThreadState(threadId, worktreePath);
+    resumeClaudeSession: (worktreePath, threadId, model) => {
+      const state = updateThreadState(threads.get(threadId), threadId, worktreePath, { provider: 'claude', model });
       threads.set(state.id, state);
       return createThread(baseDeps, state);
     },
   };
 }
 
-function createThreadState(id: string, worktreePath: string): FakeAgentThreadState {
-  return { id, worktreePath, runMarker: 'unknown', turnCount: 0 };
+function createThreadState(id: string, worktreePath: string, selection: FakeAgentSelection): FakeAgentThreadState {
+  return { id, worktreePath, runMarker: 'unknown', turnCount: 0, provider: selection.provider, model: selection.model };
+}
+
+function updateThreadState(
+  existingState: FakeAgentThreadState | undefined,
+  id: string,
+  worktreePath: string,
+  selection: FakeAgentSelection,
+): FakeAgentThreadState {
+  return {
+    id,
+    worktreePath,
+    runMarker: existingState?.runMarker ?? 'unknown',
+    turnCount: existingState?.turnCount ?? 0,
+    provider: selection.provider,
+    model: selection.model ?? existingState?.model,
+  };
 }
 
 function createThread(baseDeps: AgentActivityDeps, state: FakeAgentThreadState): AgentSession {
@@ -251,7 +278,7 @@ async function runFakeTurn(
     if (isStructuredTurn && prompt.includes('## PR Diff')) {
       const reviewAttempt = await nextFakeReviewAttempt(baseDeps, state.worktreePath);
       return buildFakeAgentTurnResult(
-        JSON.stringify(buildFakeAgentReviewResponse(state.runMarker, reviewAttempt)),
+        JSON.stringify(buildFakeAgentReviewResponse(state.runMarker, reviewAttempt, state)),
         `Inspecting the pull request diff for ${state.runMarker}.`,
         'Preparing deterministic fake review verdict.',
       );
@@ -259,7 +286,7 @@ async function runFakeTurn(
 
     if (isStructuredTurn) {
       return buildFakeAgentTurnResult(
-        JSON.stringify(buildFakeAgentImplementResponse(state.runMarker)),
+        JSON.stringify(buildFakeAgentImplementResponse(state.runMarker, state)),
         `Inspecting the approved spec bundle for ${state.runMarker}.`,
         'Preparing deterministic fake implementation output.',
       );
@@ -346,4 +373,23 @@ function extractEscalationOriginPhase(prompt: string): FakeEscalationOriginPhase
     return value;
   }
   return 'implement';
+}
+
+function buildFakeAgentPhaseMarkers(phase: 'Implement' | 'Review', selection?: FakeAgentSelection): string[] {
+  if (!selection?.model) {
+    return [];
+  }
+
+  return [
+    `${phase} provider: ${selection.provider}`,
+    `${phase} model: ${selection.model}`,
+  ];
+}
+
+function buildFakeAgentMarkerFindings(phase: 'Review', selection?: FakeAgentSelection) {
+  return buildFakeAgentPhaseMarkers(phase, selection).map((message) => ({
+    severity: 'warning' as const,
+    message,
+    location: { file: FAKE_AGENT_FILE_PATH, line: 3 },
+  }));
 }

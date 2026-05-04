@@ -29,10 +29,58 @@ describe('project extension loader', () => {
           implement: { prepend: [], append: [] },
           review: { prepend: [], append: ['Double-check migrations.'] },
         },
+	        agentDefaults: {},
+	        agents: {},
         qualityGates: [{ id: 'lint', run: 'npm test' }],
       });
     } finally { await rm(worktreePath, { recursive: true, force: true }); }
   });
+
+	  it('loads project agent defaults and per-phase overrides into the manifest', async () => {
+	    const worktreePath = await createExtensionWorktree('agents', [
+	      'export default defineProjectExtension((project) => {',
+	      "  project.agentDefaults({ provider: 'openai', config: { model: 'gpt-5.4', reasoningEffort: 'high' } });",
+	      "  project.agent('implement', { config: { model: 'claude-haiku-4-5', temperature: 0.2 } });",
+	      "  project.agent('review', { provider: 'anthropic' });",
+	      '});',
+	    ]);
+	    try {
+	      assert.deepStrictEqual(await loadProjectExtensionManifest(worktreePath), {
+	        ...createEmptyProjectExtensionManifest(),
+	        agentDefaults: { provider: 'codex', config: { model: 'gpt-5.4', reasoningEffort: 'high' } },
+	        agents: {
+	          implement: { config: { model: 'claude-haiku-4-5', temperature: 0.2 } },
+	          review: { provider: 'claude' },
+	        },
+	      });
+	    } finally { await rm(worktreePath, { recursive: true, force: true }); }
+	  });
+
+	  it('merges repeated agent registrations in order while keeping phase overrides separate from project defaults', async () => {
+	    const worktreePath = await createExtensionWorktree('agent-merge', [
+	      'export default defineProjectExtension((project) => {',
+	      "  project.agent('implement', { config: { model: 'claude-haiku-4-5', temperature: 0.2 } });",
+	      "  project.agentDefaults({ provider: 'anthropic', config: { model: 'claude-sonnet-4-6', maxTurns: 3 } });",
+	      "  project.agentDefaults({ config: { maxTurns: 5 } });",
+	      "  project.agent('implement', { provider: 'anthropic', config: { model: 'claude-opus-4-1' } });",
+	      '});',
+	    ]);
+	    try {
+	      assert.deepStrictEqual(await loadProjectExtensionManifest(worktreePath), {
+	        ...createEmptyProjectExtensionManifest(),
+	        agentDefaults: {
+	          provider: 'claude',
+	          config: { model: 'claude-sonnet-4-6', maxTurns: 5 },
+	        },
+	        agents: {
+	          implement: {
+	            provider: 'claude',
+	            config: { model: 'claude-opus-4-1', temperature: 0.2 },
+	          },
+	        },
+	      });
+	    } finally { await rm(worktreePath, { recursive: true, force: true }); }
+	  });
 
   it('fails when the extension uses an unsupported prompt phase', async () => {
     const worktreePath = await createExtensionWorktree('invalid-phase', [
@@ -63,6 +111,17 @@ describe('project extension loader', () => {
       await assert.rejects(() => loadProjectExtensionManifest(worktreePath), /Duplicate quality gate id: lint/);
     } finally { await rm(worktreePath, { recursive: true, force: true }); }
   });
+
+	  it('fails when agent registrations use an invalid provider id', async () => {
+	    const worktreePath = await createExtensionWorktree('invalid-agent-provider', [
+	      'export default defineProjectExtension((project) => {',
+	      "  project.agentDefaults({ provider: 'unknown-provider' });",
+	      '});',
+	    ]);
+	    try {
+	      await assert.rejects(() => loadProjectExtensionManifest(worktreePath), /project\.agentDefaults.*unsupported provider/i);
+	    } finally { await rm(worktreePath, { recursive: true, force: true }); }
+	  });
 
   it('does not leak module state between loads', async () => {
     const worktreePath = await createExtensionWorktree('no-cache', [

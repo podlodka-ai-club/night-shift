@@ -58,11 +58,19 @@ describe('specify phase', () => {
     const result = await runSpecifyPhase(
       {
         issue,
+        agents: {
+          default: { config: { reasoningEffort: 'high' } },
+          specify: { config: { model: 'claude-haiku-4-5', temperature: 0.2 } },
+        },
         projectExtensionManifest: {
           prompts: {
             specify: { prepend: ['Specify extension guidance.'], append: ['Specify trailing guidance.'] },
             implement: { prepend: ['Implement extension guidance.'], append: [] },
             review: { prepend: ['Review extension guidance.'], append: [] },
+          },
+          agentDefaults: { config: { maxTurns: 5 } },
+          agents: {
+            specify: { config: { model: 'claude-opus-4-1', temperature: 0.1 } },
           },
           qualityGates: [],
         },
@@ -80,6 +88,14 @@ describe('specify phase', () => {
         async runAgentSequence(input: any) {
           runAgentSequenceCallCount += 1;
           calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+          assert.deepStrictEqual(input.providerSelection, {
+            config: {
+              model: 'claude-opus-4-1',
+              reasoningEffort: 'high',
+              temperature: 0.1,
+              maxTurns: 5,
+            },
+          });
           assert.strictEqual(input.steps[0]?.systemPrompt, SPECIFY_SYSTEM_PROMPT);
           assert.match(input.steps[0].prompt, /Specify extension guidance\./);
           assert.match(input.steps[0].prompt, /Specify trailing guidance\./);

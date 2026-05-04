@@ -2,9 +2,14 @@ export const AGENT_PROVIDERS = ['codex', 'claude'] as const;
 
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
 
+export interface RequestedAgentProviderConfig {
+  model?: string;
+  [key: string]: unknown;
+}
+
 export interface RequestedAgentProviderSelection {
   provider?: string;
-  model?: string;
+  config?: RequestedAgentProviderConfig;
 }
 
 export interface AgentProviderSelection {
@@ -59,15 +64,16 @@ export function resolveAgentProviderSelection(
   request: RequestedAgentProviderSelection = {},
 ): AgentProviderSelection {
   const explicitProvider = request.provider === undefined ? undefined : normalizeAgentProvider(request.provider);
+  const requestedModel = typeof request.config?.model === 'string' ? request.config.model : undefined;
 
-  const inferredProvider = inferAgentProviderFromModel(request.model);
+  const inferredProvider = inferAgentProviderFromModel(requestedModel);
   const provider = explicitProvider ?? inferredProvider ?? DEFAULT_AGENT_PROVIDER;
   if (explicitProvider && inferredProvider && explicitProvider !== inferredProvider) {
-    throw new Error(`Model "${request.model}" does not match provider "${explicitProvider}".`);
+    throw new Error(`Model "${requestedModel}" does not match provider "${explicitProvider}".`);
   }
 
   return {
     provider,
-    model: request.model?.trim() || DEFAULT_AGENT_MODEL_BY_PROVIDER[provider],
+    model: requestedModel?.trim() || DEFAULT_AGENT_MODEL_BY_PROVIDER[provider],
   };
 }

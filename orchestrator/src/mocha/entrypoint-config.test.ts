@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'mocha';
 import { loadClientEntrypointConfig, loadWorkerEntrypointConfig, parseEntrypointConfigArgs } from '../entrypoint-config';
+import type { AutomateReadyIssueInput } from '../shared';
 
 describe('entrypoint config wiring', () => {
   it('extracts --config from shared entrypoint args and preserves the remaining workflow args', () => {
@@ -265,13 +266,30 @@ describe('entrypoint config wiring', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+	  it('threads configured global agents onto workflow input without resolving per-phase defaults', async () => {
+	    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-entrypoint-agents-'));
+	    try {
+	      await writeConfig(tempDir, [
+	        "agents: { default: { provider: 'openai', config: { model: 'gpt-5.4' } }, review: { provider: 'anthropic', config: { model: 'claude-sonnet-4-6' } } },",
+	        targetsBlock(target('acme-web', 'acme', 42)),
+	      ]);
+	      const resolved = await loadWorkerEntrypointConfig({ cwd: tempDir, env: {} });
+
+	      assert.deepStrictEqual(resolved.workflowInput, buildWorkflowInput({
+	        agents: {
+	          default: { provider: 'codex', config: { model: 'gpt-5.4' } },
+	          review: { provider: 'claude', config: { model: 'claude-sonnet-4-6' } },
+	        },
+	      }));
+	    } finally { await rm(tempDir, { recursive: true, force: true }); }
+	  });
 });
 
-function buildWorkflowInput(overrides: Partial<ReturnType<typeof buildWorkflowInputBase>> = {}) {
+function buildWorkflowInput(overrides: Partial<AutomateReadyIssueInput> = {}) {
   return { ...buildWorkflowInputBase(), ...overrides };
 }
-
-function buildWorkflowInputBase() {
+function buildWorkflowInputBase(): AutomateReadyIssueInput {
   return {
     targetId: 'acme-web',
     projectOwner: 'acme',

@@ -141,6 +141,42 @@ describe('agent sequence activities', () => {
     assert.deepStrictEqual(createCalls, [{ worktreePath: worktree.worktreePath, agentProfile: 'escalation' }]);
   });
 
+  it('uses the requested provider adapter during agent sequences', async () => {
+    const worktree = buildWorktreeContext();
+    const calls: Array<{ worktreePath: string; model?: string }> = [];
+    const { runAgentSequence } = createActivityTestRig({
+      agent: {
+        createCodexThread: () => {
+          throw new Error('codex should not be selected');
+        },
+        resumeCodexThread: () => {
+          throw new Error('resume should not be used without a checkpoint');
+        },
+        createClaudeSession: (worktreePath: string, model?: string) => {
+          calls.push({ worktreePath, model });
+          return {
+            id: 'claude-session-123',
+            run: async () => ({ items: [], finalResponse: JSON.stringify(buildGeneratedChangeMetadata()), usage: null }),
+          };
+        },
+        resumeClaudeSession: () => {
+          throw new Error('resume should not be used without a checkpoint');
+        },
+        getHeartbeatDetails: () => undefined,
+        heartbeat: () => undefined,
+      },
+    });
+
+    const result = await runAgentSequence({
+      worktree,
+      providerSelection: { provider: 'claude', config: { model: 'claude-sonnet-4-6' } },
+      steps: [{ id: 'change-metadata', kind: 'structured', prompt: buildChangeMetadataPrompt(), schemaId: 'change-metadata-v1', resultKey: CHANGE_METADATA_OUTPUT_KEY }],
+    });
+
+    assert.strictEqual(result.threadId, 'claude-session-123');
+    assert.deepStrictEqual(calls, [{ worktreePath: worktree.worktreePath, model: 'claude-sonnet-4-6' }]);
+  });
+
   it('passes per-step system prompts through to thread.run', async () => {
     const runCalls: Array<{ prompt: string; systemPrompt?: string }> = [];
     const { runAgentSequence } = createActivityTestRig({
@@ -466,7 +502,7 @@ describe('agent sequence activities', () => {
     await assert.rejects(() => runAgentSequence({ worktree: buildWorktreeContext(), steps: buildStructuredAgentSteps(buildWorktreeContext()) }), /heartbeat detail deserialization failed/);
   });
 
-  it('fails when the Codex thread id is still unavailable after a step completes', async () => {
+  it('fails when the agent session id is still unavailable after a step completes', async () => {
     const { runAgentSequence } = createActivityTestRig({
       agent: {
         createCodexThread: () => ({ id: null, run: async () => ({ finalResponse: 'Implemented the requested change.' }) }),
@@ -480,7 +516,7 @@ describe('agent sequence activities', () => {
 
     await assert.rejects(
       () => runAgentSequence({ worktree: buildWorktreeContext(), steps: [{ id: 'edit', kind: 'prompt', prompt: 'Implement the task in this repository.' }] }),
-      /thread id was unavailable after completing step edit/,
+      /session id was unavailable after completing step edit/,
     );
   });
 

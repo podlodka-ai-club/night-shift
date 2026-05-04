@@ -1,8 +1,12 @@
 import assert from 'assert';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { after, before, describe, it } from 'mocha';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { TASK_QUEUE, type AutomateReadyIssueInput } from '../shared';
+import { loadWorkerEntrypointConfig } from '../entrypoint-config';
 import { pickupWorkflow } from '../workflows';
 
 describe('pickup workflow', function () {
@@ -82,6 +86,56 @@ describe('pickup workflow', function () {
     );
 
     assert.strictEqual(startCallCount, 0);
+  });
+
+  it('forwards entrypoint-derived agent selections through the pickup workflow starter input', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-pickup-agents-'));
+    try {
+      await writeFile(
+        path.join(tempDir, 'orchestrator.config.ts'),
+        [
+          'export default {',
+          "  agents: { default: { provider: 'openai', config: { model: 'gpt-5.4' } }, review: { provider: 'anthropic', config: { model: 'claude-sonnet-4-6' } } },",
+          "  targets: [{ id: 'acme-web', project: { owner: 'Mugenor', number: 1 }, repo: { owner: 'Mugenor', name: 'orchestrator-testing' } }],",
+          '};',
+        ].join('\n'),
+        'utf8',
+      );
+      const { workflowInput } = await loadWorkerEntrypointConfig({ cwd: tempDir, env: {} });
+      const candidates = [{ issue: { issueNumber: 7 }, boardStatusName: 'Ready', createdAt: '2026-04-28T09:00:00.000Z', startPhase: 'implement' as const }];
+      const startCalls: Array<{ workflowInput: AutomateReadyIssueInput; candidates: typeof candidates; maxActions: number }> = [];
+
+      const worker = await Worker.create({
+        connection: testEnv.nativeConnection,
+        taskQueue: TASK_QUEUE,
+        workflowsPath: require.resolve('../workflows'),
+        activities: {
+          async scanPickupCandidates() {
+            return candidates;
+          },
+          async startPickupWorkflows(input: { workflowInput: AutomateReadyIssueInput; candidates: typeof candidates; maxActions: number }) {
+            startCalls.push(input);
+            return [];
+          },
+        },
+      });
+
+      await worker.runUntil(
+        testEnv.client.workflow.execute(pickupWorkflow, {
+          taskQueue: TASK_QUEUE,
+          workflowId: 'pickup-workflow-agents-forwarding-test',
+          args: [{ workflowInput, maxActions: 1 }],
+        }),
+      );
+
+      assert.deepStrictEqual(startCalls, [{ workflowInput, candidates, maxActions: 1 }]);
+      assert.deepStrictEqual(workflowInput.agents, {
+        default: { provider: 'codex', config: { model: 'gpt-5.4' } },
+        review: { provider: 'claude', config: { model: 'claude-sonnet-4-6' } },
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

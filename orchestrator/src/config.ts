@@ -9,6 +9,7 @@ import {
   DEFAULT_ESCALATED_STATUS,
   DEFAULT_IN_REVIEW_STATUS,
   DEFAULT_READY_STATUS,
+  normalizeWorkflowAgentSelections,
   TASK_QUEUE,
 } from './shared';
 import {
@@ -57,6 +58,22 @@ const orchestratorTargetSchema = z.object({
   repo: orchestratorTargetRepoSchema,
 });
 
+const requestedAgentProviderConfigSchema = z.object({
+  model: z.string().optional(),
+}).catchall(z.unknown());
+
+const requestedAgentProviderSelectionSchema = z.object({
+  provider: z.string().optional(),
+  config: requestedAgentProviderConfigSchema.optional(),
+});
+
+const orchestratorAgentsSchema = z.object({
+  default: requestedAgentProviderSelectionSchema.optional(),
+  specify: requestedAgentProviderSelectionSchema.optional(),
+  implement: requestedAgentProviderSelectionSchema.optional(),
+  review: requestedAgentProviderSelectionSchema.optional(),
+}).default({}).transform((value) => normalizeWorkflowAgentSelections(value));
+
 const orchestratorConfigSchema = z.object({
   temporal: z.object({
     address: z.string().default('localhost:7233'),
@@ -100,6 +117,7 @@ const orchestratorConfigSchema = z.object({
   }).default({
     branchPrefix: DEFAULT_BRANCH_PREFIX,
   }),
+  agents: orchestratorAgentsSchema,
   targets: z.array(orchestratorTargetSchema).default([]),
 });
 

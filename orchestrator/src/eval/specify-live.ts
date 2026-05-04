@@ -1,4 +1,5 @@
 import { getAgentSchema } from '../agent-schema-registry';
+import type { RequestedAgentProviderSelection } from '../agent-provider';
 import { wrapUntrustedInput } from '../phases/prompt-hardening';
 import { buildSpecifyChangeName, buildSpecifyPrompt, SPECIFY_SYSTEM_PROMPT } from '../phases/specify/prompt';
 import {
@@ -19,15 +20,21 @@ import {
   type SpecifyReplayResult,
   type SpecifyReplaySuiteResult,
 } from './specify-replay';
-import { addRecordedUsage, buildLiveEvalComments, buildLiveEvalIssue, createDefaultLiveTurnRunner, type LiveTurnResult, type LiveTurnRunner } from './live-common';
+import {
+  addRecordedUsage,
+  buildLiveEvalComments,
+  buildLiveEvalIssue,
+  createDefaultLiveTurnRunner,
+  mergeRequestedProviderConfig,
+  type LiveTurnResult,
+  type LiveTurnRunner,
+} from './live-common';
 
-export interface SpecifyLiveSuiteOptions {
+export interface SpecifyLiveSuiteOptions extends RequestedAgentProviderSelection {
   worktreePath: string;
   turnRunner?: LiveTurnRunner;
   timeoutMs?: number;
   judge?: LiveJudgeOptions;
-  provider?: string;
-  model?: string;
   onGeneratorResult?: (fixture: SpecifyReplayFixture, result: LiveTurnResult) => void;
 }
 
@@ -119,7 +126,7 @@ export async function runSpecifyLiveFixture(
         parseOutput: (value) => schemaDefinition.schema.parse(value),
         timeoutMs: options.timeoutMs,
         provider: options.provider,
-        model: options.model,
+        config: options.config,
       });
       totalUsage = addRecordedUsage(totalUsage, turn.usage);
       totalCostMicroUsd += turn.costMicroUsd ?? 0;
@@ -155,7 +162,7 @@ export async function runSpecifyLiveFixture(
       timeoutMs: options.timeoutMs,
       systemPrompt: SPECIFY_LIVE_JUDGE_SYSTEM_PROMPT,
       provider: options.judge?.provider ?? options.provider,
-      model: options.judge?.model ?? options.model,
+      config: mergeRequestedProviderConfig(options.config, options.judge?.config),
     });
     judgeAttempts.push(judge.attempt);
 

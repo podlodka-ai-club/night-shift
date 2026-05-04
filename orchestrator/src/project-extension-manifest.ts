@@ -7,6 +7,8 @@ export function createEmptyProjectExtensionManifest(): ProjectExtensionManifest 
       implement: { prepend: [], append: [] },
       review: { prepend: [], append: [] },
     },
+    agentDefaults: {},
+    agents: {},
     qualityGates: [],
   };
 }

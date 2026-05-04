@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   }
 
   const model = process.env.SMOKE_MODEL ?? DEFAULT_AGENT_MODEL_BY_PROVIDER.codex;
-  const session = createProviderAgentAdapter({ provider: 'codex', model }, createActivityDependencies()).createSession(WORKTREE_PATH);
+  const session = createProviderAgentAdapter({ provider: 'codex', config: { model } }, createActivityDependencies()).createSession(WORKTREE_PATH);
 
   console.log(`===== Codex (${model}) =====`);
   console.log('worktree:', WORKTREE_PATH);

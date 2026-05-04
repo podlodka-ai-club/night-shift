@@ -53,6 +53,22 @@ export const FAKE_E2E_QUALITY_GATE_FILE = {
   ].join('\n'),
 };
 
+// The seeded file is executed by the project-extension loader, which injects
+// `defineProjectExtension` into the sandboxed module runtime.
+export function buildFakeE2EProjectExtensionContent(): string {
+  return [
+    'export default defineProjectExtension((project) => {',
+    "  project.agent('implement', { provider: 'anthropic', config: { model: 'claude-haiku-4-5' } });",
+    "  project.agent('review', { provider: 'openai', config: { model: 'gpt-5.4' } });",
+    '});',
+  ].join('\n');
+}
+
+export const FAKE_E2E_PROJECT_EXTENSION_FILE = {
+  path: '.orchestrator/project.extension.ts',
+  content: buildFakeE2EProjectExtensionContent(),
+};
+
 export function resolveStartPhase(agentMode: E2EConfig['agentMode']): 'implement' | 'specify' {
   return agentMode === 'fake' ? 'implement' : 'specify';
 }
@@ -371,7 +387,7 @@ async function delay(milliseconds: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function seedApprovedSpecBundle(
+export async function seedApprovedSpecBundle(
   activities: ReturnType<typeof createActivities>,
   selectedIssue: SelectedProjectIssue,
   branchPrefix: string,
@@ -392,7 +408,7 @@ async function seedApprovedSpecBundle(
   });
   await activities.writeRepositoryFiles({
     worktree,
-    files: [FAKE_E2E_QUALITY_GATE_FILE],
+    files: [FAKE_E2E_QUALITY_GATE_FILE, FAKE_E2E_PROJECT_EXTENSION_FILE],
   });
   await activities.commitAndPush({
     worktree,

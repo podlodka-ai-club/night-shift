@@ -72,11 +72,19 @@ describe('implement phase', () => {
     const result = await runImplementPhase(
       {
         issue,
+        agents: {
+          default: { provider: 'openai', config: { model: 'gpt-5.4', reasoningEffort: 'high' } },
+          implement: { provider: 'anthropic' },
+        },
         projectExtensionManifest: {
           prompts: {
             specify: { prepend: ['Specify extension guidance.'], append: [] },
             implement: { prepend: ['Implement extension guidance.'], append: ['Implement trailing guidance.'] },
             review: { prepend: ['Review extension guidance.'], append: [] },
+          },
+          agentDefaults: { config: { maxTurns: 5 } },
+          agents: {
+            implement: { config: { model: 'claude-haiku-4-5', temperature: 0.1 } },
           },
           qualityGates,
         },
@@ -101,6 +109,15 @@ describe('implement phase', () => {
         async runAgentSequence(input: any) {
           runAgentSequenceCallCount += 1;
           calls.push(`runAgentSequence:${runAgentSequenceCallCount}`);
+          assert.deepStrictEqual(input.providerSelection, {
+            provider: 'claude',
+            config: {
+              model: 'claude-haiku-4-5',
+              reasoningEffort: 'high',
+              maxTurns: 5,
+              temperature: 0.1,
+            },
+          });
           assert.strictEqual(input.steps[0]?.systemPrompt, IMPLEMENT_SYSTEM_PROMPT);
           assert.match(input.steps[0].prompt, /Implement extension guidance\./);
           assert.match(input.steps[0].prompt, /Implement trailing guidance\./);

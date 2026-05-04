@@ -1,4 +1,18 @@
-import { REVIEWER_RESPONSE_OUTPUT_KEY, type AgentStep, type MoveProjectItemStatusInput, type OpenSpecChangeFile, type ProjectExtensionManifest, type PullRequestChangedFile, type PullRequestDetails, type PullRequestReviewComment, type SelectedProjectIssue, type WorktreeContext } from '../../shared';
+import {
+  REVIEWER_RESPONSE_OUTPUT_KEY,
+  resolveEffectivePhaseAgentProviderSelection,
+  type AgentStep,
+  type MoveProjectItemStatusInput,
+  type OpenSpecChangeFile,
+  type ProjectExtensionManifest,
+  type PullRequestChangedFile,
+  type PullRequestDetails,
+  type PullRequestReviewComment,
+  type RunAgentSequenceInput,
+  type SelectedProjectIssue,
+  type WorkflowAgentSelections,
+  type WorktreeContext,
+} from '../../shared';
 import { createEmptyProjectExtensionManifest } from '../../project-extension-manifest';
 import { isNightShiftMarkerComment } from '../../comment-markers';
 import { buildChangeName } from '../change-name';
@@ -15,6 +29,7 @@ export interface RunReviewPhaseInput {
   issue: SelectedProjectIssue;
   worktree: WorktreeContext;
   pullRequest: { pullRequestNumber: number; pullRequestUrl: string };
+  agents?: WorkflowAgentSelections;
   projectExtensionManifest?: ProjectExtensionManifest;
   reviewIteration?: number;
   deferEscalatedStatus?: boolean;
@@ -28,7 +43,7 @@ export interface RunReviewPhaseDeps {
   listPullRequestFiles: (input: { repoOwner: string; repoName: string; pullRequestNumber: number }) => Promise<PullRequestChangedFile[]>;
   listPullRequestReviewComments: (input: { repoOwner: string; repoName: string; pullRequestNumber: number }) => Promise<PullRequestReviewComment[]>;
   loadProjectExtensionManifest?: (input: { worktree: WorktreeContext }) => Promise<ProjectExtensionManifest>;
-  runAgentSequence: (input: { worktree: WorktreeContext; steps: [AgentStep, ...AgentStep[]] }) => Promise<{ outputs?: Record<string, unknown> }>;
+  runAgentSequence: (input: RunAgentSequenceInput) => Promise<{ outputs?: Record<string, unknown> }>;
   setPullRequestReady: (input: { repoOwner: string; repoName: string; pullRequestNumber: number; ready: boolean }) => Promise<void>;
   createPullRequestReview: (input: { repoOwner: string; repoName: string; pullRequestNumber: number; event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'; body: string }) => Promise<void>;
   upsertPullRequestReviewComment: (input: { repoOwner: string; repoName: string; pullRequestNumber: number; commitId: string; marker: string; body: string; path: string; line: number }) => Promise<void>;
@@ -52,13 +67,14 @@ export async function runReviewPhase(input: RunReviewPhaseInput, deps: RunReview
   const projectExtensionManifest = input.projectExtensionManifest
     ?? await deps.loadProjectExtensionManifest?.({ worktree: input.worktree })
     ?? createEmptyProjectExtensionManifest();
+  const providerSelection = resolveEffectivePhaseAgentProviderSelection('review', input.agents, projectExtensionManifest);
   const pullRequestDetails = await deps.getPullRequestDetails({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, pullRequestNumber: input.pullRequest.pullRequestNumber });
   const specBundleFiles = await deps.readOpenSpecChangeFiles({ worktree: input.worktree, changeName });
   const diff = await deps.getPullRequestDiff({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, pullRequestNumber: input.pullRequest.pullRequestNumber });
   const changedFiles = await deps.listPullRequestFiles({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, pullRequestNumber: input.pullRequest.pullRequestNumber });
   const reviewComments = (await deps.listPullRequestReviewComments({ repoOwner: input.issue.repoOwner, repoName: input.issue.repoName, pullRequestNumber: input.pullRequest.pullRequestNumber }))
     .filter((comment) => !isNightShiftMarkerComment(comment.body));
-  const response = await generateReviewResponse(deps, input, changeName, pullRequestDetails, specBundleFiles, diff, changedFiles, reviewComments, projectExtensionManifest);
+  const response = await generateReviewResponse(deps, input, changeName, pullRequestDetails, specBundleFiles, diff, changedFiles, reviewComments, projectExtensionManifest, providerSelection);
   const normalizedResponse = { ...response, findings: normalizeFindingLocations(response.findings, changedFiles, input.worktree) };
   const verdict = decideReviewVerdict(normalizedResponse.findings, reviewIteration, DEFAULT_MAX_REVIEW_ITERATIONS);
   const summaryCommentBody = buildReviewSummaryComment(input.issue, changeName, pullRequestDetails, verdict, normalizedResponse, reviewIteration);
@@ -96,10 +112,12 @@ async function generateReviewResponse(
   changedFiles: readonly PullRequestChangedFile[],
   reviewComments: readonly PullRequestReviewComment[],
   projectExtensionManifest: ProjectExtensionManifest,
+  providerSelection: RunAgentSequenceInput['providerSelection'],
 ): Promise<ReviewerResponse> {
   try {
     const result = await deps.runAgentSequence({
       worktree: input.worktree,
+      ...(providerSelection ? { providerSelection } : {}),
       steps: [{
         id: 'review',
         kind: 'structured',

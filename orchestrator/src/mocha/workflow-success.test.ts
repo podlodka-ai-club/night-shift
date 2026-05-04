@@ -1,6 +1,10 @@
 import { describe, it } from 'mocha';
 import assert from 'assert';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { type MoveProjectItemStatusInput } from '../shared';
+import { loadWorkerEntrypointConfig } from '../entrypoint-config';
 import {
   buildExpectedCreatedPullRequest,
   buildSelectedIssue,
@@ -189,6 +193,72 @@ describe('workflow success paths', function () {
       buildStatusUpdateInput(issue, issue.readyToMergeOptionId),
     ]);
   });
+
+  it('threads entrypoint and project agent selections into implement and review runs', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-workflow-agents-success-'));
+    try {
+      await writeFile(
+        path.join(tempDir, 'orchestrator.config.ts'),
+        [
+          'export default {',
+          "  agents: { default: { provider: 'openai', config: { model: 'gpt-5.4', reasoningEffort: 'high' } }, implement: { provider: 'anthropic', config: { model: 'claude-haiku-4-5', temperature: 0.2 } }, review: { provider: 'openai', config: { model: 'gpt-5.5-codex', temperature: 0.4 } } },",
+          "  targets: [{ id: 'orchestrator-testing', project: { owner: 'Mugenor', number: 1 }, repo: { owner: 'Mugenor', name: 'orchestrator-testing' } }],",
+          '};',
+        ].join('\n'),
+        'utf8',
+      );
+      const { workflowInput } = await loadWorkerEntrypointConfig({ cwd: tempDir, env: {} });
+      const calls: string[] = [];
+      const issue = buildSelectedIssue();
+      const worktree = buildWorktreeContext(issue);
+      const pullRequest = buildExpectedCreatedPullRequest(worktree);
+
+      const result = await runWorkflow({
+        workflowId: 'automate-ready-issue-agent-selection-success-test',
+        workflowInput,
+        activities: createImplementSuccessActivities({
+          issue,
+          worktree,
+          pullRequest,
+          calls,
+          statusUpdates: [],
+          expectedProviderSelections: {
+            implement: {
+              provider: 'claude',
+              config: {
+                model: 'claude-sonnet-4-6',
+                reasoningEffort: 'high',
+                temperature: 0.1,
+                maxTurns: 5,
+              },
+            },
+            review: {
+              provider: 'codex',
+              config: {
+                model: 'gpt-5.6-codex',
+                reasoningEffort: 'high',
+                temperature: 0.05,
+                maxTurns: 5,
+              },
+            },
+          },
+          loadProjectExtensionManifest: async () => ({
+            ...createEmptyProjectExtensionManifest(),
+            agentDefaults: { config: { maxTurns: 5 } },
+            agents: {
+              implement: { config: { model: 'claude-sonnet-4-6', temperature: 0.1 } },
+              review: { config: { model: 'gpt-5.6-codex', temperature: 0.05 } },
+            },
+          }),
+        }),
+      });
+
+      assert.strictEqual(result.pullRequestNumber, pullRequest.pullRequestNumber);
+      assert.deepStrictEqual(calls.filter((call) => /^runAgentSequence:/.test(call)), ['runAgentSequence:1', 'runAgentSequence:2']);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function createImplementSuccessActivities({
@@ -202,6 +272,7 @@ function createImplementSuccessActivities({
   moveProjectItemStatus,
   cleanupWorktree,
   loadProjectExtensionManifest,
+  expectedProviderSelections,
 }: {
   issue: ReturnType<typeof buildSelectedIssue>;
   worktree: ReturnType<typeof buildWorktreeContext>;
@@ -213,6 +284,7 @@ function createImplementSuccessActivities({
   moveProjectItemStatus?: (input: MoveProjectItemStatusInput) => Promise<void>;
   cleanupWorktree?: (input: any) => Promise<void>;
   loadProjectExtensionManifest?: (input: any) => Promise<any>;
+  expectedProviderSelections?: { implement?: unknown; review?: unknown };
 }) {
   let runAgentSequenceCallCount = 0;
 
@@ -253,6 +325,9 @@ function createImplementSuccessActivities({
           resultKey: step.resultKey,
           schemaId: step.schemaId,
         })), [{ id: 'implement', kind: 'structured', resultKey: 'implementResponse', schemaId: 'implement-response-v1' }]);
+        if (expectedProviderSelections?.implement !== undefined) {
+          assert.deepStrictEqual(input.providerSelection, expectedProviderSelections.implement);
+        }
         assert.match(input.steps[0].prompt, /proposal\.md/);
         assert.match(input.steps[0].prompt, /tasks\.md/);
         return {
@@ -276,6 +351,9 @@ function createImplementSuccessActivities({
         resultKey: step.resultKey,
         schemaId: step.schemaId,
       })), [{ id: 'review', kind: 'structured', resultKey: 'reviewerResponse', schemaId: 'reviewer-response-v1' }]);
+      if (expectedProviderSelections?.review !== undefined) {
+        assert.deepStrictEqual(input.providerSelection, expectedProviderSelections.review);
+      }
       assert.match(input.steps[0].prompt, /## PR Diff/);
       return {
         threadId: 'thread-review-123',

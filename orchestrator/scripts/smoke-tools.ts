@@ -8,7 +8,7 @@ const WORKTREE_PATH = path.resolve(__dirname, '..');
 const PROMPT = 'Use a shell or read tool to count exactly how many .ts files exist in the scripts/ directory of the current working directory. Then respond with that number, nothing else.';
 
 async function runOne(provider: AgentProvider, model: string): Promise<void> {
-  const session = createProviderAgentAdapter({ provider, model }, createActivityDependencies()).createSession(WORKTREE_PATH);
+  const session = createProviderAgentAdapter({ provider, config: { model } }, createActivityDependencies()).createSession(WORKTREE_PATH);
   const events: AgentProgressEvent[] = [];
   const startedAt = Date.now();
   const result = await session.run(PROMPT, {

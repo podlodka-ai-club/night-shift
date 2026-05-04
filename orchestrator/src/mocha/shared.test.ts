@@ -34,4 +34,36 @@ describe('shared deterministic-phase contracts', () => {
       { blockedReason: 'review_escalation', boardStatusName: 'In review', signalName: 'resumeReviewOnly' },
     ]);
   });
+
+  it('rejects a global phase provider that conflicts with an inherited global default model', () => {
+    assert.throws(
+      () => shared.resolveEffectivePhaseAgentProviderSelection('implement', {
+        default: { config: { model: 'gpt-5.4' } },
+        implement: { provider: 'anthropic' },
+      }, undefined),
+      /does not match provider/i,
+    );
+  });
+
+  it('rejects a project default provider that conflicts with an inherited global phase model', () => {
+    assert.throws(
+      () => shared.resolveEffectivePhaseAgentProviderSelection('review', {
+        review: { config: { model: 'gpt-5.4' } },
+      }, {
+        agentDefaults: { provider: 'anthropic' },
+        agents: {},
+      }),
+      /does not match provider/i,
+    );
+  });
+
+  it('rejects a project phase provider that conflicts with an inherited project default model', () => {
+    assert.throws(
+      () => shared.resolveEffectivePhaseAgentProviderSelection('specify', undefined, {
+        agentDefaults: { config: { model: 'gpt-5.4' } },
+        agents: { specify: { provider: 'anthropic' } },
+      }),
+      /does not match provider/i,
+    );
+  });
 });

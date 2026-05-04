@@ -8,7 +8,7 @@ The runner seeds a real GitHub issue into a Project v2, starts a local Temporal 
 
 ## Modes
 
-- `live:fake` uses a deterministic fake agent and talks to real GitHub + local Temporal through the default manual intake path.
+- `live:fake` uses a deterministic fake agent and talks to real GitHub + local Temporal through the default manual intake path. This manual fake scenario seeds `.orchestrator/project.extension.ts` into the temporary branch and verifies provider/model configuration end-to-end through the resulting fake workflow artifacts.
 - `live:fake:pickup` uses the deterministic fake agent but starts the run through `pickupWorkflow` / scheduled-pickup semantics.
 - `live:real` runs the real agent path and verifies real PR metadata against GitHub.
 

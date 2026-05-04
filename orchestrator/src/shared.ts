@@ -1,3 +1,10 @@
+import {
+  inferAgentProviderFromModel,
+  normalizeAgentProvider,
+  type RequestedAgentProviderConfig,
+  type RequestedAgentProviderSelection,
+} from './agent-provider';
+
 export const TASK_QUEUE = 'orchestrator';
 export const CANONICAL_PROJECT_STATUS_NAMES = [
   'Backlog',
@@ -44,8 +51,17 @@ export const WORKFLOW_ACTIVITY_PROGRESS_SIGNAL_NAME = 'activityProgress';
 
 export const WORKFLOW_PHASES = ['specify', 'implement', 'review'] as const;
 export type WorkflowPhase = (typeof WORKFLOW_PHASES)[number];
+export const WORKFLOW_AGENT_SELECTION_KEYS = ['default', ...WORKFLOW_PHASES] as const;
+export type WorkflowAgentSelectionKey = (typeof WORKFLOW_AGENT_SELECTION_KEYS)[number];
 
 export type ProjectExtensionPromptPhase = WorkflowPhase;
+
+export interface WorkflowAgentSelections {
+  default?: RequestedAgentProviderSelection;
+  specify?: RequestedAgentProviderSelection;
+  implement?: RequestedAgentProviderSelection;
+  review?: RequestedAgentProviderSelection;
+}
 
 export interface ProjectExtensionPromptContributions {
   prepend: string[];
@@ -59,7 +75,112 @@ export interface ProjectExtensionQualityGate {
 
 export interface ProjectExtensionManifest {
   prompts: Record<ProjectExtensionPromptPhase, ProjectExtensionPromptContributions>;
+  agentDefaults?: RequestedAgentProviderSelection;
+  agents?: Partial<Record<WorkflowPhase, RequestedAgentProviderSelection>>;
   qualityGates: ProjectExtensionQualityGate[];
+}
+
+export function normalizeRequestedAgentProviderSelection(
+  selection: RequestedAgentProviderSelection = {},
+): RequestedAgentProviderSelection {
+  const provider = selection.provider === undefined ? undefined : normalizeAgentProvider(selection.provider);
+  const config = selection.config ? { ...selection.config } : undefined;
+  const requestedModel = typeof config?.model === 'string' ? config.model.trim() : undefined;
+
+  if (config && 'model' in config) {
+    if (requestedModel) {
+      config.model = requestedModel;
+    } else {
+      delete config.model;
+    }
+  }
+
+  const inferredProvider = inferAgentProviderFromModel(requestedModel);
+  if (provider && inferredProvider && provider !== inferredProvider) {
+    throw new Error(`Model "${requestedModel}" does not match provider "${provider}".`);
+  }
+
+  const normalized: RequestedAgentProviderSelection = {};
+  if (provider) {
+    normalized.provider = provider;
+  }
+  if (config && Object.keys(config).length > 0) {
+    normalized.config = config;
+  }
+  return normalized;
+}
+
+export function mergeRequestedAgentProviderSelections(
+  base: RequestedAgentProviderSelection = {},
+  override: RequestedAgentProviderSelection = {},
+): RequestedAgentProviderSelection {
+  const mergedConfig = {
+    ...(base.config ?? {}),
+    ...(override.config ?? {}),
+  };
+
+  return normalizeRequestedAgentProviderSelection({
+    ...(base.provider !== undefined ? { provider: base.provider } : {}),
+    ...(override.provider !== undefined ? { provider: override.provider } : {}),
+    ...(Object.keys(mergedConfig).length > 0 ? { config: mergedConfig } : {}),
+  });
+}
+
+export function resolveEffectivePhaseAgentProviderSelection(
+  phase: WorkflowPhase,
+  workflowAgents: WorkflowAgentSelections | undefined,
+  projectExtensionManifest: Pick<ProjectExtensionManifest, 'agentDefaults' | 'agents'> | undefined,
+): RequestedAgentProviderSelection | undefined {
+  const layers = [
+    workflowAgents?.default,
+    workflowAgents?.[phase],
+    projectExtensionManifest?.agentDefaults,
+    projectExtensionManifest?.agents?.[phase],
+  ];
+
+  let provider: string | undefined;
+  let mergedConfig: RequestedAgentProviderConfig = {};
+
+  for (const [index, layer] of layers.entries()) {
+    const normalizedLayer = normalizeRequestedAgentProviderSelection(layer);
+    if (normalizedLayer.provider !== undefined) {
+      provider = normalizedLayer.provider;
+    }
+    if (normalizedLayer.config) {
+      mergedConfig = { ...mergedConfig, ...normalizedLayer.config };
+    }
+  }
+
+  const resolved = normalizeRequestedAgentProviderSelection({
+    ...(provider !== undefined ? { provider } : {}),
+    ...(Object.keys(mergedConfig).length > 0 ? { config: mergedConfig } : {}),
+  });
+  return isRequestedAgentProviderSelectionEmpty(resolved) ? undefined : resolved;
+}
+
+export function normalizeWorkflowAgentSelections(selections: WorkflowAgentSelections = {}): WorkflowAgentSelections {
+  const normalized: WorkflowAgentSelections = {};
+  for (const key of WORKFLOW_AGENT_SELECTION_KEYS) {
+    const selection = selections[key];
+    if (!selection) {
+      continue;
+    }
+    const normalizedSelection = normalizeRequestedAgentProviderSelection(selection);
+    if (!isRequestedAgentProviderSelectionEmpty(normalizedSelection)) {
+      normalized[key] = normalizedSelection;
+    }
+  }
+  return normalized;
+}
+
+export function hasWorkflowAgentSelections(selections: WorkflowAgentSelections | undefined): boolean {
+  return WORKFLOW_AGENT_SELECTION_KEYS.some((key) => !isRequestedAgentProviderSelectionEmpty(selections?.[key]));
+}
+
+function isRequestedAgentProviderSelectionEmpty(selection: RequestedAgentProviderSelection | undefined): boolean {
+  return selection === undefined
+    || (selection.provider === undefined
+      && (selection.config === undefined || Object.keys(selection.config).length === 0));
 }
 
 export const BLOCKED_REASON_BOARD_SIGNAL_RULES = [
@@ -93,6 +214,7 @@ export interface AutomateReadyIssueInput {
   projectNumber: number;
   expectedRepoOwner?: string;
   expectedRepoName?: string;
+  agents?: WorkflowAgentSelections;
   startPhase?: WorkflowPhase;
   backlogStatusName?: string;
   refinementStatusName?: string;
@@ -239,6 +361,7 @@ export interface RunAgentSequenceInput {
   worktree: WorktreeContext;
   steps: [AgentStep, ...AgentStep[]];
   agentProfile?: AgentProfileName;
+  providerSelection?: RequestedAgentProviderSelection;
 }
 
 export interface CommitAndPushInput {

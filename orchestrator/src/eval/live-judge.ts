@@ -1,7 +1,10 @@
 import { z } from 'zod';
-import { resolveAgentProviderSelection, type RequestedAgentProviderSelection } from '../agent-provider';
+import {
+  resolveAgentProviderSelection,
+  type RequestedAgentProviderSelection,
+} from '../agent-provider';
 import { buildPromptHardeningPreamble } from '../phases/prompt-hardening';
-import type { LiveTurnRunner } from './live-common';
+import { mergeRequestedProviderConfig, type LiveTurnRunner } from './live-common';
 import { totalRecordedTokens, toErrorMessage, ZERO_RECORDED_USAGE } from './replay-common';
 
 const liveJudgeVerdictSchema = z.object({
@@ -147,14 +150,14 @@ export async function runLiveJudge(
   input: RunLiveJudgeInput,
 ): Promise<{ attempt: LiveJudgeAttempt; parsedVerdict?: LiveJudgeVerdict }> {
   try {
-    const selection = resolveAgentProviderSelection({ provider: input.provider, model: input.model });
+    const selection = resolveAgentProviderSelection(input);
     const turn = await input.turnRunner({
       worktreePath: input.worktreePath,
       prompt: input.prompt,
       systemPrompt: input.systemPrompt,
       timeoutMs: input.timeoutMs,
       provider: selection.provider,
-      model: selection.model,
+      config: mergeRequestedProviderConfig(input.config, { model: selection.model }),
     });
     const usage = turn.usage ?? ZERO_RECORDED_USAGE;
     const costMicroUsd = turn.costMicroUsd ?? 0;

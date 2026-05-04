@@ -1,4 +1,5 @@
 import { getAgentSchema } from '../agent-schema-registry';
+import type { RequestedAgentProviderSelection } from '../agent-provider';
 import { buildChangeName } from '../phases/change-name';
 import { wrapUntrustedInput } from '../phases/prompt-hardening';
 import { buildImplementPrompt, IMPLEMENT_SYSTEM_PROMPT, type ImplementRetryFeedback } from '../phases/implement/prompt';
@@ -21,15 +22,21 @@ import {
   type ImplementReplayResult,
   type ImplementReplaySuiteResult,
 } from './implement-replay';
-import { addRecordedUsage, buildLiveEvalComments, buildLiveEvalIssue, createDefaultLiveTurnRunner, type LiveTurnResult, type LiveTurnRunner } from './live-common';
+import {
+  addRecordedUsage,
+  buildLiveEvalComments,
+  buildLiveEvalIssue,
+  createDefaultLiveTurnRunner,
+  mergeRequestedProviderConfig,
+  type LiveTurnResult,
+  type LiveTurnRunner,
+} from './live-common';
 
-export interface ImplementLiveSuiteOptions {
+export interface ImplementLiveSuiteOptions extends RequestedAgentProviderSelection {
   worktreePath: string;
   turnRunner?: LiveTurnRunner;
   timeoutMs?: number;
   judge?: LiveJudgeOptions;
-  provider?: string;
-  model?: string;
   onGeneratorResult?: (fixture: ImplementReplayFixture, result: LiveTurnResult) => void;
 }
 
@@ -145,7 +152,7 @@ export async function runImplementLiveFixture(
         parseOutput: (value) => schemaDefinition.schema.parse(value),
         timeoutMs: options.timeoutMs,
         provider: options.provider,
-        model: options.model,
+        config: options.config,
       });
       totalUsage = addRecordedUsage(totalUsage, turn.usage);
       totalCostMicroUsd += turn.costMicroUsd ?? 0;
@@ -181,7 +188,7 @@ export async function runImplementLiveFixture(
       timeoutMs: options.timeoutMs,
       systemPrompt: IMPLEMENT_LIVE_JUDGE_SYSTEM_PROMPT,
       provider: options.judge?.provider ?? options.provider,
-      model: options.judge?.model ?? options.model,
+      config: mergeRequestedProviderConfig(options.config, options.judge?.config),
     });
     judgeAttempts.push(judge.attempt);
 

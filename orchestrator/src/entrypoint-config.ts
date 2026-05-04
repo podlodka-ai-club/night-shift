@@ -4,7 +4,7 @@ import {
   type OrchestratorConfig,
   type OrchestratorTarget,
 } from './config';
-import type { AutomateReadyIssueInput, ProjectStatusName } from './shared';
+import { hasWorkflowAgentSelections, type AutomateReadyIssueInput, type ProjectStatusName } from './shared';
 
 export type IntakeCommand =
   | { kind: 'pickup'; maxActions: number }
@@ -167,6 +167,8 @@ function resolveWorkflowInput(
     missingCoordinatesError: string;
   },
 ): AutomateReadyIssueInput {
+  const agents = hasWorkflowAgentSelections(config.agents) ? config.agents : undefined;
+
   if (options.target) {
     return {
       targetId: options.target.id,
@@ -174,6 +176,7 @@ function resolveWorkflowInput(
       projectNumber: options.target.projectNumber,
       expectedRepoOwner: options.target.repoOwner,
       expectedRepoName: options.target.repoName,
+      ...(agents ? { agents } : {}),
       backlogStatusName: env.GITHUB_BACKLOG_STATUS ?? options.target.backlogStatusName,
       readyStatusName: env.GITHUB_READY_STATUS ?? options.target.readyStatusName,
       inReviewStatusName: env.GITHUB_IN_REVIEW_STATUS ?? options.target.inReviewStatusName,
@@ -192,6 +195,7 @@ function resolveWorkflowInput(
   return {
     projectOwner,
     projectNumber: parseProjectNumber(projectNumberRaw),
+    ...(agents ? { agents } : {}),
     backlogStatusName: env.GITHUB_BACKLOG_STATUS ?? config.github.backlogStatusName,
     readyStatusName: env.GITHUB_READY_STATUS ?? config.github.readyStatusName,
     inReviewStatusName: env.GITHUB_IN_REVIEW_STATUS ?? config.github.inReviewStatusName,

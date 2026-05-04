@@ -162,6 +162,36 @@ describe('intake trigger handling', () => {
     ]);
   });
 
+  it('passes configured agent selections through when starting a new workflow', async () => {
+    const input = {
+      ...buildWorkflowInput(),
+      agents: {
+        default: { provider: 'codex', config: { model: 'gpt-5.4' } },
+        review: { provider: 'claude', config: { model: 'claude-sonnet-4-6' } },
+      },
+    };
+    let startedInput: AutomateReadyIssueInput | undefined;
+
+    const action = await handleWorkflowTrigger(
+      {
+        async getWorkflowState() {
+          return { kind: 'missing' };
+        },
+        async startWorkflow(_workflowId, workflowInput) {
+          startedInput = workflowInput;
+        },
+        async signalWorkflow() {
+          throw new Error('signalWorkflow should not run when starting a workflow');
+        },
+      },
+      input,
+      buildCandidate({ issueNumber: 7, boardStatusName: 'Ready' }),
+    );
+
+    assert.deepStrictEqual(action, { type: 'start', workflowId: 'ticket-7', startPhase: 'implement' });
+    assert.deepStrictEqual(startedInput, { ...input, startPhase: 'implement' });
+  });
+
   it('turns signal races where the workflow disappears into a noop', async () => {
     const input = buildWorkflowInput();
     const action = await handleWorkflowTrigger(

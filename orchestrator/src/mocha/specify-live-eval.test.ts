@@ -188,7 +188,7 @@ describe('specify live eval harness', () => {
   });
 
   it('reuses current prompt/schema wiring and preserves the replay result model', async () => {
-    const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown; provider?: string; model?: string }> = [];
+    const calls: Array<{ worktreePath: string; prompt: string; systemPrompt?: string; outputSchema?: unknown; provider?: string; config?: { model?: string } }> = [];
     const fixture = {
       id: 'live-specify',
       ticket: {
@@ -204,7 +204,7 @@ describe('specify live eval harness', () => {
     const result = await runSpecifyLiveFixture(fixture as any, {
       worktreePath: '/tmp/eval-worktree',
       provider: 'claude',
-      model: 'claude-sonnet-4-6',
+      config: { model: 'claude-sonnet-4-6' },
       turnRunner: async (request) => {
         calls.push(request);
         return {
@@ -226,7 +226,7 @@ describe('specify live eval harness', () => {
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0]?.worktreePath, '/tmp/eval-worktree');
     assert.strictEqual(calls[0]?.provider, 'claude');
-    assert.strictEqual(calls[0]?.model, 'claude-sonnet-4-6');
+    assert.strictEqual(calls[0]?.config?.model, 'claude-sonnet-4-6');
     assert.strictEqual(calls[0]?.systemPrompt, SPECIFY_SYSTEM_PROMPT);
     assert.deepStrictEqual(calls[0]?.outputSchema, getAgentSchema('specify-response-v1').jsonSchema);
     assert.match(calls[0]?.prompt ?? '', /Improve the operator dashboard load flow/);
@@ -243,7 +243,7 @@ describe('specify live eval harness', () => {
   });
 
   it('forwards independent provider selections to generator and judge turns', async () => {
-    const calls: Array<{ provider?: string; model?: string; prompt: string }> = [];
+    const calls: Array<{ provider?: string; config?: { model?: string }; prompt: string }> = [];
 
     const result = await runSpecifyLiveFixture({
       id: 'provider-routing',
@@ -257,8 +257,8 @@ describe('specify live eval harness', () => {
     } as any, {
       worktreePath: '/tmp/eval-worktree',
       provider: 'claude',
-      model: 'claude-sonnet-4-6',
-      judge: { maxRevisions: 0, provider: 'codex', model: 'gpt-5.3-codex' },
+      config: { model: 'claude-sonnet-4-6' },
+      judge: { maxRevisions: 0, provider: 'codex', config: { model: 'gpt-5.3-codex' } },
       turnRunner: async (request) => {
         calls.push(request);
         if (!request.prompt.includes('Candidate response JSON')) {
@@ -281,9 +281,9 @@ describe('specify live eval harness', () => {
     });
 
     assert.strictEqual(result.status, 'refined');
-    assert.deepStrictEqual(calls.map((call) => ({ provider: call.provider, model: call.model })), [
-      { provider: 'claude', model: 'claude-sonnet-4-6' },
-      { provider: 'codex', model: 'gpt-5.3-codex' },
+    assert.deepStrictEqual(calls.map((call) => ({ provider: call.provider, config: call.config })), [
+      { provider: 'claude', config: { model: 'claude-sonnet-4-6' } },
+      { provider: 'codex', config: { model: 'gpt-5.3-codex' } },
     ]);
   });
 

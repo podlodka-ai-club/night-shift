@@ -437,12 +437,14 @@ function getExpectedFakeArtifacts(runId: string, selectedIssue: SelectedProjectI
       '',
       '## Follow-ups',
       `- Run marker: ${runId}`,
+      '- Implement provider: claude',
+      '- Implement model: claude-haiku-4-5',
     ].join('\n'),
     implementSummaryCommentBody: [
       `## Implement summary for #${selectedIssue.issueNumber}`,
       `- Change: \`openspec/changes/${buildSelectedIssueChangeName(selectedIssue)}\``,
       `- Summary: Deterministic fake e2e change for ${runId}.`,
-      `- Follow-ups: Run marker: ${runId}`,
+      `- Follow-ups: Run marker: ${runId}; Implement provider: claude; Implement model: claude-haiku-4-5`,
       '- Quality gate: make check passed',
     ].join('\n'),
     reviewSummaryCommentBody: [
@@ -452,7 +454,7 @@ function getExpectedFakeArtifacts(runId: string, selectedIssue: SelectedProjectI
       '- Verdict: ready-to-merge',
       '- Iteration: 2',
       `- Summary: Review looks good for ${runId} after one rerun.`,
-      `- Findings: warning: Run marker ${runId} is embedded in the fake E2E artifact for traceability. (${FAKE_AGENT_FILE_PATH}:3)`,
+      `- Findings: warning: Run marker ${runId} is embedded in the fake E2E artifact for traceability. (${FAKE_AGENT_FILE_PATH}:3); warning: Review provider: codex (${FAKE_AGENT_FILE_PATH}:3); warning: Review model: gpt-5.4 (${FAKE_AGENT_FILE_PATH}:3)`,
     ].join('\n'),
     fileText: buildFakeAgentFileText(runId),
   };

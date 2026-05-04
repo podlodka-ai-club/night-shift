@@ -3,8 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import ts from 'typescript';
+import type { RequestedAgentProviderSelection } from './agent-provider';
 import type { ProjectExtensionManifest, ProjectExtensionPromptPhase, WorktreeContext } from './shared';
 import { createEmptyProjectExtensionManifest } from './project-extension-manifest';
+import { mergeRequestedAgentProviderSelections } from './shared';
 
 const EXTENSION_RELATIVE_PATH = path.join('.orchestrator', 'project.extension.ts');
 const PROMPT_PHASES = ['specify', 'implement', 'review'] as const satisfies readonly ProjectExtensionPromptPhase[];
@@ -91,7 +93,29 @@ function createProjectApi(manifest: ProjectExtensionManifest) {
       }
       manifest.qualityGates.push({ id, run: options.run });
     },
+    agentDefaults(selection: RequestedAgentProviderSelection) {
+      assertAgentSelection(selection, 'project.agentDefaults');
+      manifest.agentDefaults = mergeProjectAgentSelection(manifest.agentDefaults ?? {}, selection, 'project.agentDefaults');
+    },
+    agent(phase: ProjectExtensionPromptPhase, selection: RequestedAgentProviderSelection) {
+      assertPromptPhase(phase);
+      assertAgentSelection(selection, `project.agent(${phase})`);
+      manifest.agents ??= {};
+      manifest.agents[phase] = mergeProjectAgentSelection(manifest.agents[phase] ?? {}, selection, `project.agent(${phase})`);
+    },
   };
+}
+
+function mergeProjectAgentSelection(
+  base: RequestedAgentProviderSelection,
+  selection: RequestedAgentProviderSelection,
+  label: string,
+): RequestedAgentProviderSelection {
+  try {
+    return mergeRequestedAgentProviderSelections(base, selection);
+  } catch (error) {
+    throw new Error(`${label} is invalid: ${toErrorMessage(error)}`);
+  }
 }
 
 function assertPromptPhase(value: string): asserts value is ProjectExtensionPromptPhase {
@@ -103,6 +127,12 @@ function assertPromptPhase(value: string): asserts value is ProjectExtensionProm
 function assertText(value: unknown, label: string): asserts value is string {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`${label} must be a non-empty string.`);
+  }
+}
+
+function assertAgentSelection(value: unknown, label: string): asserts value is RequestedAgentProviderSelection {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
   }
 }
 

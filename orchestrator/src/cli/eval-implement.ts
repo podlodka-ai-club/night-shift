@@ -56,9 +56,9 @@ type CliOptions = {
     worktreePath: string;
     timeoutMs: number;
     provider: string;
-    model: string;
+    config: { model: string };
     record: boolean;
-    judge?: { maxRevisions: number; provider: string; model: string };
+    judge?: { maxRevisions: number; provider: string; config: { model: string } };
   }
 );
 
@@ -153,7 +153,7 @@ export function parseEvalImplementCliArgs(argv: ReadonlyArray<string>): CliOptio
       worktreePath: path.resolve(values.worktree ?? process.cwd()),
       timeoutMs,
       provider: selection.provider,
-      model: selection.model,
+      config: selection.config,
       record: values.record === true,
       ...(judge ? { judge } : {}),
     };
@@ -207,7 +207,7 @@ export async function main(argv: ReadonlyArray<string> = process.argv.slice(2), 
       worktreePath: options.worktreePath,
       timeoutMs: options.timeoutMs,
       provider: options.provider,
-      model: options.model,
+      config: options.config,
       ...(options.record ? {
         onGeneratorResult: (fixture, result) => {
           capturedGeneratorResults.set(fixture.id, result);
@@ -269,9 +269,16 @@ function parseTimeoutMs(value: string | undefined): number {
   return parsed;
 }
 
-function parseLiveSelection(provider: string | undefined, model: string | undefined): { provider: string; model: string } {
+function parseLiveSelection(provider: string | undefined, model: string | undefined): { provider: string; config: { model: string } } {
   try {
-    return resolveAgentProviderSelection({ provider, model });
+    const selection = resolveAgentProviderSelection({
+      ...(provider !== undefined ? { provider } : {}),
+      ...(model !== undefined ? { config: { model } } : {}),
+    });
+    return {
+      provider: selection.provider,
+      config: { model: selection.model },
+    };
   } catch (error) {
     throw new EvalImplementCliUsageError(64, `${error instanceof Error ? error.message : String(error)}\n`, 'stderr');
   }
@@ -282,7 +289,7 @@ function parseJudgeOptions(
   maxRevisionsValue: string | undefined,
   provider: string | undefined,
   model: string | undefined,
-): { maxRevisions: number; provider: string; model: string } | undefined {
+): { maxRevisions: number; provider: string; config: { model: string } } | undefined {
   if (!enabled && maxRevisionsValue === undefined && provider === undefined && model === undefined) {
     return undefined;
   }
@@ -299,7 +306,7 @@ function parseJudgeOptions(
   if (maxRevisions > MAX_LIVE_JUDGE_REVISIONS) {
     throw new EvalImplementCliUsageError(64, `--max-revisions must be <= ${MAX_LIVE_JUDGE_REVISIONS}\n`, 'stderr');
   }
-  return { maxRevisions, provider: selection.provider, model: selection.model };
+  return { maxRevisions, provider: selection.provider, config: selection.config };
 }
 
 function parseNonNegativeInt(value: string, flag: string): number {

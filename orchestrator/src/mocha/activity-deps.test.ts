@@ -95,7 +95,7 @@ describe('activity dependencies', () => {
 
   it('creates the requested provider adapter from the shared provider factory', () => {
     const calls: Array<{ provider: string; worktreePath: string; model?: string }> = [];
-    const adapter = createProviderAgentAdapter({ provider: 'claude', model: 'claude-sonnet-4-6' }, {
+    const adapter = createProviderAgentAdapter({ provider: 'claude', config: { model: 'claude-sonnet-4-6' } }, {
       createCodexThread() {
         throw new Error('codex should not be selected');
       },
@@ -117,7 +117,7 @@ describe('activity dependencies', () => {
 
   it('keeps the default codex branch covered in the shared provider factory', () => {
     const calls: Array<{ provider: string; worktreePath: string; model?: string }> = [];
-    const adapter = createProviderAgentAdapter({ provider: 'codex', model: 'gpt-5.3-codex' }, {
+    const adapter = createProviderAgentAdapter({ provider: 'codex', config: { model: 'gpt-5.3-codex' } }, {
       createCodexThread(worktreePath: string, model?: string) {
         calls.push({ provider: 'codex', worktreePath, model });
         return { id: 'codex-session', run: async () => ({ finalResponse: 'ok' }) };

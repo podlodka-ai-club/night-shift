@@ -71,7 +71,7 @@ describe('specify eval cli', function () {
       worktreePath: path.resolve('/tmp/live-repo'),
       timeoutMs: 300000,
       provider: 'codex',
-      model: 'gpt-5.3-codex',
+      config: { model: 'gpt-5.3-codex' },
       record: false,
     });
   });
@@ -94,7 +94,7 @@ describe('specify eval cli', function () {
       worktreePath: path.resolve('/tmp/live-repo'),
       timeoutMs: 300000,
       provider: 'claude',
-      model: 'claude-sonnet-4-6',
+      config: { model: 'claude-sonnet-4-6' },
       record: true,
     });
 
@@ -132,9 +132,9 @@ describe('specify eval cli', function () {
       worktreePath: path.resolve('/tmp/live-repo'),
       timeoutMs: 300000,
       provider: 'codex',
-      model: 'gpt-5.3-codex',
+      config: { model: 'gpt-5.3-codex' },
       record: false,
-      judge: { maxRevisions: 1, provider: 'codex', model: 'gpt-5.3-codex' },
+      judge: { maxRevisions: 1, provider: 'codex', config: { model: 'gpt-5.3-codex' } },
     });
 
     assert.throws(
@@ -172,9 +172,9 @@ describe('specify eval cli', function () {
       worktreePath: path.resolve('/tmp/live-repo'),
       timeoutMs: 300000,
       provider: 'claude',
-      model: 'claude-sonnet-4-6',
+      config: { model: 'claude-sonnet-4-6' },
       record: false,
-      judge: { maxRevisions: 2, provider: 'codex', model: 'gpt-5.3-codex' },
+      judge: { maxRevisions: 2, provider: 'codex', config: { model: 'gpt-5.3-codex' } },
     });
 
     assert.throws(
@@ -209,9 +209,9 @@ describe('specify eval cli', function () {
       worktreePath: path.resolve('/tmp/live-repo'),
       timeoutMs: 300000,
       provider: 'codex',
-      model: 'gpt-5.3-codex',
+      config: { model: 'gpt-5.3-codex' },
       record: false,
-      judge: { maxRevisions: 1, provider: 'claude', model: 'claude-sonnet-4-6' },
+      judge: { maxRevisions: 1, provider: 'claude', config: { model: 'claude-sonnet-4-6' } },
     });
   });
 
@@ -239,7 +239,7 @@ describe('specify eval cli', function () {
           assert.strictEqual(options.worktreePath, path.resolve('/tmp/live-repo'));
           assert.strictEqual(options.timeoutMs, 300000);
           assert.strictEqual((options as any).provider, 'claude');
-          assert.strictEqual((options as any).model, 'claude-sonnet-4-6');
+          assert.strictEqual((options as any).config?.model, 'claude-sonnet-4-6');
           return {
             schemaId: 'specify-response-v1',
             results: [{
@@ -406,7 +406,7 @@ describe('specify eval cli', function () {
           throw new Error('replay suite should not run in live mode');
         },
         runLiveSuite: async (_fixtures, options) => {
-          assert.deepStrictEqual((options as any).judge, { maxRevisions: 1, provider: 'codex', model: 'gpt-5.3-codex' });
+          assert.deepStrictEqual((options as any).judge, { maxRevisions: 1, provider: 'codex', config: { model: 'gpt-5.3-codex' } });
           return {
             schemaId: 'specify-response-v1',
             results: [{
@@ -479,7 +479,7 @@ describe('specify eval cli', function () {
           throw new Error('replay suite should not run in live mode');
         },
         runLiveSuite: async (_fixtures, options) => {
-          assert.deepStrictEqual((options as any).judge, { maxRevisions: 1, provider: 'codex', model: 'gpt-5.3-codex' });
+          assert.deepStrictEqual((options as any).judge, { maxRevisions: 1, provider: 'codex', config: { model: 'gpt-5.3-codex' } });
           return {
             schemaId: 'specify-response-v1',
             results: [{

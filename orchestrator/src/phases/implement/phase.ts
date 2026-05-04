@@ -1,5 +1,6 @@
 import {
   IMPLEMENT_RESPONSE_OUTPUT_KEY,
+  resolveEffectivePhaseAgentProviderSelection,
   type AgentStep,
   type CreatedPullRequest,
   type IssueComment,
@@ -7,9 +8,11 @@ import {
   type OpenPullRequestFeedback,
   type OpenSpecChangeFile,
   type QualityGateResult,
+  type RunAgentSequenceInput,
   type RunQualityGateInput,
   type RepositoryFile,
   type SelectedProjectIssue,
+  type WorkflowAgentSelections,
   type WorktreeContext,
   type ProjectExtensionManifest,
 } from '../../shared';
@@ -21,6 +24,7 @@ import { buildChangeName } from '../change-name';
 
 export interface RunImplementPhaseInput {
   issue: SelectedProjectIssue;
+  agents?: WorkflowAgentSelections;
   branchPrefix?: string;
   deferBlockedStatus?: boolean;
   projectExtensionManifest?: ProjectExtensionManifest;
@@ -33,7 +37,7 @@ export interface RunImplementPhaseDeps {
   listOpenPullRequestFeedback: (input: { worktree: WorktreeContext }) => Promise<OpenPullRequestFeedback>;
   readOpenSpecChangeFiles: (input: { worktree: WorktreeContext; changeName: string }) => Promise<OpenSpecChangeFile[]>;
   loadProjectExtensionManifest?: (input: { worktree: WorktreeContext }) => Promise<ProjectExtensionManifest>;
-  runAgentSequence: (input: { worktree: WorktreeContext; steps: [AgentStep, ...AgentStep[]] }) => Promise<{ outputs?: Record<string, unknown> }>;
+  runAgentSequence: (input: RunAgentSequenceInput) => Promise<{ outputs?: Record<string, unknown> }>;
   writeRepositoryFiles: (input: { worktree: WorktreeContext; files: RepositoryFile[] }) => Promise<void>;
   runQualityGate: (input: RunQualityGateInput) => Promise<QualityGateResult>;
   commitAndPush: (input: { worktree: WorktreeContext; commitMessage?: string }) => Promise<void>;
@@ -62,6 +66,7 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
   const projectExtensionManifest = input.projectExtensionManifest
     ?? await deps.loadProjectExtensionManifest?.({ worktree })
     ?? createEmptyProjectExtensionManifest();
+  const providerSelection = resolveEffectivePhaseAgentProviderSelection('implement', input.agents, projectExtensionManifest);
   const issueComments = await deps.listIssueComments({
     repoOwner: input.issue.repoOwner,
     repoName: input.issue.repoName,
@@ -94,7 +99,7 @@ export async function runImplementPhase(input: RunImplementPhaseInput, deps: Run
 
   for (let attempt = 1; attempt <= MAX_IMPLEMENT_ATTEMPTS; attempt += 1) {
     try {
-      latestResponse = await generateImplementResponse(deps, worktree, input.issue, changeName, issueComments, pullRequestFeedback, specBundleFiles, retryFeedback, projectExtensionManifest);
+      latestResponse = await generateImplementResponse(deps, worktree, input.issue, changeName, issueComments, pullRequestFeedback, specBundleFiles, retryFeedback, projectExtensionManifest, providerSelection);
     } catch (error) {
       if (!(error instanceof ImplementPhaseContractError)) throw error;
       const summaryCommentBody = buildDeterministicFailureSummaryComment(input.issue, changeName, error.message);
@@ -163,6 +168,7 @@ async function generateImplementResponse(
   specBundleFiles: readonly OpenSpecChangeFile[],
   retryFeedback: ImplementRetryFeedback | undefined,
   projectExtensionManifest: ProjectExtensionManifest,
+  providerSelection: RunAgentSequenceInput['providerSelection'],
 ): Promise<ImplementResponse> {
   try {
     const steps: [AgentStep, ...AgentStep[]] = [{
@@ -181,7 +187,7 @@ async function generateImplementResponse(
       schemaId: 'implement-response-v1',
       resultKey: IMPLEMENT_RESPONSE_OUTPUT_KEY,
     }];
-    const result = await deps.runAgentSequence({ worktree, steps });
+    const result = await deps.runAgentSequence({ worktree, steps, ...(providerSelection ? { providerSelection } : {}) });
 
     try {
       return parseImplementResponse(result.outputs?.[IMPLEMENT_RESPONSE_OUTPUT_KEY]);

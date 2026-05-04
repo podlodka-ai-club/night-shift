@@ -2,19 +2,22 @@ import path from 'node:path';
 import { runAgentTurnWithHeartbeat, runStructuredAgentTurn } from '../activity-agent-turn';
 import { createActivityDependencies } from '../activities';
 import { createProviderAgentAdapter, type AgentProgressEvent, type AgentSession, type AgentTurnResult } from '../activity-deps';
-import { resolveAgentProviderSelection, type AgentProviderSelection } from '../agent-provider';
+import {
+  resolveAgentProviderSelection,
+  type AgentProviderSelection,
+  type RequestedAgentProviderConfig,
+  type RequestedAgentProviderSelection,
+} from '../agent-provider';
 import type { IssueComment, SelectedProjectIssue } from '../shared';
 import { recordedUsageSchema, type RecordedUsage } from './replay-common';
 
-export interface LiveTurnRequest {
+export interface LiveTurnRequest extends RequestedAgentProviderSelection {
   worktreePath: string;
   prompt: string;
   systemPrompt?: string;
   outputSchema?: unknown;
   parseOutput?: (value: unknown) => unknown;
   timeoutMs?: number;
-  provider?: string;
-  model?: string;
 }
 
 export interface LiveTurnResult {
@@ -45,6 +48,17 @@ export function addRecordedUsage(left: RecordedUsage | undefined, right: Recorde
   };
 }
 
+export function mergeRequestedProviderConfig(
+  base: RequestedAgentProviderConfig | undefined,
+  override: RequestedAgentProviderConfig | undefined,
+): RequestedAgentProviderConfig | undefined {
+  const merged = {
+    ...(base ?? {}),
+    ...(override ?? {}),
+  };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 export function createDefaultLiveTurnRunner(deps: DefaultLiveTurnRunnerDeps = createDefaultLiveTurnRunnerDeps()): LiveTurnRunner {
   const heartbeatDeps = {
     heartbeat: deps.heartbeat,
@@ -53,7 +67,7 @@ export function createDefaultLiveTurnRunner(deps: DefaultLiveTurnRunnerDeps = cr
 
   return async (request) => {
     const worktreePath = path.resolve(request.worktreePath);
-    const selection = resolveAgentProviderSelection({ provider: request.provider, model: request.model });
+    const selection = resolveAgentProviderSelection(request);
     const session = deps.createSession(worktreePath, selection);
     let usageFromEvents: RecordedUsage | undefined;
     const timeoutSignal = request.timeoutMs ? AbortSignal.timeout(request.timeoutMs) : undefined;

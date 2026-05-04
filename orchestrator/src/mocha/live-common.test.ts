@@ -2,9 +2,17 @@ import assert from 'assert';
 import path from 'node:path';
 import { describe, it } from 'mocha';
 import { DEFAULT_AGENT_MODEL_BY_PROVIDER } from '../agent-provider';
-import { createDefaultLiveTurnRunner } from '../eval/live-common';
+import { createDefaultLiveTurnRunner, mergeRequestedProviderConfig } from '../eval/live-common';
 
 describe('default live turn runner', () => {
+  it('merges requested provider config and preserves empty results as undefined', () => {
+    assert.deepStrictEqual(
+      mergeRequestedProviderConfig({ model: 'claude-sonnet-4-6', temperature: 0.1 }, { temperature: 0.2, reasoningEffort: 'high' }),
+      { model: 'claude-sonnet-4-6', temperature: 0.2, reasoningEffort: 'high' },
+    );
+    assert.strictEqual(mergeRequestedProviderConfig(undefined, {}), undefined);
+  });
+
   it('uses structured-output repair so live eval matches the current structured turn path', async () => {
     const prompts: string[] = [];
     const sessionPaths: string[] = [];
@@ -105,6 +113,32 @@ describe('default live turn runner', () => {
     assert.deepStrictEqual(sessionCalls, [{
       worktreePath: path.resolve('./tmp/live-eval-repo'),
       selection: { provider: 'codex', model: DEFAULT_AGENT_MODEL_BY_PROVIDER.codex },
+    }]);
+  });
+
+  it('infers the provider from config.model before creating the live session', async () => {
+    const sessionCalls: Array<{ worktreePath: string; selection: { provider: string; model: string } }> = [];
+    const runner = createDefaultLiveTurnRunner({
+      createSession: (worktreePath: string, selection) => {
+        sessionCalls.push({ worktreePath, selection });
+        return {
+          id: 'thread-model-inference',
+          run: async () => ({ finalResponse: 'plain text response' }),
+        };
+      },
+      heartbeat: () => undefined,
+      getCancellationSignal: () => undefined,
+    });
+
+    await runner({
+      worktreePath: './tmp/live-eval-repo',
+      prompt: 'Return plain text only.',
+      config: { model: 'claude-sonnet-4-6' },
+    });
+
+    assert.deepStrictEqual(sessionCalls, [{
+      worktreePath: path.resolve('./tmp/live-eval-repo'),
+      selection: { provider: 'claude', model: 'claude-sonnet-4-6' },
     }]);
   });
 });

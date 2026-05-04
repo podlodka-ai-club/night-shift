@@ -5,6 +5,7 @@ import { access, appendFile, mkdtemp, mkdir, readdir, readFile, realpath, rm, wr
 import { describe, it } from 'mocha';
 import type { AgentActivityDeps, CommandResult } from '../../orchestrator/lib/activity-deps';
 import {
+  FAKE_AGENT_FILE_PATH,
   buildFakeAgentHumanEscalationResponse,
   buildFakeAgentImplementEscalationResponse,
   buildFakeAgentImplementResponse,
@@ -30,6 +31,31 @@ describe('createFakeAgentDeps', () => {
     });
 
     assert.deepStrictEqual(JSON.parse(response.finalResponse), buildFakeAgentImplementResponse('run-123'));
+  });
+
+  it('includes implement provider/model markers from the Claude hook inputs', async () => {
+    const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
+    const deps = createFakeAgentDeps(buildBaseDeps());
+    const session = deps.createClaudeSession(worktreePath, 'claude-haiku-4-5');
+
+    const response = await session.run([
+      'Implement the approved spec bundle.',
+      'Spec files: proposal.md, tasks.md',
+      'E2E_RUN_MARKER: run-claude',
+    ].join('\n'), {
+      outputSchema: { type: 'object' },
+    });
+
+    assert.deepStrictEqual(JSON.parse(response.finalResponse), {
+      filesWritten: [{ path: FAKE_AGENT_FILE_PATH, content: '# Fake E2E Change\n\nRun marker: run-claude' }],
+      commitMessage: 'test: fake e2e change for run-claude',
+      summary: 'Deterministic fake e2e change for run-claude.',
+      followUps: [
+        'Run marker: run-claude',
+        'Implement provider: claude',
+        'Implement model: claude-haiku-4-5',
+      ],
+    });
   });
 
   it('emits assistant-authored progress events for structured turns', async () => {
@@ -143,6 +169,37 @@ describe('createFakeAgentDeps', () => {
     assert.strictEqual(buildFakeAgentSpecifyEscalationResponse('run-123').resolution.resumeStatus, 'Backlog');
   });
 
+  it('includes review provider/model markers from the Codex resume hook inputs', async () => {
+    const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
+    const deps = createFakeAgentDeps(buildBaseDeps());
+    const thread = deps.resumeCodexThread(worktreePath, 'codex-review-session', 'gpt-5.4');
+
+    const response = await thread.run('Review the PR.\n## PR Diff\n```diff\n+ok\n```\nE2E_RUN_MARKER: run-codex', {
+      outputSchema: { type: 'object' },
+    });
+
+    assert.deepStrictEqual(JSON.parse(response.finalResponse), {
+      summary: 'Review requires one deterministic rerun for run-codex.',
+      findings: [
+        {
+          severity: 'error',
+          message: 'Run marker run-codex intentionally triggers one review rerun before ready-to-merge.',
+          location: { file: FAKE_AGENT_FILE_PATH, line: 3 },
+        },
+        {
+          severity: 'warning',
+          message: 'Review provider: codex',
+          location: { file: FAKE_AGENT_FILE_PATH, line: 3 },
+        },
+        {
+          severity: 'warning',
+          message: 'Review model: gpt-5.4',
+          location: { file: FAKE_AGENT_FILE_PATH, line: 3 },
+        },
+      ],
+    });
+  });
+
   it('mirrors deterministic fake sessions through the Claude adapter hooks too', async () => {
     const worktreePath = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-fake-agent-'));
     const deps = createFakeAgentDeps(buildBaseDeps());
@@ -191,6 +248,10 @@ function buildBaseDeps(): AgentActivityDeps {
     resumeClaudeSession: () => {
       throw new Error('resumeClaudeSession should be overridden');
     },
+    getAgentProfile: (agentProfile = 'default') => ({
+      model: agentProfile === 'escalation' ? 'gpt-5.4' : 'gpt-5.3-codex',
+      reasoningEffort: agentProfile === 'escalation' ? 'high' : 'low',
+    }),
     getCancellationSignal: () => undefined,
     getHeartbeatDetails: () => undefined,
     heartbeat: () => undefined,

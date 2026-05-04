@@ -90,6 +90,7 @@ describe('config loading', () => {
             backlogStatusName: 'Backlog',
             readyStatusName: 'Queued',
             inReviewStatusName: 'In review',
+            escalatedStatusName: 'Escalated',
             blockedStatusName: 'Blocked',
           },
           repo: { owner: 'acme', name: 'web' },
@@ -102,6 +103,7 @@ describe('config loading', () => {
             backlogStatusName: 'Backlog',
             readyStatusName: 'Ready',
             inReviewStatusName: 'In review',
+            escalatedStatusName: 'Escalated',
             blockedStatusName: 'Blocked',
           },
           repo: { owner: 'acme', name: 'api' },
@@ -228,6 +230,56 @@ describe('config loading', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+	  it('parses nested global agent selections and normalizes explicit provider aliases', async () => {
+	    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-config-agents-'));
+	    try {
+	      await writeFile(
+	        path.join(tempDir, 'orchestrator.config.ts'),
+	        [
+	          'export default {',
+	          '  agents: {',
+	          "    default: { provider: 'openai', config: { model: 'gpt-5.4', reasoningEffort: 'high' } },",
+	          "    implement: { config: { model: 'claude-haiku-4-5', temperature: 0.2 } },",
+	          "    review: { provider: 'anthropic' },",
+	          '  },',
+	          '};',
+	        ].join('\n'),
+	        'utf8',
+	      );
+
+	      const config = await loadOrchestratorConfig({ cwd: tempDir });
+
+	      assert.deepStrictEqual(config.agents, {
+	        default: { provider: 'codex', config: { model: 'gpt-5.4', reasoningEffort: 'high' } },
+	        implement: { config: { model: 'claude-haiku-4-5', temperature: 0.2 } },
+	        review: { provider: 'claude' },
+	      });
+	    } finally {
+	      await rm(tempDir, { recursive: true, force: true });
+	    }
+	  });
+
+	  it('rejects invalid provider ids in global agents config', async () => {
+	    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-config-invalid-agent-provider-'));
+	    try {
+	      await writeFile(
+	        path.join(tempDir, 'orchestrator.config.ts'),
+	        [
+	          'export default {',
+	          '  agents: {',
+	          "    specify: { provider: 'unknown-provider' },",
+	          '  },',
+	          '};',
+	        ].join('\n'),
+	        'utf8',
+	      );
+
+	      await assert.rejects(() => loadOrchestratorConfig({ cwd: tempDir }), /unsupported provider/i);
+	    } finally {
+	      await rm(tempDir, { recursive: true, force: true });
+	    }
+	  });
 
   it('fails validation for invalid typed config values', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orchestrator-config-invalid-'));

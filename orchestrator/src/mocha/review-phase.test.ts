@@ -89,11 +89,19 @@ describe('review phase', () => {
         issue,
         worktree,
         pullRequest,
+        agents: {
+          default: { provider: 'openai', config: { model: 'gpt-5.4', reasoningEffort: 'high' } },
+          review: { provider: 'anthropic', config: { model: 'claude-haiku-4-5', temperature: 0.2 } },
+        },
         projectExtensionManifest: {
           prompts: {
             specify: { prepend: ['Specify extension guidance.'], append: [] },
             implement: { prepend: ['Implement extension guidance.'], append: [] },
             review: { prepend: ['Review extension guidance.'], append: ['Review trailing guidance.'] },
+          },
+          agentDefaults: { provider: 'openai', config: { model: 'gpt-5.5-codex', maxTurns: 3 } },
+          agents: {
+            review: { provider: 'anthropic', config: { model: 'claude-sonnet-4-6', temperature: 0.1 } },
           },
           qualityGates: [],
         },
@@ -106,6 +114,15 @@ describe('review phase', () => {
         async listPullRequestReviewComments() { calls.push('listPullRequestReviewComments'); return [{ id: 1, path: 'src/index.ts', line: 1, body: '<!-- night-shift:review:summary -->\nold bot review' }, { id: 2, path: 'src/index.ts', line: 1, body: 'Human note: fine' }]; },
         async runAgentSequence(input) {
           calls.push('runAgentSequence');
+          assert.deepStrictEqual(input.providerSelection, {
+            provider: 'claude',
+            config: {
+              model: 'claude-sonnet-4-6',
+              reasoningEffort: 'high',
+              temperature: 0.1,
+              maxTurns: 3,
+            },
+          });
           assert.strictEqual(input.steps[0]?.systemPrompt, REVIEWER_SYSTEM_PROMPT);
           assert.match(input.steps[0].prompt, /Review extension guidance\./);
           assert.match(input.steps[0].prompt, /Review trailing guidance\./);
